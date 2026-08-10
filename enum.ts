@@ -11,7 +11,7 @@ export enum Layers {
 }
 
 export enum SoundEffects {
-    Intro='Intro',Main='Main',Click='Click'
+    Click='Click'
 }
 
 export enum BuildingSpriteIndex {

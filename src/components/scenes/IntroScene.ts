@@ -16,7 +16,7 @@ export default class IntroScene extends Scene {
         })
         
         this.cameras.main.setZoom(1)
-        this.sound.get(SoundEffects.Intro).play({loop: true})
+        //this.sound.get(SoundEffects.Intro).play({loop: true})
     }
     onTransitionIn = () => {
     }
