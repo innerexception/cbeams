@@ -6,16 +6,16 @@ import { Modal, FactoryKind, ShipType, MAX_WAYPOINTS, CELL_SIZE } from '../../en
 // Mirrors MapScene's grid-to-world conversion so ship-to-waypoint distances can be compared here too.
 const toWorld = (x: number, y: number) => ({ x: x*CELL_SIZE + CELL_SIZE/2, y: y*CELL_SIZE + CELL_SIZE/2 });
 
-// Index of the waypoint closest to a ship's current position, so a retargeted route resumes from
-// wherever the ship already is rather than always restarting at the first waypoint.
-const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x: number, y: number }>) => {
-  let bestIndex = 0;
+// Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
+// the ship already is without ever sending it back to a waypoint it has already passed.
+const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x: number, y: number }>, minIndex = 0) => {
+  let bestIndex = Math.min(minIndex, waypoints.length-1);
   let bestDistSq = Infinity;
-  waypoints.forEach((w, i) => {
-    const p = toWorld(w.x, w.y);
+  for(let i = minIndex; i < waypoints.length; i++){
+    const p = toWorld(waypoints[i].x, waypoints[i].y);
     const distSq = (p.x-shipX)**2 + (p.y-shipY)**2;
     if(distSq < bestDistSq){ bestDistSq = distSq; bestIndex = i; }
-  });
+  }
   return bestIndex;
 };
 
@@ -41,6 +41,7 @@ interface AppState {
   setSelectedFactoryId: (id: string | null) => void;
   setSettingWaypointsFactoryId: (id: string | null) => void;
   addWaypoint: (shipyardId: string, x: number, y: number) => void;
+  removeWaypoint: (shipyardId: string, index: number) => void;
   clearWaypoints: (shipyardId: string) => void;
   addMetal: (amount: number) => void;
   queueShip: (shipyardId: string, type: ShipType) => void;
@@ -97,12 +98,38 @@ export const useAppStore = create<AppState>((set) => ({
     const waypoints = newWaypoints;
     return {
       factories,
-      ships: state.ships.map((s) => (s.shipyardId === shipyardId ? { ...s, pathIndex: nearestWaypointIndex(s.x, s.y, waypoints) } : s)),
+      ships: state.ships.map((s) => (s.shipyardId === shipyardId ? { ...s, pathIndex: nearestWaypointIndex(s.x, s.y, waypoints, s.pathIndex ?? 0), orbitAnchor: undefined } : s)),
     };
   }),
+  // Removing one waypoint shifts every later index down by one, so each ship's progress is carried
+  // over onto the same physical point it was already heading for (or the nearest one after it).
+  removeWaypoint: (shipyardId, index) => set((state) => {
+    let newWaypoints: Array<{ x: number, y: number }> | null = null;
+    const factories = state.factories.map((f) => {
+      if(f.id !== shipyardId) return f;
+      const waypoints = f.waypoints || [];
+      if(index < 0 || index >= waypoints.length) return f;
+      newWaypoints = waypoints.filter((_, i) => i !== index);
+      return { ...f, waypoints: newWaypoints };
+    });
+    if(!newWaypoints) return { factories };
+    const waypoints = newWaypoints;
+    return {
+      factories,
+      ships: state.ships.map((s) => {
+        if(s.shipyardId !== shipyardId) return s;
+        const p = s.pathIndex ?? 0;
+        const minIndex = p > index ? p-1 : p;
+        const pathIndex = minIndex >= waypoints.length ? waypoints.length : nearestWaypointIndex(s.x, s.y, waypoints, minIndex);
+        return { ...s, pathIndex, orbitAnchor: undefined };
+      }),
+    };
+  }),
+  // Ships from this shipyard drop their route and loiter in place (orbiting wherever they currently
+  // are) until new orders are given; orbitAnchor is cleared so movement re-anchors on their position now.
   clearWaypoints: (shipyardId) => set((state) => ({
     factories: state.factories.map((f) => (f.id === shipyardId ? { ...f, waypoints: [] } : f)),
-    ships: state.ships.map((s) => (s.shipyardId === shipyardId ? { ...s, pathIndex: 0 } : s)),
+    ships: state.ships.map((s) => (s.shipyardId === shipyardId ? { ...s, pathIndex: 0, orbitAnchor: undefined } : s)),
   })),
   addMetal: (amount) => set((state) => ({ metal: state.metal + amount })),
   queueShip: (shipyardId, type) => set((state) => ({

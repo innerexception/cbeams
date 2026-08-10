@@ -9,7 +9,7 @@ const MAX_QUEUE = 3
 const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProperties => ({
     padding: '8px 14px',
     marginRight: '8px',
-    background: active ? GREEN : 'transparent',
+    background: active ? GREEN : 'black',
     color: active ? '#000' : GREEN,
     border: '2px solid '+GREEN,
     cursor: disabled ? 'default' : 'pointer',
@@ -72,8 +72,8 @@ export default () => {
                 {isSettingWaypoints && (
                     <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>
                         {waypoints.length >= MAX_WAYPOINTS
-                            ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}).`
-                            : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}). Ships built here will follow this route.`}
+                            ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
+                            : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
                     </div>
                 )}
                 <div style={{ marginTop:8, display:'flex', gap:8 }}>

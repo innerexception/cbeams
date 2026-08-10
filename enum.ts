@@ -42,7 +42,7 @@ export enum ShipType {
     CRV='crv', DDG='ddg', CC='cc'
 }
 
-export const MAP_SIZE = 50
+export const MAP_SIZE = 100
 export const CELL_SIZE = 20
 
 export const BASE_MAX_ENERGY = 10

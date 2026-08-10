@@ -1,10 +1,10 @@
 @font-face {
   font-family: 'Body';
-  src: url('../assets/TubeOfCorn.ttf')  format('truetype')
+  src: url('../assets/ATC.ttf')  format('truetype')
 }
 @font-face {
   font-family: 'Titles';
-  src: url('../assets/TubeOfCorn.ttf')  format('truetype')
+  src: url('../assets/ATC.ttf')  format('truetype')
 }
 
 * {

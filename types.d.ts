@@ -57,6 +57,12 @@ interface ShipInstanceData {
     x: number
     y: number
     pathIndex?: number
+    orbitAnchor?: { x:number, y:number }
+    // Static fallback route for ships not tied to a live shipyard (e.g. an enemy raid group spawned
+    // directly at a base). Ignored whenever shipyardId resolves to an actual factory with its own orders.
+    waypoints?: Array<{ x:number, y:number }>
+    lastFiredAt?: number
+    hp: number
 }
 
 interface RState {

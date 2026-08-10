@@ -7,6 +7,10 @@ import { generateMap } from "../../common/MapGenerator";
 import { ShipData } from "../../common/ShipData";
 import { Faction, NodeKind, FactoryKind, ShipType, MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION } from "../../../enum";
 
+const GREEN = 0x33ff55
+const GREEN_DIM = 0x114422
+const GREY_DIM = 0x666666
+
 const PLACEMENT_RADIUS_PX = 200
 const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX/2
 const TWO_PI = Math.PI*2
@@ -15,7 +19,7 @@ const TWO_PI = Math.PI*2
 const WAYPOINT_SPEED_MULTIPLIER = 0.5
 
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
-const ORBIT_RADIUS_PX = CELL_SIZE * 3
+const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
 
 // Stable per-ship angular offset so multiple ships orbiting the same point spread out instead of stacking.
@@ -25,13 +29,24 @@ const shipOrbitPhase = (id:string) => {
     return ((h >>> 0) % 1000) / 1000 * TWO_PI
 }
 
+// Solar Mills spin slowly in place — one full rotation roughly every 40 seconds.
+const SOLAR_MILL_ROTATION_SPEED = 0.00016 // radians per ms
+
+// A CRV's 23mm cannon: how often it can fire, how much damage a hit does, and how long a burst's
+// tracer dots stay on screen. Tracers render in the same wireframe green as everything else.
+const CRV_FIRE_COOLDOWN_MS = 350
+const CRV_DAMAGE = 1
+const TRACER_LIFETIME_MS = 220
+
+// Wreckage left behind by a destroyed ship lingers for 10 seconds, fading out over that time.
+const SHATTER_LIFETIME_MS = 10000
+
+// How many CRVs the enemy base launches at the player, once, at the start of the match.
+const ENEMY_RAID_SIZE = 3
+
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards.
 const getStructureRadius = (structure:BaseData|FactoryData) =>
     'kind' in structure && structure.kind !== FactoryKind.Shipyard ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
-
-const GREEN = 0x33ff55
-const GREEN_DIM = 0x114422
-const GREY_DIM = 0x666666
 
 // All ships render at one standardized NATO map-symbol size, regardless of their actual sizeHex footprint.
 const NATO_ICON_SIZE = CELL_SIZE * 1.5
@@ -89,9 +104,14 @@ export default class MapScene extends Scene {
     progressG: GameObjects.Graphics
     shipG: GameObjects.Graphics
     ordersG: GameObjects.Graphics
+    solarMillG: GameObjects.Graphics
+    combatG: GameObjects.Graphics
+    shatterG: GameObjects.Graphics
     shipLabels: Map<string, GameObjects.Text> = new Map()
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
+    tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
+    shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
     mapData: MapData
     origDragPoint: Phaser.Math.Vector2
     hoveredCell: {x:number, y:number}
@@ -111,17 +131,19 @@ export default class MapScene extends Scene {
         this.progressG = this.add.graphics()
         this.shipG = this.add.graphics()
         this.ordersG = this.add.graphics()
+        this.solarMillG = this.add.graphics()
+        this.combatG = this.add.graphics()
+        this.shatterG = this.add.graphics()
 
         this.mapData = useAppStore.getState().activeMap || generateMap(MAP_SIZE)
 
-        const worldSize = this.mapData.width * CELL_SIZE
-        this.cameras.main.setBounds(0, 0, worldSize, worldSize)
-        this.cameras.main.centerOn(worldSize/2, worldSize/2)
         this.cameras.main.setZoom(1)
+        this.centerCameraBounds()
 
         this.drawMap()
         this.enableCameraControls()
         this.enablePlacementControls()
+        this.spawnEnemyRaid()
 
         this.time.addEvent({ delay: METAL_TICK_MS, loop: true, callback: this.tickResources })
         this.time.addEvent({ delay: 500, loop: true, callback: this.tickProduction })
@@ -137,9 +159,13 @@ export default class MapScene extends Scene {
     // Pulsating octagon around the currently selected shipyard, redrawn every frame for the animation.
     update = (time:number, delta:number) => {
         this.moveShips(time, delta)
+        this.updateCombat(time)
         this.drawProductionProgress()
         this.drawShips()
         this.drawOrders()
+        this.drawSolarMills(time)
+        this.drawCombat(time)
+        this.drawShatters(time)
 
         this.selectionG.clear()
         const { selectedFactoryId, factories } = useAppStore.getState()
@@ -195,7 +221,6 @@ export default class MapScene extends Scene {
         this.tweens.add({
             targets: label,
             y: y-20,
-            alpha: 0.5,
             duration: 2000,
             onComplete: () => label.destroy()
         })
@@ -237,27 +262,54 @@ export default class MapScene extends Scene {
             if(!overlapsShip && !this.buildingOverlapsPoint(candidate.x, candidate.y, size/2 + SHIP_BUILDING_CLEARANCE_PX)){ pos = candidate; break }
         }
 
-        useAppStore.getState().addShip({ id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0 })
+        useAppStore.getState().addShip({ id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:ShipData[type].hp })
     }
 
-    // Advances every ship one step towards its shipyard's current route, read live off the shipyard each
-    // frame (rather than a copy taken at spawn) so edited orders steer ships that are already underway.
-    // Once a ship has worked through every waypoint it loiters in a slow orbit around the last one.
+    // One-time opening move: the enemy base launches a small raid straight at the player's base.
+    // These ships aren't tied to a shipyard (the enemy doesn't have one placed), so their route lives
+    // directly on the ship instead — moveShips falls back to it when shipyardId doesn't resolve.
+    spawnEnemyRaid = () => {
+        const enemyBase = this.mapData.bases.find(b => b.faction === Faction.Enemy)
+        const playerBase = this.mapData.bases.find(b => b.faction === Faction.Player)
+        if(!enemyBase || !playerBase) return
+
+        const waypoints = [{ x:playerBase.x, y:playerBase.y }]
+        const center = this.toWorld(enemyBase.x, enemyBase.y)
+
+        for(let i=0; i<ENEMY_RAID_SIZE; i++){
+            const angle = (i/ENEMY_RAID_SIZE) * Math.PI*2
+            const pos = { x: center.x+Math.cos(angle)*CELL_SIZE*2, y: center.y+Math.sin(angle)*CELL_SIZE*2 }
+            useAppStore.getState().addShip({
+                id:v4(), faction:Faction.Enemy, type:ShipType.CRV, shipyardId:'enemy-base',
+                x:pos.x, y:pos.y, pathIndex:0, waypoints, hp:ShipData[ShipType.CRV].hp,
+            })
+        }
+    }
+
+    // Advances every ship one step towards its current route, read live off its shipyard each frame
+    // (rather than a copy taken at spawn) so edited orders steer ships that are already underway. Ships
+    // with no matching shipyard (like an enemy raid group) fall back to their own static waypoints.
+    // Once a ship has worked through every waypoint it loiters in a slow orbit around the last one; a
+    // ship whose orders were cleared instead orbits wherever it was when that happened.
     moveShips = (time:number, deltaMs:number) => {
         const { ships, factories, setShips } = useAppStore.getState()
         let changed = false
 
         const updated = ships.map(ship => {
             const shipyard = factories.find(f => f.id === ship.shipyardId)
-            const waypoints = shipyard?.waypoints || []
-            if(waypoints.length === 0) return ship
-
+            const waypoints = shipyard?.waypoints || ship.waypoints || []
             const pathIndex = ship.pathIndex ?? 0
             const step = ShipData[ship.type].speed * WAYPOINT_SPEED_MULTIPLIER * (deltaMs/1000)
             changed = true
 
             let target:{x:number,y:number}
-            if(pathIndex < waypoints.length){
+            let orbitAnchor = ship.orbitAnchor
+            if(waypoints.length === 0){
+                orbitAnchor = orbitAnchor || { x:ship.x, y:ship.y }
+                const angle = time*ORBIT_ANGULAR_SPEED + shipOrbitPhase(ship.id)
+                target = { x: orbitAnchor.x+Math.cos(angle)*ORBIT_RADIUS_PX, y: orbitAnchor.y+Math.sin(angle)*ORBIT_RADIUS_PX }
+            }
+            else if(pathIndex < waypoints.length){
                 target = this.toWorld(waypoints[pathIndex].x, waypoints[pathIndex].y)
             }
             else {
@@ -267,13 +319,103 @@ export default class MapScene extends Scene {
             }
 
             const dist = Phaser.Math.Distance.Between(ship.x, ship.y, target.x, target.y)
-            if(dist <= step) return { ...ship, x:target.x, y:target.y, pathIndex: pathIndex < waypoints.length ? pathIndex+1 : pathIndex }
+            const nextPathIndex = waypoints.length > 0 && pathIndex < waypoints.length ? pathIndex+1 : pathIndex
+            if(dist <= step) return { ...ship, x:target.x, y:target.y, pathIndex:nextPathIndex, orbitAnchor }
 
             const angle = Math.atan2(target.y-ship.y, target.x-ship.x)
-            return { ...ship, x: ship.x+Math.cos(angle)*step, y: ship.y+Math.sin(angle)*step }
+            return { ...ship, x: ship.x+Math.cos(angle)*step, y: ship.y+Math.sin(angle)*step, pathIndex, orbitAnchor }
         })
 
         if(changed) setShips(updated)
+    }
+
+    // Each CRV, on cooldown, hunts down whichever hostile ship is nearest and — if it's within the
+    // cannon's range — fires a burst (a tracer effect is queued for drawCombat to render) and marks
+    // its target for damage. Shots are resolved in a second pass so simultaneous shooters, and multiple
+    // shots landing on the same target in one frame, all apply correctly before any ship is removed.
+    updateCombat = (time:number) => {
+        const { ships, setShips } = useAppStore.getState()
+        const range = ShipData[ShipType.CRV].weaponRange
+        const shooterIds = new Set<string>()
+        const damageByTarget = new Map<string, number>()
+
+        ships.forEach(ship => {
+            if(ship.type !== ShipType.CRV) return
+            if(ship.lastFiredAt && time - ship.lastFiredAt < CRV_FIRE_COOLDOWN_MS) return
+
+            let nearest:ShipInstanceData = null
+            let nearestDist = Infinity
+            ships.forEach(other => {
+                if(other.faction === ship.faction) return
+                const d = Phaser.Math.Distance.Between(ship.x, ship.y, other.x, other.y)
+                if(d < nearestDist){ nearestDist = d; nearest = other }
+            })
+            if(!nearest || nearestDist > range) return
+
+            this.tracers.push({ x1:ship.x, y1:ship.y, x2:nearest.x, y2:nearest.y, createdAt:time })
+            shooterIds.add(ship.id)
+            damageByTarget.set(nearest.id, (damageByTarget.get(nearest.id) || 0) + CRV_DAMAGE)
+        })
+
+        if(shooterIds.size === 0) return
+
+        const updated = ships.map(ship => {
+            const damage = damageByTarget.get(ship.id)
+            if(damage === undefined) return shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship
+
+            const hp = ship.hp - damage
+            if(hp <= 0){
+                this.shatters.push({ x:ship.x, y:ship.y, createdAt:time, seed:ship.id })
+                return null
+            }
+            return shooterIds.has(ship.id) ? { ...ship, hp, lastFiredAt:time } : { ...ship, hp }
+        }).filter(ship => ship !== null)
+
+        setShips(updated)
+    }
+
+    // Machine-gun tracer fire: a short burst of small dots travelling along the shot's line, fading
+    // out quickly. Purely a visual effect layer, redrawn every frame from the transient tracers list.
+    drawCombat = (time:number) => {
+        const g = this.combatG
+        g.clear()
+
+        this.tracers = this.tracers.filter(t => time - t.createdAt < TRACER_LIFETIME_MS)
+        this.tracers.forEach(t => {
+            const progress = (time - t.createdAt) / TRACER_LIFETIME_MS
+            const dotCount = 4
+            for(let i=0; i<dotCount; i++){
+                const dotProgress = Math.min(1, progress + i*0.12)
+                const x = t.x1 + (t.x2-t.x1)*dotProgress
+                const y = t.y1 + (t.y2-t.y1)*dotProgress
+                g.fillStyle(GREEN, (1-progress) * (1-i*0.2))
+                g.fillCircle(x, y, 1.5)
+            }
+        })
+    }
+
+    // Wreckage marking where a ship was destroyed: a jagged scatter of debris fragments (shape kept
+    // stable frame-to-frame by seeding the randomness off the dead ship's id), fading out over 10s.
+    drawShatters = (time:number) => {
+        const g = this.shatterG
+        g.clear()
+
+        this.shatters = this.shatters.filter(s => time - s.createdAt < SHATTER_LIFETIME_MS)
+        this.shatters.forEach(s => {
+            const progress = (time - s.createdAt) / SHATTER_LIFETIME_MS
+            const alpha = 1 - progress
+            const rand = seededRandom(s.seed)
+
+            g.lineStyle(1.5, GREEN, alpha)
+            const pieces = 6
+            for(let i=0; i<pieces; i++){
+                const angle = rand()*TWO_PI
+                const len = CELL_SIZE * (0.3 + rand()*0.5)
+                const startX = s.x + (rand()-0.5)*CELL_SIZE*0.6
+                const startY = s.y + (rand()-0.5)*CELL_SIZE*0.6
+                g.lineBetween(startX, startY, startX+Math.cos(angle)*len, startY+Math.sin(angle)*len)
+            }
+        })
     }
 
     // True if a point (with the given clearance around it) would overlap a base or factory footprint.
@@ -360,7 +502,19 @@ export default class MapScene extends Scene {
         this.drawPlacementRanges()
         this.mapData.bases.forEach(this.drawBase)
         this.mapData.nodes.forEach(this.drawNode)
-        useAppStore.getState().factories.forEach(this.drawFactory)
+        // Solar Mills are drawn separately, every frame, so they can spin in place.
+        useAppStore.getState().factories.forEach(f => { if(f.kind !== FactoryKind.SolarMill) this.drawFactory(f) })
+    }
+
+    // Solar Mills redraw every frame (separate layer from the mostly-static map) so they can slowly spin.
+    drawSolarMills = (time:number) => {
+        const g = this.solarMillG
+        g.clear()
+        const rotation = time * SOLAR_MILL_ROTATION_SPEED
+        useAppStore.getState().factories.forEach(f => {
+            if(f.kind !== FactoryKind.SolarMill) return
+            this.drawFactoryShape(g, FactoryKind.SolarMill, f.x, f.y, GREEN, 1, rotation)
+        })
     }
 
     // Ships redraw every frame (separate layer from the mostly-static map) so movement animates smoothly.
@@ -566,8 +720,9 @@ export default class MapScene extends Scene {
         this.drawFactoryShape(this.g, factory.kind, factory.x, factory.y, GREEN, 1)
     }
 
-    // Shared shape renderer so the placement preview matches the built factory exactly.
-    drawFactoryShape = (g:GameObjects.Graphics, kind:FactoryKind, gridX:number, gridY:number, color:number, alpha:number) => {
+    // Shared shape renderer so the placement preview matches the built factory exactly. `rotation`
+    // (radians) only affects the Solar Mill's rays, letting it spin in place each frame.
+    drawFactoryShape = (g:GameObjects.Graphics, kind:FactoryKind, gridX:number, gridY:number, color:number, alpha:number, rotation:number = 0) => {
         const { x, y } = this.toWorld(gridX, gridY)
 
         if(kind === FactoryKind.MiningStation){
@@ -583,7 +738,7 @@ export default class MapScene extends Scene {
             g.lineStyle(2, color, alpha)
             g.strokeCircle(x, y, r)
             for(let i=0; i<8; i++){
-                const angle = (i/8) * Math.PI*2
+                const angle = (i/8) * Math.PI*2 + rotation
                 g.lineBetween(x + Math.cos(angle)*r, y + Math.sin(angle)*r, x + Math.cos(angle)*rayR, y + Math.sin(angle)*rayR)
             }
         }
@@ -649,13 +804,18 @@ export default class MapScene extends Scene {
 
     enablePlacementControls = () => {
         this.input.on('pointerdown', () => {
-            const { placingFactory, setPlacingFactory, setSelectedFactoryId, addFactory, settingWaypointsFactoryId, addWaypoint } = useAppStore.getState()
+            const { placingFactory, setPlacingFactory, setSelectedFactoryId, addFactory, factories, settingWaypointsFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
             if(!this.hoveredCell) return
 
             if(settingWaypointsFactoryId){
                 const { x, y } = this.hoveredCell
                 if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-                addWaypoint(settingWaypointsFactoryId, x, y)
+
+                // Clicking an existing waypoint removes it instead of dropping a new one on top of it.
+                const shipyard = factories.find(f => f.id === settingWaypointsFactoryId)
+                const existingIndex = shipyard?.waypoints?.findIndex(w => w.x === x && w.y === y) ?? -1
+                if(existingIndex >= 0) removeWaypoint(settingWaypointsFactoryId, existingIndex)
+                else addWaypoint(settingWaypointsFactoryId, x, y)
                 return
             }
 
@@ -689,6 +849,19 @@ export default class MapScene extends Scene {
             setSettingWaypointsFactoryId(null)
             this.previewG.clear()
         })
+    }
+
+    // Phaser's bounds-clamping pins the camera to the bounds' top-left corner whenever the world is
+    // smaller than the viewport (at zoom 1, its "shrink to fit" case degenerates to that instead of
+    // centering). Padding the bounds symmetrically around the actual map compensates for that: the
+    // clamp still pins to the bounds' edge, but that edge is now offset so the map lands centered.
+    centerCameraBounds = () => {
+        const cam = this.cameras.main
+        const worldSize = this.mapData.width * CELL_SIZE
+        const boundsW = Math.max(worldSize, cam.width)
+        const boundsH = Math.max(worldSize, cam.height)
+        cam.setBounds((worldSize-boundsW)/2, (worldSize-boundsH)/2, boundsW, boundsH)
+        cam.centerOn(worldSize/2, worldSize/2)
     }
 
     enableCameraControls = () => {
