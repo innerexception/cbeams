@@ -32,7 +32,7 @@ export default () => {
     }
     React.useEffect(componentDidMount, [])
 
-    return <div ref={containerRef} id='canvasEl' style={{width:'100vw', height:'600px', border:'2px solid white'}}/>
+    return <div ref={containerRef} id='canvasEl' style={{width:'100vw', height:'100vh'}}/>
 }
 
 

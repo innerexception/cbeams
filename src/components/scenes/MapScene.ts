@@ -15,9 +15,6 @@ const PLACEMENT_RADIUS_PX = 200
 const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX/2
 const TWO_PI = Math.PI*2
 
-// Ships following shipyard orders travel at half their listed ShipData speed.
-const WAYPOINT_SPEED_MULTIPLIER = 0.5
-
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
 const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
@@ -363,7 +360,7 @@ export default class MapScene extends Scene {
             const shipyard = factories.find(f => f.id === ship.shipyardId)
             const waypoints = shipyard?.waypoints || []
             const pathIndex = ship.pathIndex ?? 0
-            const step = ShipData[ship.type].speed * WAYPOINT_SPEED_MULTIPLIER * (deltaMs/1000)
+            const step = ShipData[ship.type].speed * (deltaMs/1000)
             changed = true
 
             let target:{x:number,y:number}

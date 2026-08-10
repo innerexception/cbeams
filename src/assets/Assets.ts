@@ -13,7 +13,7 @@ export const atkCursor = require('./img/atk.png')
 export const iconSheet = require('./img/icons.png')
 
 export const resources:Array<PhaserResource> = [
-    // { key: 'tiles', resource: require('./images/Tileset_ext.png'), type: 'image' },
+    { key: 'logo', resource: require('./logo.png'), type: 'image' },
     // { key: 'items', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 16, frameHeight: 16 } },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     // { key: Maps.intro, resource: require('./maps/intro.json'), type: 'tilemapTiledJSON'},
