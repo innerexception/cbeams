@@ -1,0 +1,78 @@
+@font-face {
+  font-family: 'Body';
+  src: url('../assets/TubeOfCorn.ttf')  format('truetype')
+}
+@font-face {
+  font-family: 'Titles';
+  src: url('../assets/TubeOfCorn.ttf')  format('truetype')
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+    height:100%;
+}
+
+body {
+  margin:0;
+  font-family: 'Body';
+  font-size: 18px;
+  line-height: unset;
+  user-select: none;
+  image-rendering: pixelated;
+  -webkit-font-smoothing: none;
+  background: #000;
+  color:#fff;
+  cursor: url(../assets/img/default.png), pointer;
+}
+
+input {
+  background-color: white;
+  color: black;
+  font-family: 'Body';
+  font-size: 18px;
+  cursor: url(../assets/img/default.png), pointer;
+  border: 1px dashed;
+}
+
+h1,h2,h3,h4,h5,h6{
+  margin:0; font-size: 36px;
+  /* text-shadow: 2px 2px 0px black; */
+}
+
+h4{
+  font-weight: 100;
+}
+
+h1,h2,h3{
+  font-family: "Titles";
+}
+
+hr{
+  border-color:  silver;
+}
+
+textarea:focus, input:focus{
+  outline: none;
+}
+
+.rc-tooltip {
+  position: absolute;
+  z-index: 1070;
+  display: block;
+  visibility: visible;
+}
+.rc-tooltip-hidden {
+  display: none;
+}
+.rc-tooltip-inner{
+  min-height: 0;
+  max-width: 20em;
+  min-width: 160px;
+  color: #000;
+  background: transparent;
+  /* border: 2px solid #edd8aa; */
+
+}

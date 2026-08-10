@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "target": "es5",
+        "allowJs": false,
+        "outDir": "./src/build/",
+        "removeComments": true,
+        "strict": false,
+        "sourceMap": true,
+        "noImplicitAny": false,
+        "moduleResolution": "node",
+        "resolveJsonModule": true,
+        "strictNullChecks": false,
+        "allowSyntheticDefaultImports": false,
+        "experimentalDecorators": true,
+        "lib": [
+            "dom",
+            "es7"
+        ]
+    },
+    "include": ["../types.d.ts"]
+}
