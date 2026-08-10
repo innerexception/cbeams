@@ -33,12 +33,22 @@ const shipOrbitPhase = (id:string) => {
 const SOLAR_MILL_ROTATION_SPEED = 0.00016 // radians per ms
 
 // A CRV's 23mm cannon: how often it can fire, how much damage a hit does, and how long a burst's
-// tracer dots stay on screen. Tracers render in the same wireframe green as everything else.
+// tracer dots stay on screen. Tracers render in the same wireframe green as everything else. Its
+// cannon can also target an incoming missile instead of a ship, with a chance to shoot it down.
 const CRV_FIRE_COOLDOWN_MS = 350
 const CRV_DAMAGE = 1
 const TRACER_LIFETIME_MS = 220
+const MISSILE_INTERCEPT_CHANCE = 0.4
 
-// Wreckage left behind by a destroyed ship lingers for 10 seconds, fading out over that time.
+// A DDG fires a homing missile at its nearest target in range once a second. It always eventually
+// catches a non-evasive target (its speed comfortably outruns any ship), unless intercepted first.
+const DDG_FIRE_COOLDOWN_MS = 1000
+const MISSILE_DAMAGE = 5
+const MISSILE_SPEED_PX_S = 220
+const MISSILE_MAX_LIFETIME_MS = 8000
+
+// Wreckage left behind by a destroyed ship (or a missile detonating) lingers for 10 seconds, fading
+// out over that time.
 const SHATTER_LIFETIME_MS = 10000
 
 // How many CRVs the enemy base launches at the player, once, at the start of the match.
@@ -47,6 +57,16 @@ const ENEMY_RAID_SIZE = 3
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards.
 const getStructureRadius = (structure:BaseData|FactoryData) =>
     'kind' in structure && structure.kind !== FactoryKind.Shipyard ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
+
+// A DDG's missile: a scene-local (not app-state) homing projectile, tracked only while in flight.
+interface Missile {
+    id: string
+    faction: Faction
+    targetId: string
+    x: number
+    y: number
+    createdAt: number
+}
 
 // All ships render at one standardized NATO map-symbol size, regardless of their actual sizeHex footprint.
 const NATO_ICON_SIZE = CELL_SIZE * 1.5
@@ -107,11 +127,15 @@ export default class MapScene extends Scene {
     solarMillG: GameObjects.Graphics
     combatG: GameObjects.Graphics
     shatterG: GameObjects.Graphics
+    missileG: GameObjects.Graphics
     shipLabels: Map<string, GameObjects.Text> = new Map()
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
+    missiles: Array<Missile> = []
+    enemyShipyardId: string
+    enemyRaidLaunched: boolean = false
     mapData: MapData
     origDragPoint: Phaser.Math.Vector2
     hoveredCell: {x:number, y:number}
@@ -134,12 +158,14 @@ export default class MapScene extends Scene {
         this.solarMillG = this.add.graphics()
         this.combatG = this.add.graphics()
         this.shatterG = this.add.graphics()
+        this.missileG = this.add.graphics()
 
         this.mapData = useAppStore.getState().activeMap || generateMap(MAP_SIZE)
 
         this.cameras.main.setZoom(1)
         this.centerCameraBounds()
 
+        this.spawnEnemyShipyard()
         this.drawMap()
         this.enableCameraControls()
         this.enablePlacementControls()
@@ -160,12 +186,15 @@ export default class MapScene extends Scene {
     update = (time:number, delta:number) => {
         this.moveShips(time, delta)
         this.updateCombat(time)
+        this.updateMissiles(time, delta)
+        this.checkEnemyRaid()
         this.drawProductionProgress()
         this.drawShips()
         this.drawOrders()
         this.drawSolarMills(time)
         this.drawCombat(time)
         this.drawShatters(time)
+        this.drawMissiles()
 
         this.selectionG.clear()
         const { selectedFactoryId, factories } = useAppStore.getState()
@@ -265,30 +294,65 @@ export default class MapScene extends Scene {
         useAppStore.getState().addShip({ id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:ShipData[type].hp })
     }
 
-    // One-time opening move: the enemy base launches a small raid straight at the player's base.
-    // These ships aren't tied to a shipyard (the enemy doesn't have one placed), so their route lives
-    // directly on the ship instead — moveShips falls back to it when shipyardId doesn't resolve.
-    spawnEnemyRaid = () => {
-        const enemyBase = this.mapData.bases.find(b => b.faction === Faction.Enemy)
-        const playerBase = this.mapData.bases.find(b => b.faction === Faction.Player)
-        if(!enemyBase || !playerBase) return
+    // One-time opening move: the enemy base plants a shipyard on whichever valid, empty spot along the
+    // edge of its territory would newly bring the most currently-unclaimed resource nodes into range,
+    // pushing their border outward to encompass them (the same way a player's own placement radius
+    // works — see isNearOwnStructure/drawPlacementRanges). The shipyard itself must sit off any node;
+    // it's the radius it projects that annexes nearby ones for future mining stations/solar mills.
+    spawnEnemyShipyard = () => {
+        const uncovered = this.mapData.nodes.filter(n => !this.isNearOwnStructure(n.x, n.y, Faction.Enemy))
+        let best:{x:number, y:number} = null
+        let bestScore = -1
 
-        const waypoints = [{ x:playerBase.x, y:playerBase.y }]
-        const center = this.toWorld(enemyBase.x, enemyBase.y)
+        for(let x=0; x<this.mapData.width; x++){
+            for(let y=0; y<this.mapData.height; y++){
+                if(!this.isValidPlacement(FactoryKind.Shipyard, x, y, Faction.Enemy)) continue
 
-        for(let i=0; i<ENEMY_RAID_SIZE; i++){
-            const angle = (i/ENEMY_RAID_SIZE) * Math.PI*2
-            const pos = { x: center.x+Math.cos(angle)*CELL_SIZE*2, y: center.y+Math.sin(angle)*CELL_SIZE*2 }
-            useAppStore.getState().addShip({
-                id:v4(), faction:Faction.Enemy, type:ShipType.CRV, shipyardId:'enemy-base',
-                x:pos.x, y:pos.y, pathIndex:0, waypoints, hp:ShipData[ShipType.CRV].hp,
-            })
+                const { x:wx, y:wy } = this.toWorld(x, y)
+                const score = uncovered.filter(n => {
+                    const p = this.toWorld(n.x, n.y)
+                    return Phaser.Math.Distance.Between(wx, wy, p.x, p.y) <= PLACEMENT_RADIUS_PX
+                }).length
+
+                if(score > bestScore){ bestScore = score; best = { x, y } }
+            }
         }
+
+        if(!best) return
+        const id = v4()
+        useAppStore.getState().addFactory({ id, x:best.x, y:best.y, kind:FactoryKind.Shipyard, faction:Faction.Enemy })
+        this.enemyShipyardId = id
     }
 
-    // Advances every ship one step towards its current route, read live off its shipyard each frame
-    // (rather than a copy taken at spawn) so edited orders steer ships that are already underway. Ships
-    // with no matching shipyard (like an enemy raid group) fall back to their own static waypoints.
+    // One-time opening move: the enemy shipyard queues up a handful of CRVs — going through the same
+    // build queue/production timer as any player-built ship, rather than spawning them for free — and
+    // then just sits on them once built. checkEnemyRaid is what actually sends them at the player.
+    spawnEnemyRaid = () => {
+        const { queueShip } = useAppStore.getState()
+        if(!this.enemyShipyardId) return
+        for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(this.enemyShipyardId, ShipType.CRV)
+    }
+
+    // Watches the enemy shipyard's own production output and, the moment it has massed a full raid's
+    // worth of ships loitering by it, gives it standing orders at the player's base — the same
+    // shipyard-orders mechanism the player uses, just driven by the AI instead of a click on the map.
+    // Runs once (checked every frame, but a no-op after firing) since it can't hook a "ship completed" event.
+    checkEnemyRaid = () => {
+        if(this.enemyRaidLaunched || !this.enemyShipyardId) return
+
+        const { ships, addWaypoint } = useAppStore.getState()
+        const massed = ships.filter(s => s.shipyardId === this.enemyShipyardId).length
+        if(massed < ENEMY_RAID_SIZE) return
+
+        const playerBase = this.mapData.bases.find(b => b.faction === Faction.Player)
+        if(!playerBase) return
+
+        addWaypoint(this.enemyShipyardId, playerBase.x, playerBase.y)
+        this.enemyRaidLaunched = true
+    }
+
+    // Advances every ship one step towards its shipyard's current route, read live off the shipyard each
+    // frame (rather than a copy taken at spawn) so edited orders steer ships that are already underway.
     // Once a ship has worked through every waypoint it loiters in a slow orbit around the last one; a
     // ship whose orders were cleared instead orbits wherever it was when that happened.
     moveShips = (time:number, deltaMs:number) => {
@@ -297,7 +361,7 @@ export default class MapScene extends Scene {
 
         const updated = ships.map(ship => {
             const shipyard = factories.find(f => f.id === ship.shipyardId)
-            const waypoints = shipyard?.waypoints || ship.waypoints || []
+            const waypoints = shipyard?.waypoints || []
             const pathIndex = ship.pathIndex ?? 0
             const step = ShipData[ship.type].speed * WAYPOINT_SPEED_MULTIPLIER * (deltaMs/1000)
             changed = true
@@ -329,33 +393,52 @@ export default class MapScene extends Scene {
         if(changed) setShips(updated)
     }
 
-    // Each CRV, on cooldown, hunts down whichever hostile ship is nearest and — if it's within the
-    // cannon's range — fires a burst (a tracer effect is queued for drawCombat to render) and marks
-    // its target for damage. Shots are resolved in a second pass so simultaneous shooters, and multiple
-    // shots landing on the same target in one frame, all apply correctly before any ship is removed.
+    // Each CRV, on cooldown, hunts down whichever hostile ship OR incoming missile is nearest and — if
+    // it's within the cannon's range — fires a burst (a tracer effect is queued for drawCombat to
+    // render). A shot at a ship always lands; a shot at a missile only has a chance to bring it down.
+    // Ship damage is resolved in a second pass so simultaneous shooters, and multiple shots landing on
+    // the same target in one frame, all apply correctly before any ship is removed.
     updateCombat = (time:number) => {
         const { ships, setShips } = useAppStore.getState()
         const range = ShipData[ShipType.CRV].weaponRange
         const shooterIds = new Set<string>()
         const damageByTarget = new Map<string, number>()
+        const interceptedMissileIds = new Set<string>()
 
         ships.forEach(ship => {
             if(ship.type !== ShipType.CRV) return
             if(ship.lastFiredAt && time - ship.lastFiredAt < CRV_FIRE_COOLDOWN_MS) return
 
-            let nearest:ShipInstanceData = null
+            let nearestShip:ShipInstanceData = null
+            let nearestMissile:Missile = null
             let nearestDist = Infinity
             ships.forEach(other => {
                 if(other.faction === ship.faction) return
                 const d = Phaser.Math.Distance.Between(ship.x, ship.y, other.x, other.y)
-                if(d < nearestDist){ nearestDist = d; nearest = other }
+                if(d < nearestDist){ nearestDist = d; nearestShip = other; nearestMissile = null }
             })
-            if(!nearest || nearestDist > range) return
+            this.missiles.forEach(missile => {
+                if(missile.faction === ship.faction || interceptedMissileIds.has(missile.id)) return
+                const d = Phaser.Math.Distance.Between(ship.x, ship.y, missile.x, missile.y)
+                if(d < nearestDist){ nearestDist = d; nearestMissile = missile; nearestShip = null }
+            })
+            if(nearestDist > range || (!nearestShip && !nearestMissile)) return
 
-            this.tracers.push({ x1:ship.x, y1:ship.y, x2:nearest.x, y2:nearest.y, createdAt:time })
             shooterIds.add(ship.id)
-            damageByTarget.set(nearest.id, (damageByTarget.get(nearest.id) || 0) + CRV_DAMAGE)
+            if(nearestShip){
+                this.tracers.push({ x1:ship.x, y1:ship.y, x2:nearestShip.x, y2:nearestShip.y, createdAt:time })
+                damageByTarget.set(nearestShip.id, (damageByTarget.get(nearestShip.id) || 0) + CRV_DAMAGE)
+            }
+            else {
+                this.tracers.push({ x1:ship.x, y1:ship.y, x2:nearestMissile.x, y2:nearestMissile.y, createdAt:time })
+                if(Math.random() < MISSILE_INTERCEPT_CHANCE) interceptedMissileIds.add(nearestMissile.id)
+            }
         })
+
+        if(interceptedMissileIds.size > 0){
+            this.missiles.forEach(m => { if(interceptedMissileIds.has(m.id)) this.shatters.push({ x:m.x, y:m.y, createdAt:time, seed:m.id }) })
+            this.missiles = this.missiles.filter(m => !interceptedMissileIds.has(m.id))
+        }
 
         if(shooterIds.size === 0) return
 
@@ -372,6 +455,84 @@ export default class MapScene extends Scene {
         }).filter(ship => ship !== null)
 
         setShips(updated)
+    }
+
+    // Each DDG, once a second, launches a homing missile at its nearest hostile ship in range. The
+    // missile is a scene-local projectile (not stored in the app state) that steers towards its
+    // target's live position every frame; on arrival it applies its damage and leaves a shatter effect
+    // at the impact point, reusing the same wreckage visual as a destroyed ship (see drawShatters).
+    updateMissiles = (time:number, deltaMs:number) => {
+        const { ships, setShips } = useAppStore.getState()
+        const range = ShipData[ShipType.DDG].weaponRange
+        const shooterIds = new Set<string>()
+
+        ships.forEach(ship => {
+            if(ship.type !== ShipType.DDG) return
+            if(ship.lastFiredAt && time - ship.lastFiredAt < DDG_FIRE_COOLDOWN_MS) return
+
+            let nearest:ShipInstanceData = null
+            let nearestDist = Infinity
+            ships.forEach(other => {
+                if(other.faction === ship.faction) return
+                const d = Phaser.Math.Distance.Between(ship.x, ship.y, other.x, other.y)
+                if(d < nearestDist){ nearestDist = d; nearest = other }
+            })
+            if(!nearest || nearestDist > range) return
+
+            shooterIds.add(ship.id)
+            this.missiles.push({ id:v4(), faction:ship.faction, targetId:nearest.id, x:ship.x, y:ship.y, createdAt:time })
+        })
+
+        if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship))
+
+        if(this.missiles.length === 0) return
+
+        const liveShips = useAppStore.getState().ships
+        const damageByTarget = new Map<string, number>()
+        const spentMissileIds = new Set<string>()
+        const step = MISSILE_SPEED_PX_S * (deltaMs/1000)
+
+        this.missiles.forEach(missile => {
+            const target = liveShips.find(s => s.id === missile.targetId)
+            if(!target || time - missile.createdAt > MISSILE_MAX_LIFETIME_MS){
+                spentMissileIds.add(missile.id)
+                return
+            }
+
+            const dist = Phaser.Math.Distance.Between(missile.x, missile.y, target.x, target.y)
+            if(dist <= step){
+                damageByTarget.set(target.id, (damageByTarget.get(target.id) || 0) + MISSILE_DAMAGE)
+                this.shatters.push({ x:target.x, y:target.y, createdAt:time, seed:missile.id })
+                spentMissileIds.add(missile.id)
+                return
+            }
+
+            const angle = Math.atan2(target.y-missile.y, target.x-missile.x)
+            missile.x += Math.cos(angle)*step
+            missile.y += Math.sin(angle)*step
+        })
+
+        if(spentMissileIds.size > 0) this.missiles = this.missiles.filter(m => !spentMissileIds.has(m.id))
+
+        if(damageByTarget.size > 0){
+            const afterImpact = useAppStore.getState().ships.map(ship => {
+                const damage = damageByTarget.get(ship.id)
+                if(damage === undefined) return ship
+                const hp = ship.hp - damage
+                return hp <= 0 ? null : { ...ship, hp }
+            }).filter(ship => ship !== null)
+            useAppStore.getState().setShips(afterImpact)
+        }
+    }
+
+    // Missiles in flight render as small homing dots, same wireframe green as everything else.
+    drawMissiles = () => {
+        const g = this.missileG
+        g.clear()
+        this.missiles.forEach(m => {
+            g.fillStyle(GREEN, 0.9)
+            g.fillCircle(m.x, m.y, 2)
+        })
     }
 
     // Machine-gun tracer fire: a short burst of small dots travelling along the shot's line, fading
@@ -760,22 +921,24 @@ export default class MapScene extends Scene {
 
     findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().factories.find(f => f.x === gridX && f.y === gridY)
 
-    // Placement is allowed anywhere within the placement radius of one of the player's own structures (base or factory).
-    isNearOwnStructure = (gridX:number, gridY:number) => {
+    // Placement is allowed anywhere within the placement radius of one of a faction's own structures
+    // (base or factory). Defaults to the player so existing call sites are unaffected; the AI reuses
+    // this with Faction.Enemy to evaluate its own territory the same way the player's is evaluated.
+    isNearOwnStructure = (gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const ownBases = this.mapData.bases.filter(b => b.faction === Faction.Player)
-        const ownFactories = useAppStore.getState().factories.filter(f => f.faction === Faction.Player)
+        const ownBases = this.mapData.bases.filter(b => b.faction === faction)
+        const ownFactories = useAppStore.getState().factories.filter(f => f.faction === faction)
         return [...ownBases, ...ownFactories].some(s => {
             const p = this.toWorld(s.x, s.y)
             return Phaser.Math.Distance.Between(x, y, p.x, p.y) <= getStructureRadius(s)
         })
     }
 
-    isValidPlacement = (kind:FactoryKind, gridX:number, gridY:number) => {
+    isValidPlacement = (kind:FactoryKind, gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
         if(this.findFactoryAt(gridX, gridY)) return false
         if(this.mapData.bases.some(b => b.x === gridX && b.y === gridY)) return false
-        if(getEnergyStatus().energyRemaining - getFactoryEnergyCost(kind) < 0) return false
+        if(getEnergyStatus(faction).energyRemaining - getFactoryEnergyCost(kind) < 0) return false
 
         const worldPos = this.toWorld(gridX, gridY)
         const overlapsShip = useAppStore.getState().ships.some(s => {
@@ -786,11 +949,11 @@ export default class MapScene extends Scene {
 
         const node = this.findNodeAt(gridX, gridY)
 
-        if(kind === FactoryKind.MiningStation) return node?.kind === NodeKind.Asteroid && this.isNearOwnStructure(gridX, gridY)
-        if(kind === FactoryKind.SolarMill) return node?.kind === NodeKind.Star && this.isNearOwnStructure(gridX, gridY)
+        if(kind === FactoryKind.MiningStation) return node?.kind === NodeKind.Asteroid && this.isNearOwnStructure(gridX, gridY, faction)
+        if(kind === FactoryKind.SolarMill) return node?.kind === NodeKind.Star && this.isNearOwnStructure(gridX, gridY, faction)
         if(node) return false
 
-        return this.isNearOwnStructure(gridX, gridY)
+        return this.isNearOwnStructure(gridX, gridY, faction)
     }
 
     updatePreview = () => {
@@ -804,18 +967,20 @@ export default class MapScene extends Scene {
 
     enablePlacementControls = () => {
         this.input.on('pointerdown', () => {
-            const { placingFactory, setPlacingFactory, setSelectedFactoryId, addFactory, factories, settingWaypointsFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
+            const { placingFactory, setPlacingFactory, setSelectedFactoryId, addFactory, factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
             if(!this.hoveredCell) return
 
-            if(settingWaypointsFactoryId){
+            // Selecting one of the player's own shipyards puts the map straight into orders-editing mode —
+            // the Orders button in FactoryToolbar is just a label now, not a prerequisite for this.
+            const selectedShipyard = factories.find(f => f.id === selectedFactoryId && f.kind === FactoryKind.Shipyard && f.faction === Faction.Player)
+            if(selectedShipyard){
                 const { x, y } = this.hoveredCell
                 if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
 
                 // Clicking an existing waypoint removes it instead of dropping a new one on top of it.
-                const shipyard = factories.find(f => f.id === settingWaypointsFactoryId)
-                const existingIndex = shipyard?.waypoints?.findIndex(w => w.x === x && w.y === y) ?? -1
-                if(existingIndex >= 0) removeWaypoint(settingWaypointsFactoryId, existingIndex)
-                else addWaypoint(settingWaypointsFactoryId, x, y)
+                const existingIndex = selectedShipyard.waypoints?.findIndex(w => w.x === x && w.y === y) ?? -1
+                if(existingIndex >= 0) removeWaypoint(selectedShipyard.id, existingIndex)
+                else addWaypoint(selectedShipyard.id, x, y)
                 return
             }
 
@@ -843,10 +1008,9 @@ export default class MapScene extends Scene {
         })
 
         this.input.keyboard.on('keydown-ESC', () => {
-            const { setPlacingFactory, setSelectedFactoryId, setSettingWaypointsFactoryId } = useAppStore.getState()
+            const { setPlacingFactory, setSelectedFactoryId } = useAppStore.getState()
             setPlacingFactory(null)
             setSelectedFactoryId(null)
-            setSettingWaypointsFactoryId(null)
             this.previewG.clear()
         })
     }

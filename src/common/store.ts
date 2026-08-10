@@ -29,7 +29,6 @@ interface AppState {
   ships: Array<ShipInstanceData>;
   placingFactory: FactoryKind | null;
   selectedFactoryId: string | null;
-  settingWaypointsFactoryId: string | null;
   metal: number;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
@@ -39,7 +38,6 @@ interface AppState {
   addFactory: (factory: FactoryData) => void;
   setPlacingFactory: (kind: FactoryKind | null) => void;
   setSelectedFactoryId: (id: string | null) => void;
-  setSettingWaypointsFactoryId: (id: string | null) => void;
   addWaypoint: (shipyardId: string, x: number, y: number) => void;
   removeWaypoint: (shipyardId: string, index: number) => void;
   clearWaypoints: (shipyardId: string) => void;
@@ -60,7 +58,6 @@ const initialState = {
   ships: [] as Array<ShipInstanceData>,
   placingFactory: null as FactoryKind | null,
   selectedFactoryId: null as string | null,
-  settingWaypointsFactoryId: null as string | null,
   metal: 0,
 };
 
@@ -75,14 +72,11 @@ export const useAppStore = create<AppState>((set) => ({
   setPlacingFactory: (placingFactory) => set((state) => ({
     placingFactory,
     selectedFactoryId: placingFactory ? null : state.selectedFactoryId,
-    settingWaypointsFactoryId: placingFactory ? null : state.settingWaypointsFactoryId,
   })),
   setSelectedFactoryId: (selectedFactoryId) => set((state) => ({
     selectedFactoryId,
     placingFactory: selectedFactoryId ? null : state.placingFactory,
-    settingWaypointsFactoryId: selectedFactoryId === state.settingWaypointsFactoryId ? state.settingWaypointsFactoryId : null,
   })),
-  setSettingWaypointsFactoryId: (settingWaypointsFactoryId) => set({ settingWaypointsFactoryId }),
   // Existing ships from this shipyard retarget onto the edited route whenever orders change, resuming
   // from whichever waypoint is nearest to where each ship currently is rather than starting over.
   addWaypoint: (shipyardId, x, y) => set((state) => {

@@ -26,15 +26,13 @@ const hints = {
 }
 
 export default () => {
-    const { placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, settingWaypointsFactoryId, setSettingWaypointsFactoryId, clearWaypoints } = useAppStore((state) => ({
+    const { placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints } = useAppStore((state) => ({
         placingFactory: state.placingFactory,
         setPlacingFactory: state.setPlacingFactory,
         selectedFactoryId: state.selectedFactoryId,
         setSelectedFactoryId: state.setSelectedFactoryId,
         factories: state.factories,
         queueShip: state.queueShip,
-        settingWaypointsFactoryId: state.settingWaypointsFactoryId,
-        setSettingWaypointsFactoryId: state.setSettingWaypointsFactoryId,
         clearWaypoints: state.clearWaypoints,
     }))
 
@@ -53,7 +51,8 @@ export default () => {
         const queue = selectedFactory.queue || []
         const queueFull = queue.length >= MAX_QUEUE
         const waypoints = selectedFactory.waypoints || []
-        const isSettingWaypoints = settingWaypointsFactoryId === selectedFactory.id
+        // Orders editing is always live while a shipyard is selected (see MapScene's click handler) —
+        // this button no longer gates that, it's kept purely as a labeled indicator of the mode.
 
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
@@ -64,18 +63,16 @@ export default () => {
                     <div style={toolButtonStyle(false)} onClick={()=>setSelectedFactoryId(null)}>Cancel</div>
                 </div>
                 <div style={{ marginTop:8, display:'flex' }}>
-                    <div style={toolButtonStyle(isSettingWaypoints)} onClick={()=>setSettingWaypointsFactoryId(isSettingWaypoints ? null : selectedFactory.id)}>
+                    <div style={toolButtonStyle(true)}>
                         Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
                     </div>
                     {waypoints.length > 0 && <div style={toolButtonStyle(false)} onClick={()=>clearWaypoints(selectedFactory.id)}>Clear Orders</div>}
                 </div>
-                {isSettingWaypoints && (
-                    <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>
-                        {waypoints.length >= MAX_WAYPOINTS
-                            ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
-                            : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
-                    </div>
-                )}
+                <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>
+                    {waypoints.length >= MAX_WAYPOINTS
+                        ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
+                        : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
+                </div>
                 <div style={{ marginTop:8, display:'flex', gap:8 }}>
                     {Array.from({ length: MAX_QUEUE }).map((_, i) => {
                         const item = queue[i]
