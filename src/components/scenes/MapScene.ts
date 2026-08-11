@@ -1,9 +1,10 @@
 import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
-import { useAppStore, AppState } from "../../common/store";
+import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
+import { spawnEnemyShipyard, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
 import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
@@ -12,7 +13,7 @@ import {
     DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX,
     MLRS_FIRE_COOLDOWN_MS, MLRS_RANGE_PX, MISSILE_SALVO_SIZE, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
     THADD_SALVO_SIZE,
-    SHATTER_LIFETIME_MS, ENEMY_RAID_SIZE,
+    SHATTER_LIFETIME_MS,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
@@ -129,10 +130,12 @@ export default class MapScene extends Scene {
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
 
+    // Enemy AI state — read/written by the helper functions in src/common/AIPlayers.ts, which take
+    // this scene as their first argument rather than owning the state themselves.
     enemyShipyardId: string
     enemyRaidLaunched: boolean = false
-    // Every player BLM the enemy has already reacted to (see buildEnemyThadd) — tracked by id, not a
-    // running count, so a BLM that's destroyed and later rebuilt still triggers a fresh reaction.
+    // Every player BLM the enemy has already reacted to (see AIPlayers' buildEnemyThadd) — tracked by
+    // id, not a running count, so a BLM that's destroyed and later rebuilt still triggers a fresh reaction.
     reactedBlmIds: Set<string> = new Set()
     gameOver: boolean = false
     mapData: MapData
@@ -179,17 +182,17 @@ export default class MapScene extends Scene {
         this.centerCameraBounds()
 
         this.spawnBases()
-        this.spawnEnemyShipyard()
+        spawnEnemyShipyard(this)
         this.drawMap()
         this.enableCameraControls()
         this.enablePlacementControls()
-        this.spawnEnemyRaid()
+        spawnEnemyRaid(this)
 
         this.time.addEvent({ delay: 500, loop: true, callback: this.tickProduction })
 
         this.unsubscribe = useAppStore.subscribe((state, prevState) => {
             if(state.placingFactory !== prevState.placingFactory) this.updatePreview()
-            this.checkEnemyBlmDefense(state)
+            checkEnemyBlmDefense(this, state)
         })
         this.events.once('shutdown', () => this.unsubscribe())
 
@@ -229,7 +232,7 @@ export default class MapScene extends Scene {
         this.updateBlm(time)
         this.updateThadd(time)
         this.updateMissiles(time, delta)
-        this.checkEnemyRaid()
+        checkEnemyRaid(this)
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
@@ -359,103 +362,6 @@ export default class MapScene extends Scene {
             useAppStore.getState().addFactory(factory)
             this.createBuildingSprite(factory)
         })
-    }
-
-    // One-time opening move: the enemy base plants a shipyard on whichever valid, empty spot along the
-    // edge of its territory would newly bring the most currently-unclaimed resource nodes into range,
-    // pushing their border outward to encompass them (the same way a player's own placement radius
-    // works — see isNearOwnStructure/drawPlacementRanges). The shipyard itself must sit off any node;
-    // it's the radius it projects that annexes nearby ones for future mining stations/solar mills.
-    spawnEnemyShipyard = () => {
-        const uncovered = this.mapData.nodes.filter(n => !this.isNearOwnStructure(n.x, n.y, Faction.Enemy))
-        let best:{x:number, y:number} = null
-        let bestScore = -1
-
-        for(let x=0; x<this.mapData.width; x++){
-            for(let y=0; y<this.mapData.height; y++){
-                if(!this.isValidPlacement(BuildingType.LogisticsCenter, x, y, Faction.Enemy)) continue
-
-                const { x:wx, y:wy } = this.toWorld(x, y)
-                const score = uncovered.filter(n => {
-                    const p = this.toWorld(n.x, n.y)
-                    return Phaser.Math.Distance.Between(wx, wy, p.x, p.y) <= PLACEMENT_RADIUS_PX
-                }).length
-
-                if(score > bestScore){ bestScore = score; best = { x, y } }
-            }
-        }
-
-        if(!best) return
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.LogisticsCenter, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.LogisticsCenter) }
-        useAppStore.getState().addFactory(factory)
-        this.createBuildingSprite(factory)
-        this.enemyShipyardId = factory.id
-    }
-
-    // One-time opening move: the enemy shipyard queues up a handful of kamikaze drones — going through
-    // the same build queue/production timer as any player-built ship, rather than spawning them for
-    // free — and then just sits on them once built. checkEnemyRaid is what actually sends them at the player.
-    spawnEnemyRaid = () => {
-        const { queueShip } = useAppStore.getState()
-        if(!this.enemyShipyardId) return
-        for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(this.enemyShipyardId, VehicleType.KK)
-    }
-
-    // Watches the enemy shipyard's own production output and, the moment it has massed a full raid's
-    // worth of ships loitering by it, gives it standing orders at the player's base — the same
-    // shipyard-orders mechanism the player uses, just driven by the AI instead of a click on the map.
-    // Runs once (checked every frame, but a no-op after firing) since it can't hook a "ship completed" event.
-    checkEnemyRaid = () => {
-        if(this.enemyRaidLaunched || !this.enemyShipyardId) return
-
-        const { vehicles: ships, addWaypoint } = useAppStore.getState()
-        const massed = ships.filter(s => s.shipyardId === this.enemyShipyardId).length
-        if(massed < ENEMY_RAID_SIZE) return
-
-        const playerBase = this.mapData.bases.find(b => b.faction === Faction.Player)
-        if(!playerBase) return
-
-        addWaypoint(this.enemyShipyardId, playerBase.x, playerBase.y)
-        this.enemyRaidLaunched = true
-    }
-
-    // Reactive defense: fires off the store subscription in create(), so it's checked on every state
-    // change rather than polled per frame. The moment a player BLM the enemy hasn't seen before shows
-    // up in the store — built, not just queued — the enemy responds by building a THADD of its own
-    // (see buildEnemyThadd). Tracking reacted-to ids rather than a count means a BLM that's destroyed
-    // and later rebuilt still draws a fresh response.
-    checkEnemyBlmDefense = (state:AppState) => {
-        const newPlayerBlms = state.buildings.filter(b => b.faction === Faction.Player && b.kind === BuildingType.BLM && !this.reactedBlmIds.has(b.id))
-        newPlayerBlms.forEach(b => {
-            this.reactedBlmIds.add(b.id)
-            this.buildEnemyThadd()
-        })
-    }
-
-    // Places a THADD as close to the enemy's own base as any currently-valid cell allows — same
-    // isValidPlacement gate everything else builds through (territory, logistics budget, no overlap),
-    // just scored by raw distance to home rather than spawnEnemyShipyard's node-coverage heuristic,
-    // since this is a defensive reaction, not a territory grab. A no-op if nowhere valid is found
-    // (map fully claimed, or the logistics budget has no room left).
-    buildEnemyThadd = () => {
-        const enemyBase = this.mapData.bases.find(b => b.faction === Faction.Enemy)
-        if(!enemyBase) return
-
-        let best:{x:number, y:number} = null
-        let bestDistSq = Infinity
-
-        for(let x=0; x<this.mapData.width; x++){
-            for(let y=0; y<this.mapData.height; y++){
-                if(!this.isValidPlacement(BuildingType.THADD, x, y, Faction.Enemy)) continue
-                const distSq = (x-enemyBase.x)**2 + (y-enemyBase.y)**2
-                if(distSq < bestDistSq){ bestDistSq = distSq; best = { x, y } }
-            }
-        }
-
-        if(!best) return
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.THADD, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.THADD) }
-        useAppStore.getState().addFactory(factory)
-        this.createBuildingSprite(factory)
     }
 
     // The match ends the moment either faction's Base building is destroyed — called from the onDeath
