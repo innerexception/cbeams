@@ -15,18 +15,10 @@ interface BaseData {
     y: number
 }
 
-interface ResourceNodeData {
-    id: string
-    x: number
-    y: number
-    kind: import('./enum').ResourceNode
-}
-
 interface MapData {
     width: number
     height: number
     bases: Array<BaseData>
-    nodes: Array<ResourceNodeData>
 }
 
 interface ProductionQueueItem {
@@ -49,7 +41,6 @@ interface BuildingData {
     y: number
     kind: import('./enum').BuildingType
     faction: import('./enum').Faction
-    nodeId?: string
     queue?: Array<ProductionQueueItem>
     waypoints?: Array<{ x:number, y:number }>
     hp: number

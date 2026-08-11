@@ -2,7 +2,7 @@ import { v4 } from "uuid"
 import type MapScene from "../components/scenes/MapScene"
 import { useAppStore, AppState } from "./store"
 import { Faction, BuildingType, VehicleType, BuildingData } from "../../enum"
-import { PLACEMENT_RADIUS_PX, ENEMY_RAID_SIZE } from "./Constants"
+import { ENEMY_RAID_SIZE } from "./Constants"
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reaches back into it only for the
@@ -11,27 +11,21 @@ import { PLACEMENT_RADIUS_PX, ENEMY_RAID_SIZE } from "./Constants"
 // enemyRaidLaunched, reactedBlmIds) — the same primitives the player's own actions go through, so the
 // AI can never place/build anything the player couldn't.
 
-// One-time opening move: the enemy base plants a shipyard on whichever valid, empty spot along the
-// edge of its territory would newly bring the most currently-unclaimed resource nodes into range,
-// pushing their border outward to encompass them (the same way a player's own placement radius
-// works — see isNearOwnStructure/drawPlacementRanges). The shipyard itself must sit off any node;
-// it's the radius it projects that annexes nearby ones for future mining stations/solar mills.
+// One-time opening move: the enemy base plants its shipyard on whichever valid, empty cell sits
+// closest to its own base — the same "closest valid cell to home" heuristic buildEnemyThadd uses for
+// its reactive placement, just run once at the very start of the match.
 export const spawnEnemyShipyard = (scene:MapScene) => {
-    const uncovered = scene.mapData.nodes.filter(n => !scene.isNearOwnStructure(n.x, n.y, Faction.Enemy))
+    const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
+    if(!enemyBase) return
+
     let best:{x:number, y:number} = null
-    let bestScore = -1
+    let bestDistSq = Infinity
 
     for(let x=0; x<scene.mapData.width; x++){
         for(let y=0; y<scene.mapData.height; y++){
             if(!scene.isValidPlacement(BuildingType.LogisticsCenter, x, y, Faction.Enemy)) continue
-
-            const { x:wx, y:wy } = scene.toWorld(x, y)
-            const score = uncovered.filter(n => {
-                const p = scene.toWorld(n.x, n.y)
-                return Phaser.Math.Distance.Between(wx, wy, p.x, p.y) <= PLACEMENT_RADIUS_PX
-            }).length
-
-            if(score > bestScore){ bestScore = score; best = { x, y } }
+            const distSq = (x-enemyBase.x)**2 + (y-enemyBase.y)**2
+            if(distSq < bestDistSq){ bestDistSq = distSq; best = { x, y } }
         }
     }
 
@@ -82,11 +76,10 @@ export const checkEnemyBlmDefense = (scene:MapScene, state:AppState) => {
     })
 }
 
-// Places a THADD as close to the enemy's own base as any currently-valid cell allows — same
+// Places a THADD as close to the enemy's own base as any currently-valid cell allows — the same
 // isValidPlacement gate everything else builds through (territory, logistics budget, no overlap),
-// just scored by raw distance to home rather than spawnEnemyShipyard's node-coverage heuristic,
-// since this is a defensive reaction, not a territory grab. A no-op if nowhere valid is found
-// (map fully claimed, or the logistics budget has no room left).
+// and the same "closest valid cell to home" heuristic spawnEnemyShipyard uses. A no-op if nowhere
+// valid is found (map fully claimed, or the logistics budget has no room left).
 export const buildEnemyThadd = (scene:MapScene) => {
     const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
     if(!enemyBase) return

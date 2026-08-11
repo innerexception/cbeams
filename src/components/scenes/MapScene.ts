@@ -5,7 +5,7 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { spawnEnemyShipyard, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
-import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
+import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -101,8 +101,8 @@ type BodyKind = 'ship' | 'building' | 'missile'
 
 export default class MapScene extends Scene {
 
-    // Static/decorative art: the map grid, placement-range bubbles, resource nodes, bases. None of this
-    // needs a physics body — it never moves and nothing ever collides with it.
+    // Static/decorative art: the map grid, placement-range bubbles, bases. None of this needs a
+    // physics body — it never moves and nothing ever collides with it.
     g: GameObjects.Graphics
     previewG: GameObjects.Graphics
     selectionG: GameObjects.Graphics
@@ -1000,7 +1000,6 @@ export default class MapScene extends Scene {
         })
 
         this.drawPlacementRanges()
-        this.mapData.nodes.forEach(this.drawNode)
     }
 
     // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected.
@@ -1131,40 +1130,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    drawNode = (node:ResourceNodeData) => {
-        const g = this.g
-        const { x, y } = this.toWorld(node.x, node.y)
-        const rand = seededRandom(node.id)
-
-        if(node.kind === ResourceNode.Asteroid){
-            const baseRadius = CELL_SIZE * 0.4
-            const sides = 8
-            const points = []
-            for(let i=0; i<sides; i++){
-                const angle = (i/sides) * Math.PI*2
-                const radius = baseRadius * (0.6 + rand()*0.5)
-                points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*radius, y + Math.sin(angle)*radius))
-            }
-            g.lineStyle(1.5, GREEN_HEX, 1)
-            g.strokePoints(points, true, true)
-        }
-        else {
-            const outerRadius = CELL_SIZE * 0.5
-            const innerRadius = outerRadius * 0.45
-            const spikes = 5
-            const points = []
-            for(let i=0; i<spikes*2; i++){
-                const angle = (i/(spikes*2)) * Math.PI*2 - Math.PI/2
-                const radius = i % 2 === 0 ? outerRadius : innerRadius
-                points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*radius, y + Math.sin(angle)*radius))
-            }
-            g.fillStyle(GREEN_HEX, 0.15)
-            g.fillPoints(points, true)
-            g.lineStyle(1.5, GREEN_HEX, 1)
-            g.strokePoints(points, true, true)
-        }
-    }
-
     // Shared shape renderer so the placement preview matches the built factory exactly, and so
     // generateTextures can bake the same shape into each building's sprite texture. `rotation` (radians)
     // only affects the Solar Mill's rays — used solely for the flat preview; the live sprite spins itself.
@@ -1236,8 +1201,6 @@ export default class MapScene extends Scene {
         this.drawFactoryShapeAt(g, kind, x, y, color, alpha, rotation)
     }
 
-    findNodeAt = (gridX:number, gridY:number) => this.mapData.nodes.find(n => n.x === gridX && n.y === gridY)
-
     findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().buildings.find(f => f.x === gridX && f.y === gridY)
 
     // Placement is allowed anywhere within the placement radius of one of a faction's own structures —
@@ -1265,9 +1228,6 @@ export default class MapScene extends Scene {
             return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, s.x, s.y) < minDist
         })
         if(overlapsShip) return false
-
-        const node = this.findNodeAt(gridX, gridY)
-        if(node) return false
 
         return this.isNearOwnStructure(gridX, gridY, faction)
     }
@@ -1308,14 +1268,12 @@ export default class MapScene extends Scene {
 
             if(!this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)) return
 
-            const node = this.findNodeAt(this.hoveredCell.x, this.hoveredCell.y)
             const factory:BuildingData = {
                 id: v4(),
                 x: this.hoveredCell.x,
                 y: this.hoveredCell.y,
                 kind: placingFactory,
                 faction: Faction.Player,
-                nodeId: node?.id,
                 hp: getBuildingMaxHp(placingFactory)
             }
             addFactory(factory)
