@@ -113,9 +113,13 @@ type BodyKind = 'ship' | 'building' | 'missile'
 
 export default class MapScene extends Scene {
 
-    // Static/decorative art: the map grid, placement-range bubbles, bases. None of this needs a
-    // physics body — it never moves and nothing ever collides with it.
+    // Static/decorative art: the map grid, bases, terrain. None of this needs a physics body — it
+    // never moves and nothing ever collides with it.
     g: GameObjects.Graphics
+    // Territory/sight-range bubbles get their own layer, redrawn every frame (see drawPlacementRanges)
+    // since unit sight range moves continuously — unlike the rest of the static art above, which only
+    // ever needs to be touched when a building is added or removed.
+    rangeG: GameObjects.Graphics
     previewG: GameObjects.Graphics
     selectionG: GameObjects.Graphics
     progressG: GameObjects.Graphics
@@ -164,6 +168,7 @@ export default class MapScene extends Scene {
         this.cameras.main.setBackgroundColor('#000000')
         this.input.mouse.disableContextMenu()
         this.g = this.add.graphics()
+        this.rangeG = this.add.graphics()
         this.previewG = this.add.graphics()
         this.selectionG = this.add.graphics()
         this.progressG = this.add.graphics()
@@ -249,6 +254,7 @@ export default class MapScene extends Scene {
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         this.updateFogOfWar()
+        this.drawPlacementRanges()
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
@@ -408,21 +414,22 @@ export default class MapScene extends Scene {
     }
 
     // Fog of war: the player's territory border (the same placement-radius circles drawn by
-    // drawPlacementRanges) doubles as their sight range. Every enemy building/ship is only ever
-    // visible while it's standing inside that border — during the placement phase nothing enemy is
-    // visible at all, no matter what (the player has no border yet to begin with), and once combat
-    // starts visibility is re-evaluated fresh every frame as both sides' units move around.
+    // drawPlacementRanges) plus every player unit's own sight radius together make up their sight
+    // range. Every enemy building/ship is only ever visible while it's standing inside that combined
+    // area — during the placement phase nothing enemy is visible at all, no matter what (the player
+    // has no border or units yet to begin with), and once combat starts visibility is re-evaluated
+    // fresh every frame as both sides' units move around.
     updateFogOfWar = () => {
         const { phase, buildings, vehicles } = useAppStore.getState()
 
         buildings.filter(f => f.faction === Faction.Enemy).forEach(f => {
             const { x, y } = this.toWorld(f.x, f.y)
-            const visible = phase === 'combat' && this.isWithinFactionStructureRadius(x, y, Faction.Player)
+            const visible = phase === 'combat' && this.isWithinFactionSightRange(x, y, Faction.Player)
             this.buildingSprites.get(f.id)?.setVisible(visible)
         })
 
         vehicles.filter(s => s.faction === Faction.Enemy).forEach(s => {
-            const visible = phase === 'combat' && this.isWithinFactionStructureRadius(s.x, s.y, Faction.Player)
+            const visible = phase === 'combat' && this.isWithinFactionSightRange(s.x, s.y, Faction.Player)
             this.shipSprites.get(s.id)?.setVisible(visible)
             this.shipLabels.get(s.id)?.setVisible(visible)
         })
@@ -793,7 +800,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
             const kind:BodyKind = obj.getData('kind')
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
 
@@ -824,7 +831,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
             const building = this.getBuildingEntry(obj)
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(building && building.faction !== fromFaction && d < nearestBuildingDist){ nearestBuildingDist = d; targetBuilding = obj }
@@ -844,7 +851,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active || obj.getData('kind') !== 'missile' || obj.getData('faction') === fromFaction) return
-            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(d < nearestDist){ nearestDist = d; target = obj }
         })
@@ -1075,7 +1082,8 @@ export default class MapScene extends Scene {
         })
 
         this.drawTerrain()
-        this.drawPlacementRanges()
+        // Territory/sight-range bubbles are drawn every frame from update() instead (see rangeG) —
+        // not here, since a building add/remove is far from the only thing that should refresh them.
     }
 
     // Topographic contour lines over the map's terrain field (see MapGenerator's buildTerrain).
@@ -1145,10 +1153,16 @@ export default class MapScene extends Scene {
     // Placement circles behave like bubbles: each circle's own arc is only drawn where it isn't touching
     // another bubble, and wherever two bubbles touch they form a flat side (the shared chord) instead of a
     // curved overlap — trimmed by any other bubble covering part of that edge so nothing draws jagged.
+    // Every building AND every unit (its own VehicleStats.sightRadius) contributes a bubble — units move,
+    // so this runs every frame from update() rather than only whenever drawMap's static art changes.
     drawPlacementRanges = () => {
-        const g = this.g
-        const structures = useAppStore.getState().buildings
-        const circles = structures.map(s => ({ ...this.toWorld(s.x, s.y), r: getStructureRadius(s), faction: s.faction }))
+        const g = this.rangeG
+        g.clear()
+
+        const { buildings, vehicles } = useAppStore.getState()
+        const structureCircles = buildings.map(s => ({ ...this.toWorld(s.x, s.y), r: getStructureRadius(s), faction: s.faction }))
+        const unitCircles = vehicles.map(s => ({ x: s.x, y: s.y, r: VehicleData[s.type].sightRadius, faction: s.faction }))
+        const circles = [...structureCircles, ...unitCircles]
 
         // Rounded portions: each circle's boundary where it doesn't touch any other bubble.
         g.lineStyle(1, GREEN_HEX, 0.25)
@@ -1312,16 +1326,27 @@ export default class MapScene extends Scene {
     findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().buildings.find(f => f.x === gridX && f.y === gridY)
 
     // Whether a world-space point falls within the placement radius of any of a faction's own
-    // structures — this same radius doubles as both "territory border" (isNearOwnStructure, for
-    // placement) and, for the player specifically, sight range (updateFogOfWar). Takes world
-    // coordinates rather than grid ones since fog-of-war has to test continuously-moving ship
-    // positions, not just grid cells.
+    // structures — this is specifically the "territory border" used for placement (isNearOwnStructure)
+    // and doesn't include unit sight range; see isWithinFactionSightRange for the version that does.
+    // Takes world coordinates rather than grid ones since callers include continuously-moving ships.
     isWithinFactionStructureRadius = (worldX:number, worldY:number, faction:Faction) => {
         const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
         return ownFactories.some(s => {
             const p = this.toWorld(s.x, s.y)
             return Phaser.Math.Distance.Between(worldX, worldY, p.x, p.y) <= getStructureRadius(s)
         })
+    }
+
+    // Full sight range: everywhere isWithinFactionStructureRadius already covers, plus every one of
+    // that faction's own vehicles projecting its own VehicleStats.sightRadius around itself — a unit
+    // adds to the player's sight the same way a building does, it just moves. Used by updateFogOfWar
+    // and every findNearestHostile* weapon-targeting query; deliberately not used by isNearOwnStructure
+    // (placement territory stays building-only — parking a ship somewhere shouldn't open up new
+    // building placement there).
+    isWithinFactionSightRange = (worldX:number, worldY:number, faction:Faction) => {
+        if(this.isWithinFactionStructureRadius(worldX, worldY, faction)) return true
+        const ownVehicles = useAppStore.getState().vehicles.filter(s => s.faction === faction)
+        return ownVehicles.some(s => Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= VehicleData[s.type].sightRadius)
     }
 
     // Placement is allowed anywhere within the placement radius of one of a faction's own structures —

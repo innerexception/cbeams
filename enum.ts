@@ -39,10 +39,10 @@ export enum BuildingType {
 
 export const BuildingData:Record<BuildingType,BuildingMetaData> = {
     [BuildingType.LogisticsCenter]: { maxHp:40, cooldownMs:0, damage:0, rangePx:0, logisticsCost:3 },
-    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, rangePx:320, logisticsCost:2 },
+    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, rangePx:220, logisticsCost:2 },
     [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, logisticsCost:0 },
     [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:4000, logisticsCost:3 },
-    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:400, logisticsCost:3 },
+    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:600, logisticsCost:3 },
 }
 
 // KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
@@ -50,7 +50,7 @@ export const BuildingData:Record<BuildingType,BuildingMetaData> = {
 // in an area-of-effect blast either on contact or on reaching that waypoint. MLRS: a mobile ship that
 // launches a salvo of homing missiles at its nearest target in range (see updateMissiles in MapScene).
 export enum VehicleType {
-    KK='kk', ATD='atd', MLRS='mlrs'
+    KK='kk', ATD='atd', MLRS='mlrs', AWACS='AWACS'
 }
 
 // KK and ATD are unarmed drones — they don't fire a ranged weapon, they detonate on contact instead
@@ -60,9 +60,10 @@ export enum VehicleType {
 // ATD: medium drone restricted to a single waypoint — a wide-blast detonation on contact or arrival.
 // MLRS: slow, lightly armored rocket ship — launches a 3-missile salvo at its nearest target in range.
 export const VehicleData:Record<VehicleType, VehicleStats> = {
-    [VehicleType.KK]: { name:'Kamikaze Drone', speed:90, sightRadius:150, armor:5, hp:5, sizeHex:0.4, productionTimeMs:5000, targetType: TargetType.Any, logisticsCost:1 },
-    [VehicleType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:150, armor:10, hp:8, sizeHex:0.6, productionTimeMs:10000, targetType: TargetType.Building, logisticsCost:1 },
-    [VehicleType.MLRS]: { name:'MLRS', speed:20, sightRadius:200, armor:30, hp:15, sizeHex:1, productionTimeMs:12000, targetType:TargetType.Building, logisticsCost:2 },
+    [VehicleType.KK]: { name:'Kamikaze Drone', speed:90, sightRadius:150, armor:0, hp:5, sizeHex:0.4, productionTimeMs:5000, targetType: TargetType.Any, logisticsCost:1 },
+    [VehicleType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:150, armor:0, hp:8, sizeHex:0.6, productionTimeMs:10000, targetType: TargetType.Building, logisticsCost:1 },
+    [VehicleType.MLRS]: { name:'MLRS', speed:20, sightRadius:200, armor:0, hp:15, sizeHex:1, productionTimeMs:12000, targetType:TargetType.Building, logisticsCost:2 },    
+    [VehicleType.AWACS]: { name:'AWACS', speed:20, sightRadius:600, armor:0, hp:15, sizeHex:1, productionTimeMs:12000, targetType:TargetType.Any, logisticsCost:2 },
 }
 
 // Plain constant values (grid sizing, economy/combat tuning, theme colors, ...) live in
