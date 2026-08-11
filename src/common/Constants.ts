@@ -94,6 +94,15 @@ export const BLM_FIRE_COOLDOWN_MS = 10000
 export const BLM_RANGE_PX = 4000
 export const ENERGY_PER_BLM = 3
 
+// --- THADD (a placeable building, not a ship) ---
+// An anti-missile battery: on cooldown, fires a 2-missile salvo at its nearest *hostile missile* in
+// range — never a vehicle or building. An interceptor missile destroys (and is destroyed by) whatever
+// hostile missile it touches, regardless of which one it was actually launched at.
+export const THADD_FIRE_COOLDOWN_MS = 10000
+export const THADD_RANGE_PX = 400
+export const THADD_SALVO_SIZE = 2
+export const ENERGY_PER_THADD = 3
+
 // --- Wreckage ---
 // Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.
 export const SHATTER_LIFETIME_MS = 10000

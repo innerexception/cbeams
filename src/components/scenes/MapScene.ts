@@ -14,6 +14,7 @@ import {
     DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX, BUILDING_HP, BASE_HP,
     MLRS_FIRE_COOLDOWN_MS, MLRS_RANGE_PX, MISSILE_SALVO_SIZE, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
     BLM_FIRE_COOLDOWN_MS, BLM_RANGE_PX,
+    THADD_FIRE_COOLDOWN_MS, THADD_RANGE_PX, THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS, ENEMY_RAID_SIZE,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX,
     GREEN_HEX as GREEN, GREEN as GREEN_CSS, GREEN_DIM_HEX as GREEN_DIM, GREY_DIM_HEX as GREY_DIM,
@@ -37,7 +38,7 @@ const shipOrbitPhase = (id:string) => {
 }
 
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
-const FULL_RADIUS_KINDS = new Set([BuildingType.Shipyard, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM])
+const FULL_RADIUS_KINDS = new Set([BuildingType.Shipyard, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
 const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
 
 // Every building shares one HP pool (BUILDING_HP) except the tougher, non-placeable Base.
@@ -163,6 +164,9 @@ export default class MapScene extends Scene {
         // Impact damage: a missile (MLRS or BLM) touching a hostile ship or building.
         this.physics.add.overlap(this.missilesGroup, this.shipsGroup, this.onMissileShipContact, this.isHostileMissileShipPair, this)
         this.physics.add.overlap(this.missilesGroup, this.buildingsGroup, this.onMissileBuildingContact, this.isHostileMissileBuildingPair, this)
+        // Interception: a THADD interceptor touching a hostile missile destroys both, whether or not
+        // it's the specific missile that interceptor was actually launched at.
+        this.physics.add.overlap(this.missilesGroup, this.missilesGroup, this.onMissileMissileContact, this.isHostileMissilePair, this)
 
         this.mapData = useAppStore.getState().activeMap || generateMap(MAP_SIZE)
 
@@ -218,6 +222,7 @@ export default class MapScene extends Scene {
         this.updateCramTurrets(time)
         this.updateMlrs(time)
         this.updateBlm(time)
+        this.updateThadd(time)
         this.updateMissiles(time, delta)
         this.checkEnemyRaid()
 
@@ -593,6 +598,13 @@ export default class MapScene extends Scene {
         return !!building && building.faction !== missile.getData('faction')
     }
 
+    isHostileMissilePair = (a:Phaser.Types.Physics.Arcade.GameObjectWithBody, b:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+        if(a === b) return false
+        const missileA = a as Physics.Arcade.Sprite
+        const missileB = b as Physics.Arcade.Sprite
+        return missileA.active && missileB.active && missileA.getData('faction') !== missileB.getData('faction')
+    }
+
     // A drone touching a hostile ship detonates immediately, right here — no queueing. If both sides of
     // the pair are hostile drones, shipA goes off first; shipB is only then re-checked (its detonation
     // may have already killed it, e.g. caught in shipA's ATD blast) before it gets to detonate too.
@@ -705,6 +717,20 @@ export default class MapScene extends Scene {
         }))
     }
 
+    // A THADD interceptor touching a hostile missile destroys both, immediately, right here — no
+    // queueing (and no damage/hp bookkeeping needed, missiles just detonate outright).
+    onMissileMissileContact = (a:Phaser.Types.Physics.Arcade.GameObjectWithBody, b:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+        const missileA = a as Physics.Arcade.Sprite
+        const missileB = b as Physics.Arcade.Sprite
+        if(!missileA.active || !missileB.active) return
+
+        const time = this.time.now
+        this.shatters.push({ x:missileA.x, y:missileA.y, createdAt:time, seed:missileA.getData('id') })
+        this.shatters.push({ x:missileB.x, y:missileB.y, createdAt:time, seed:missileB.getData('id') })
+        missileA.destroy()
+        missileB.destroy()
+    }
+
     // Each CRAM turret, on cooldown, fires at whichever hostile ship OR incoming MLRS missile is
     // nearest within its (doubled, relative to the old mobile CRV's) range — from a fixed building
     // position instead of a mobile ship. A shot at a ship always lands; a shot at a missile only has a
@@ -798,6 +824,35 @@ export default class MapScene extends Scene {
         return targetBuilding
     }
 
+    // Same shape again, but for THADD: it only ever targets a hostile missile (never a ship or
+    // building), so the query only needs dynamic bodies and just checks kind === 'missile'.
+    findNearestHostileMissile = (fromFaction:Faction, x:number, y:number, range:number) => {
+        const hits = this.physics.overlapCirc(x, y, range, true, false)
+        let target:Physics.Arcade.Sprite = null
+        let nearestDist = Infinity
+
+        hits.forEach(body => {
+            const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
+            if(!obj.active || obj.getData('kind') !== 'missile' || obj.getData('faction') === fromFaction) return
+            const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
+            if(d < nearestDist){ nearestDist = d; target = obj }
+        })
+
+        return target
+    }
+
+    // Missiles aren't tracked in a lookup Map the way ship/building sprites are (there's no store data
+    // behind them to key one), so finding one by its id — needed so an interceptor missile can home on
+    // another missile — means a short scan of the (typically tiny) missilesGroup.
+    findMissileSpriteById = (id:string) => {
+        let found:Physics.Arcade.Sprite = null
+        this.missilesGroup.children.each((child:Physics.Arcade.Sprite) => {
+            if(child.active && child.getData('id') === id) found = child
+            return true
+        })
+        return found
+    }
+
     // Each MLRS, on cooldown, launches a whole salvo (MISSILE_SALVO_SIZE) of missiles at once, all
     // homing on whichever hostile ship is nearest in range (found the same way CRAM finds its targets).
     // MLRS only ever targets ships — see updateBlm for the vehicle-or-building version.
@@ -844,7 +899,30 @@ export default class MapScene extends Scene {
         if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
     }
 
-    spawnMissile = (faction:Faction, x:number, y:number, targetKind:'ship'|'building', targetId:string) => {
+    // Each THADD turret, on cooldown, fires a THADD_SALVO_SIZE-missile interceptor salvo at its nearest
+    // hostile missile in range — the actual kill happens on contact (see onMissileMissileContact), this
+    // just launches interceptors that home towards it.
+    updateThadd = (time:number) => {
+        const { buildings: factories, setFactories } = useAppStore.getState()
+        const shooterIds = new Set<string>()
+
+        factories.forEach(turret => {
+            if(turret.kind !== BuildingType.THADD) return
+            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < THADD_FIRE_COOLDOWN_MS) return
+
+            const { x, y } = this.toWorld(turret.x, turret.y)
+            const targetMissile = this.findNearestHostileMissile(turret.faction, x, y, THADD_RANGE_PX)
+            if(!targetMissile) return
+
+            shooterIds.add(turret.id)
+            const targetId = targetMissile.getData('id')
+            for(let i=0; i<THADD_SALVO_SIZE; i++) this.spawnMissile(turret.faction, x, y, 'missile', targetId)
+        })
+
+        if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
+    }
+
+    spawnMissile = (faction:Faction, x:number, y:number, targetKind:'ship'|'building'|'missile', targetId:string) => {
         const missile = this.physics.add.sprite(x, y, 'missile_dot')
         missile.setData('kind', 'missile' as BodyKind)
         missile.setData('id', v4())
@@ -858,15 +936,17 @@ export default class MapScene extends Scene {
     // Every in-flight missile steers towards its target's *live* position each frame (so a moving ship
     // target is still a homing threat, not just a shot at where it used to be — a building target,
     // being static, this is trivial for); impact damage is handled immediately by the overlap callback
-    // (onMissileShipContact/onMissileBuildingContact) once it actually touches something hostile. A
-    // missile whose target died, or that's been flying too long, just fizzles.
+    // (onMissileShipContact/onMissileBuildingContact/onMissileMissileContact) once it actually touches
+    // something hostile. A missile whose target died, or that's been flying too long, just fizzles.
     updateMissiles = (time:number, deltaMs:number) => {
         this.missilesGroup.children.each((child:Physics.Arcade.Sprite) => {
             if(!child.active) return true
 
             const targetId = child.getData('targetId')
-            const targetKind:'ship'|'building' = child.getData('targetKind')
-            const targetSprite = targetKind === 'building' ? this.buildingSprites.get(targetId) : this.shipSprites.get(targetId)
+            const targetKind:'ship'|'building'|'missile' = child.getData('targetKind')
+            const targetSprite = targetKind === 'building' ? this.buildingSprites.get(targetId)
+                : targetKind === 'missile' ? this.findMissileSpriteById(targetId)
+                : this.shipSprites.get(targetId)
             const createdAt = child.getData('createdAt')
 
             if(!targetSprite || time - createdAt > MISSILE_MAX_LIFETIME_MS){
@@ -1205,6 +1285,14 @@ export default class MapScene extends Scene {
             g.fillPoints(points, true)
             g.lineStyle(1.5, color, alpha)
             g.strokePoints(points, true, true)
+        }
+        else if(kind === BuildingType.THADD){
+            // An interceptor battery: a square pad watching the sky, marked with a crossed "X" array.
+            const r = CELL_SIZE * 0.55
+            g.lineStyle(2, color, alpha)
+            g.strokeRect(x-r, y-r*0.5, r*2, r)
+            g.lineBetween(x-r*0.6, y-r*1.3, x+r*0.6, y-r*0.3)
+            g.lineBetween(x+r*0.6, y-r*1.3, x-r*0.6, y-r*0.3)
         }
         else {
             const r = CELL_SIZE * 0.7
