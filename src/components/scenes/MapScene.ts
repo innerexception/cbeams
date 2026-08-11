@@ -1,11 +1,11 @@
 import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
-import { onSetScene } from "../../common/Thunks";
+import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { ShipData } from "../../common/ShipData";
-import { Faction, ResourceNode, BuildingType, VehicleType } from "../../../enum";
+import { Faction, ResourceNode, BuildingType, VehicleType, Modal } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -128,6 +128,7 @@ export default class MapScene extends Scene {
 
     enemyShipyardId: string
     enemyRaidLaunched: boolean = false
+    gameOver: boolean = false
     mapData: MapData
     origDragPoint: Phaser.Math.Vector2
     hoveredCell: {x:number, y:number}
@@ -414,6 +415,16 @@ export default class MapScene extends Scene {
         this.enemyRaidLaunched = true
     }
 
+    // The match ends the moment either faction's Base building is destroyed — called from the onDeath
+    // callback wherever a building can die (detonateDrone, onMissileBuildingContact). Guarded so a
+    // simultaneous double-kill (both bases in one frame) can't show two modals or double-pause.
+    handleBaseDestroyed = (faction:Faction) => {
+        if(this.gameOver) return
+        this.gameOver = true
+        this.scene.pause()
+        onShowModal(faction === Faction.Player ? Modal.Defeat : Modal.Victory)
+    }
+
     // --- Physics sprite lifecycle -------------------------------------------------------------------
     // Every sprite is created exactly once, at the moment its entity is actually added to the store
     // (spawnShip; spawnEnemyShipyard/enablePlacementControls for buildings), and destroyed exactly once,
@@ -648,6 +659,7 @@ export default class MapScene extends Scene {
                 this.destroyBuildingSprite(dead.id)
                 const p = this.toWorld(dead.x, dead.y)
                 this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
+                if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
             }))
         }
     }
@@ -689,6 +701,7 @@ export default class MapScene extends Scene {
             this.destroyBuildingSprite(dead.id)
             const p = this.toWorld(dead.x, dead.y)
             this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
+            if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
         }))
     }
 

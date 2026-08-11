@@ -1,5 +1,5 @@
 export enum Modal {
-    NewGame='ng', GameSetup='GameSetup'
+    NewGame='ng', GameSetup='GameSetup', Victory='victory', Defeat='defeat'
 }
 
 export enum SceneNames {
