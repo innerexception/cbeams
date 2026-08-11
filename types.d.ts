@@ -20,8 +20,6 @@ interface ResourceNodeData {
     x: number
     y: number
     kind: import('./enum').ResourceNode
-    resource: import('./enum').ResourceType
-    amount: number
 }
 
 interface MapData {
@@ -41,8 +39,8 @@ interface BuildingMetaData {
     maxHp:number
     cooldownMs:number
     damage:number
-    energyCost:number
     rangePx:number
+    logisticsCost:number
 }
 
 interface BuildingData {
@@ -51,7 +49,6 @@ interface BuildingData {
     y: number
     kind: import('./enum').BuildingType
     faction: import('./enum').Faction
-    resource?: import('./enum').ResourceType
     nodeId?: string
     queue?: Array<ProductionQueueItem>
     waypoints?: Array<{ x:number, y:number }>
@@ -68,6 +65,7 @@ interface VehicleStats {
     sizeHex: number
     productionTimeMs: number
     targetType: import('./enum').TargetType
+    logisticsCost: number
 }
 
 interface VehicleData {

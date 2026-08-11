@@ -2,13 +2,12 @@ import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { BuildingType, VehicleType, VehicleData } from '../../enum'
 import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
+import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
 const hints = {
-    [BuildingType.MiningStation]: 'Click an asteroid to build a Mining Station',
-    [BuildingType.SolarMill]: 'Click a star to build a Solar Mill',
-    [BuildingType.Shipyard]: 'Click empty ground near your base to build a Shipyard',
+    [BuildingType.LogisticsCenter]: 'Click empty ground near your base to build a Shipyard',
     [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
     [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
     [BuildingType.THADD]: 'Click empty ground near your base to build a THADD',
@@ -36,18 +35,22 @@ export default () => {
 
     const selectedFactory = factories.find(f => f.id === selectedFactoryId)
 
-    if(selectedFactory && selectedFactory.kind === BuildingType.Shipyard){
+    if(selectedFactory && selectedFactory.kind === BuildingType.LogisticsCenter){
         const queue = selectedFactory.queue || []
         const queueFull = queue.length >= MAX_QUEUE
         const waypoints = selectedFactory.waypoints || []
         // Orders editing is always live while a shipyard is selected (see MapScene's click handler) —
         // this button no longer gates that, it's kept purely as a labeled indicator of the mode.
 
+        // Recomputed every render (this component already re-renders on its 200ms tick) so a button
+        // disables the instant the shared logistics budget can no longer fit that vehicle's cost.
+        const { logisticsRemaining } = getLogisticsStatus(selectedFactory.faction)
+
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
                     {Object.values(VehicleType).map(type => (
-                        <ToolButton key={type} disabled={queueFull} onClick={()=>queueShip(selectedFactory.id, type)}>{VehicleData[type].name}</ToolButton>
+                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getVehicleLogisticsCost(type)} onClick={()=>queueShip(selectedFactory.id, type)}>{VehicleData[type].name}</ToolButton>
                     ))}
                     <ToolButton onClick={()=>setSelectedFactoryId(null)}>Cancel</ToolButton>
                 </div>
@@ -83,9 +86,7 @@ export default () => {
     return (
         <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
             <div style={{ display:'flex' }}>
-                <ToolButton active={placingFactory === BuildingType.MiningStation} onClick={()=>toggle(BuildingType.MiningStation)}>Mining Station</ToolButton>
-                <ToolButton active={placingFactory === BuildingType.SolarMill} onClick={()=>toggle(BuildingType.SolarMill)}>Solar Mill</ToolButton>
-                <ToolButton active={placingFactory === BuildingType.Shipyard} onClick={()=>toggle(BuildingType.Shipyard)}>Shipyard</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.LogisticsCenter} onClick={()=>toggle(BuildingType.LogisticsCenter)}>Shipyard</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.THADD} onClick={()=>toggle(BuildingType.THADD)}>THADD</ToolButton>

@@ -17,7 +17,7 @@ const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x
   return bestIndex;
 };
 
-interface AppState {
+export interface AppState {
   activeModal: Modal | null;
   isLoaded: boolean;
   scene: MapScene | null;
@@ -27,7 +27,6 @@ interface AppState {
   vehicles: Array<VehicleData>;
   placingFactory: BuildingType | null;
   selectedFactoryId: string | null;
-  metal: number;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
   setSave: (save: SaveFile | null) => void;
@@ -40,7 +39,6 @@ interface AppState {
   addWaypoint: (shipyardId: string, x: number, y: number) => void;
   removeWaypoint: (shipyardId: string, index: number) => void;
   clearWaypoints: (shipyardId: string) => void;
-  addMetal: (amount: number) => void;
   queueShip: (shipyardId: string, type: VehicleType) => void;
   completeQueueItem: (shipyardId: string) => void;
   addShip: (ship: VehicleData) => void;
@@ -57,7 +55,6 @@ const initialState = {
   vehicles: [] as Array<VehicleData>,
   placingFactory: null as BuildingType | null,
   selectedFactoryId: null as string | null,
-  metal: 0,
 };
 
 export const useAppStore = create<AppState>((set) => ({
@@ -125,7 +122,6 @@ export const useAppStore = create<AppState>((set) => ({
     buildings: state.buildings.map((f) => (f.id === shipyardId ? { ...f, waypoints: [] } : f)),
     vehicles: state.vehicles.map((s) => (s.shipyardId === shipyardId ? { ...s, pathIndex: 0, orbitAnchor: undefined } : s)),
   })),
-  addMetal: (amount) => set((state) => ({ metal: state.metal + amount })),
   queueShip: (shipyardId, type) => set((state) => ({
     buildings: state.buildings.map((f) => {
       if(f.id !== shipyardId) return f;

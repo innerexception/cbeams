@@ -26,10 +26,6 @@ export enum Faction {
     Player='player', Enemy='enemy'
 }
 
-export enum ResourceType {
-    Metal='metal', Energy='energy'
-}
-
 export enum TargetType {
     Building='Building',Unit='Unit',Any='Any'
 }
@@ -42,17 +38,15 @@ export enum ResourceNode {
 // promoted into a real building (physics body, hp, drone-contact target) at map load — see
 // MapScene's spawnBases. It's otherwise just another FactoryKind: hp loss/destruction works the same way.
 export enum BuildingType {
-    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base', BLM='blm', THADD='thadd'
+    LogisticsCenter='LogisticsCenter', CRAM='cram', Base='base', BLM='blm', THADD='thadd'
 }
 
 export const BuildingData:Record<BuildingType,BuildingMetaData> = {
-    [BuildingType.MiningStation]: { maxHp:40, cooldownMs:0, damage:0, energyCost:2, rangePx:0 },
-    [BuildingType.SolarMill]: { maxHp:40, cooldownMs:0, damage:0, energyCost:0, rangePx:0 },
-    [BuildingType.Shipyard]: { maxHp:40, cooldownMs:0, damage:0, energyCost:3, rangePx:0 },
-    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, energyCost:2, rangePx:320 },
-    [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, energyCost:0, rangePx:0 },
-    [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:0, energyCost:3, rangePx:4000 },
-    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, energyCost:3, rangePx:400 },
+    [BuildingType.LogisticsCenter]: { maxHp:40, cooldownMs:0, damage:0, rangePx:0, logisticsCost:3 },
+    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, rangePx:320, logisticsCost:2 },
+    [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, logisticsCost:0 },
+    [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:4000, logisticsCost:3 },
+    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:400, logisticsCost:3 },
 }
 
 // KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
@@ -70,9 +64,9 @@ export enum VehicleType {
 // ATD: medium drone restricted to a single waypoint — a wide-blast detonation on contact or arrival.
 // MLRS: slow, lightly armored rocket ship — launches a 3-missile salvo at its nearest target in range.
 export const VehicleData:Record<VehicleType, VehicleStats> = {
-    [VehicleType.KK]: { name:'Kamikaze Drone', speed:90, sightRadius:150, armor:5, hp:5, sizeHex:0.4, productionTimeMs:5000, targetType: TargetType.Any },
-    [VehicleType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:150, armor:10, hp:8, sizeHex:0.6, productionTimeMs:10000, targetType: TargetType.Building },
-    [VehicleType.MLRS]: { name:'MLRS', speed:20, sightRadius:200, armor:30, hp:15, sizeHex:1, productionTimeMs:12000, targetType:TargetType.Building },
+    [VehicleType.KK]: { name:'Kamikaze Drone', speed:90, sightRadius:150, armor:5, hp:5, sizeHex:0.4, productionTimeMs:5000, targetType: TargetType.Any, logisticsCost:1 },
+    [VehicleType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:150, armor:10, hp:8, sizeHex:0.6, productionTimeMs:10000, targetType: TargetType.Building, logisticsCost:1 },
+    [VehicleType.MLRS]: { name:'MLRS', speed:20, sightRadius:200, armor:30, hp:15, sizeHex:1, productionTimeMs:12000, targetType:TargetType.Building, logisticsCost:2 },
 }
 
 // Plain constant values (grid sizing, economy/combat tuning, theme colors, ...) live in

@@ -1,12 +1,12 @@
 import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
-import { useAppStore } from "../../common/store";
+import { useAppStore, AppState } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
-import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
+import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
-import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData, VehicleData } from "../../../enum";
+import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
 import {
-    MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
+    MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
     TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
     DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX,
@@ -31,7 +31,7 @@ const shipOrbitPhase = (id:string) => {
 }
 
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
-const FULL_RADIUS_KINDS = new Set([BuildingType.Shipyard, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
+const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
 const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
 
 // Each building kind's max HP now lives on its BuildingMetaData entry in enum.ts (the tougher,
@@ -40,6 +40,14 @@ const getBuildingMaxHp = (kind:BuildingType) => BuildingData[kind].maxHp
 
 // Bases have a bigger physical footprint than an ordinary building.
 const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
+
+// Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
+// contact target — TargetType.Any covers both. Replaces the old hardcoded KK/ATD type checks that
+// decided which drones could detonate against a ship vs. a building.
+const vehicleTargets = (type:VehicleType, kind:TargetType) => {
+    const targetType = VehicleData[type].targetType
+    return targetType === kind || targetType === TargetType.Any
+}
 
 // Applies accumulated damage to any {id, hp} collection (ships or buildings alike), removing anything
 // that drops to 0 HP or below. `onDeath` lets the caller leave its own effect at the death location —
@@ -123,6 +131,9 @@ export default class MapScene extends Scene {
 
     enemyShipyardId: string
     enemyRaidLaunched: boolean = false
+    // Every player BLM the enemy has already reacted to (see buildEnemyThadd) — tracked by id, not a
+    // running count, so a BLM that's destroyed and later rebuilt still triggers a fresh reaction.
+    reactedBlmIds: Set<string> = new Set()
     gameOver: boolean = false
     mapData: MapData
     origDragPoint: Phaser.Math.Vector2
@@ -174,11 +185,11 @@ export default class MapScene extends Scene {
         this.enablePlacementControls()
         this.spawnEnemyRaid()
 
-        this.time.addEvent({ delay: METAL_TICK_MS, loop: true, callback: this.tickResources })
         this.time.addEvent({ delay: 500, loop: true, callback: this.tickProduction })
 
         this.unsubscribe = useAppStore.subscribe((state, prevState) => {
             if(state.placingFactory !== prevState.placingFactory) this.updatePreview()
+            this.checkEnemyBlmDefense(state)
         })
         this.events.once('shutdown', () => this.unsubscribe())
 
@@ -250,7 +261,7 @@ export default class MapScene extends Scene {
 
         useAppStore.getState().buildings.forEach(f => {
             const item = f.queue?.[0]
-            if(f.kind !== BuildingType.Shipyard || !item?.startedAt) return
+            if(f.kind !== BuildingType.LogisticsCenter || !item?.startedAt) return
 
             const { x, y } = this.toWorld(f.x, f.y)
             const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / VehicleData[item.type].productionTimeMs, 0, 1)
@@ -286,16 +297,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Every mining station the player owns yields metal on each tick.
-    tickResources = () => {
-        const { buildings: factories, addMetal } = useAppStore.getState()
-        const miningStations = factories.filter(f => f.faction === Faction.Player && f.kind === BuildingType.MiningStation)
-        if(miningStations.length === 0) return
-
-        addMetal(miningStations.length * METAL_PER_MINING_STATION)
-        miningStations.forEach(f => this.floatText(f.x, f.y, '+'+METAL_PER_MINING_STATION))
-    }
-
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
         const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
@@ -307,17 +308,21 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Completes any shipyard's front-of-queue item once its production time has elapsed.
+    // Completes any shipyard's front-of-queue item once its production time has elapsed. If the
+    // faction's logistics budget has no room left for it (e.g. it filled up while this item was
+    // building), the ready item just holds at the front of the queue — production stays complete,
+    // it deploys the moment logistics frees up, without eating another full production cycle.
     tickProduction = () => {
         const { buildings: factories, completeQueueItem } = useAppStore.getState()
         const now = Date.now()
 
         factories.forEach(f => {
             const item = f.queue?.[0]
-            if(item?.startedAt && now - item.startedAt >= VehicleData[item.type].productionTimeMs){
-                completeQueueItem(f.id)
-                this.spawnShip(f, item.type)
-            }
+            if(!item?.startedAt || now - item.startedAt < VehicleData[item.type].productionTimeMs) return
+            if(getLogisticsStatus(f.faction).logisticsRemaining - getVehicleLogisticsCost(item.type) < 0) return
+
+            completeQueueItem(f.id)
+            this.spawnShip(f, item.type)
         })
     }
 
@@ -368,7 +373,7 @@ export default class MapScene extends Scene {
 
         for(let x=0; x<this.mapData.width; x++){
             for(let y=0; y<this.mapData.height; y++){
-                if(!this.isValidPlacement(BuildingType.Shipyard, x, y, Faction.Enemy)) continue
+                if(!this.isValidPlacement(BuildingType.LogisticsCenter, x, y, Faction.Enemy)) continue
 
                 const { x:wx, y:wy } = this.toWorld(x, y)
                 const score = uncovered.filter(n => {
@@ -381,7 +386,7 @@ export default class MapScene extends Scene {
         }
 
         if(!best) return
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.Shipyard, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.Shipyard) }
+        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.LogisticsCenter, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.LogisticsCenter) }
         useAppStore.getState().addFactory(factory)
         this.createBuildingSprite(factory)
         this.enemyShipyardId = factory.id
@@ -412,6 +417,45 @@ export default class MapScene extends Scene {
 
         addWaypoint(this.enemyShipyardId, playerBase.x, playerBase.y)
         this.enemyRaidLaunched = true
+    }
+
+    // Reactive defense: fires off the store subscription in create(), so it's checked on every state
+    // change rather than polled per frame. The moment a player BLM the enemy hasn't seen before shows
+    // up in the store — built, not just queued — the enemy responds by building a THADD of its own
+    // (see buildEnemyThadd). Tracking reacted-to ids rather than a count means a BLM that's destroyed
+    // and later rebuilt still draws a fresh response.
+    checkEnemyBlmDefense = (state:AppState) => {
+        const newPlayerBlms = state.buildings.filter(b => b.faction === Faction.Player && b.kind === BuildingType.BLM && !this.reactedBlmIds.has(b.id))
+        newPlayerBlms.forEach(b => {
+            this.reactedBlmIds.add(b.id)
+            this.buildEnemyThadd()
+        })
+    }
+
+    // Places a THADD as close to the enemy's own base as any currently-valid cell allows — same
+    // isValidPlacement gate everything else builds through (territory, logistics budget, no overlap),
+    // just scored by raw distance to home rather than spawnEnemyShipyard's node-coverage heuristic,
+    // since this is a defensive reaction, not a territory grab. A no-op if nowhere valid is found
+    // (map fully claimed, or the logistics budget has no room left).
+    buildEnemyThadd = () => {
+        const enemyBase = this.mapData.bases.find(b => b.faction === Faction.Enemy)
+        if(!enemyBase) return
+
+        let best:{x:number, y:number} = null
+        let bestDistSq = Infinity
+
+        for(let x=0; x<this.mapData.width; x++){
+            for(let y=0; y<this.mapData.height; y++){
+                if(!this.isValidPlacement(BuildingType.THADD, x, y, Faction.Enemy)) continue
+                const distSq = (x-enemyBase.x)**2 + (y-enemyBase.y)**2
+                if(distSq < bestDistSq){ bestDistSq = distSq; best = { x, y } }
+            }
+        }
+
+        if(!best) return
+        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.THADD, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.THADD) }
+        useAppStore.getState().addFactory(factory)
+        this.createBuildingSprite(factory)
     }
 
     // The match ends the moment either faction's Base building is destroyed — called from the onDeath
@@ -460,13 +504,6 @@ export default class MapScene extends Scene {
         sprite.setData('factoryKind', factory.kind)
         this.buildingsGroup.add(sprite)
         this.buildingSprites.set(factory.id, sprite)
-
-        // A Solar Mill spins slowly forever — set up once, here, as a tween rather than hand-rotating
-        // it every frame. The tween is only ever referenced by the TweenManager and this sprite; once
-        // destroyBuildingSprite destroys the sprite, nothing keeps the tween reachable and it's collected.
-        if(factory.kind === BuildingType.SolarMill){
-            this.tweens.add({ targets:sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear' })
-        }
 
         // The static map layer (drawMap) includes each structure's placement-range bubble — a new
         // building means the player's (or enemy's) territory border changed shape, so it needs a redraw.
@@ -570,14 +607,14 @@ export default class MapScene extends Scene {
         const shipA = this.getShipEntry(a)
         const shipB = this.getShipEntry(b)
         if(!shipA || !shipB || shipA.faction === shipB.faction) return false
-        return shipA.type === VehicleType.KK || shipA.type === VehicleType.ATD || shipB.type === VehicleType.KK || shipB.type === VehicleType.ATD
+        return vehicleTargets(shipA.type, TargetType.Unit) || vehicleTargets(shipB.type, TargetType.Unit)
     }
 
     isHostileDroneBuildingPair = (shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, buildingObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         const ship = this.getShipEntry(shipObj)
         const building = this.getBuildingEntry(buildingObj)
         if(!ship || !building || ship.faction === building.faction) return false
-        return ship.type === VehicleType.KK || ship.type === VehicleType.ATD
+        return vehicleTargets(ship.type, TargetType.Building)
     }
 
     isHostileMissileShipPair = (missileObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
@@ -609,10 +646,10 @@ export default class MapScene extends Scene {
         const shipB = this.getShipEntry(b)
         if(!shipA || !shipB) return
 
-        if(shipA.type === VehicleType.KK || shipA.type === VehicleType.ATD) this.detonateDrone(shipA, spriteA, { kind:'ship', id:shipB.id })
+        if(vehicleTargets(shipA.type, TargetType.Unit)) this.detonateDrone(shipA, spriteA, { kind:'ship', id:shipB.id })
 
         const survivingShipB = this.shipSprites.has(shipB.id) ? this.getShipEntry(b) : null
-        if(survivingShipB && (survivingShipB.type === VehicleType.KK || survivingShipB.type === VehicleType.ATD)) this.detonateDrone(survivingShipB, spriteB, { kind:'ship', id:shipA.id })
+        if(survivingShipB && vehicleTargets(survivingShipB.type, TargetType.Unit)) this.detonateDrone(survivingShipB, spriteB, { kind:'ship', id:shipA.id })
     }
 
     // A drone touching a hostile building detonates immediately, right here — no queueing.
@@ -1065,7 +1102,7 @@ export default class MapScene extends Scene {
     drawOrders = () => {
         const { selectedFactoryId, buildings: factories } = useAppStore.getState()
         const factory = factories.find(f => f.id === selectedFactoryId)
-        const waypoints = (factory && factory.kind === BuildingType.Shipyard) ? (factory.waypoints || []) : []
+        const waypoints = (factory && factory.kind === BuildingType.LogisticsCenter) ? (factory.waypoints || []) : []
 
         const key = factory ? factory.id+':'+waypoints.length : ''
         if(key === this.lastOrdersKey) return
@@ -1226,24 +1263,7 @@ export default class MapScene extends Scene {
     // generateTextures can bake the same shape into each building's sprite texture. `rotation` (radians)
     // only affects the Solar Mill's rays — used solely for the flat preview; the live sprite spins itself.
     drawFactoryShapeAt = (g:GameObjects.Graphics, kind:BuildingType, x:number, y:number, color:number, alpha:number, rotation:number = 0) => {
-        if(kind === BuildingType.MiningStation){
-            const r = CELL_SIZE * 0.65
-            g.lineStyle(2, color, alpha)
-            g.strokeRect(x-r, y-r, r*2, r*2)
-            g.lineBetween(x-r, y, x+r, y)
-            g.lineBetween(x, y-r, x, y+r)
-        }
-        else if(kind === BuildingType.SolarMill){
-            const r = CELL_SIZE * 0.45
-            const rayR = CELL_SIZE * 0.7
-            g.lineStyle(2, color, alpha)
-            g.strokeCircle(x, y, r)
-            for(let i=0; i<8; i++){
-                const angle = (i/8) * Math.PI*2 + rotation
-                g.lineBetween(x + Math.cos(angle)*r, y + Math.sin(angle)*r, x + Math.cos(angle)*rayR, y + Math.sin(angle)*rayR)
-            }
-        }
-        else if(kind === BuildingType.CRAM){
+        if(kind === BuildingType.CRAM){
             // A little turret: circular base, a barrel pointing "up" with a muzzle crossbar.
             const r = CELL_SIZE * 0.5
             g.lineStyle(2, color, alpha)
@@ -1331,7 +1351,7 @@ export default class MapScene extends Scene {
         if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
         // A base occupies a factory slot too now, so this alone also blocks placing on top of one.
         if(this.findFactoryAt(gridX, gridY)) return false
-        if(getEnergyStatus(faction).energyRemaining - getFactoryEnergyCost(kind) < 0) return false
+        if(getLogisticsStatus(faction).logisticsRemaining - getFactoryLogisticsCost(kind) < 0) return false
 
         const worldPos = this.toWorld(gridX, gridY)
         const overlapsShip = useAppStore.getState().vehicles.some(s => {
@@ -1341,9 +1361,6 @@ export default class MapScene extends Scene {
         if(overlapsShip) return false
 
         const node = this.findNodeAt(gridX, gridY)
-
-        if(kind === BuildingType.MiningStation) return node?.kind === ResourceNode.Asteroid && this.isNearOwnStructure(gridX, gridY, faction)
-        if(kind === BuildingType.SolarMill) return node?.kind === ResourceNode.Star && this.isNearOwnStructure(gridX, gridY, faction)
         if(node) return false
 
         return this.isNearOwnStructure(gridX, gridY, faction)
@@ -1365,7 +1382,7 @@ export default class MapScene extends Scene {
 
             // Selecting one of the player's own shipyards puts the map straight into orders-editing mode —
             // the Orders button in FactoryToolbar is just a label now, not a prerequisite for this.
-            const selectedShipyard = factories.find(f => f.id === selectedFactoryId && f.kind === BuildingType.Shipyard && f.faction === Faction.Player)
+            const selectedShipyard = factories.find(f => f.id === selectedFactoryId && f.kind === BuildingType.LogisticsCenter && f.faction === Faction.Player)
             if(selectedShipyard){
                 const { x, y } = this.hoveredCell
                 if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
@@ -1379,7 +1396,7 @@ export default class MapScene extends Scene {
 
             if(!placingFactory){
                 const clicked = this.findFactoryAt(this.hoveredCell.x, this.hoveredCell.y)
-                setSelectedFactoryId(clicked && clicked.faction === Faction.Player && clicked.kind === BuildingType.Shipyard ? clicked.id : null)
+                setSelectedFactoryId(clicked && clicked.faction === Faction.Player && clicked.kind === BuildingType.LogisticsCenter ? clicked.id : null)
                 return
             }
 
@@ -1392,7 +1409,6 @@ export default class MapScene extends Scene {
                 y: this.hoveredCell.y,
                 kind: placingFactory,
                 faction: Faction.Player,
-                resource: node?.resource,
                 nodeId: node?.id,
                 hp: getBuildingMaxHp(placingFactory)
             }

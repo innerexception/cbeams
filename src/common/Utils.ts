@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Layers, Faction, BuildingType, BuildingData } from "../../enum"
-import { SAVE_NAME, BASE_MAX_ENERGY, SOLAR_MILL_MAX_ENERGY_BONUS } from "./Constants"
+import { Layers, Faction, BuildingType, BuildingData, VehicleType, VehicleData } from "../../enum"
+import { SAVE_NAME, BASE_MAX_LOGISTICS } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -25,17 +25,23 @@ export const tryLoadFile = async () => {
     //}
 }
 
-// Each factory kind's own energy upkeep.
-export const getFactoryEnergyCost = (kind:BuildingType) => BuildingData[kind].energyCost
+// Each factory kind's own logistics upkeep.
+export const getFactoryLogisticsCost = (kind:BuildingType) => BuildingData[kind].logisticsCost
 
-// Shared by the HUD and placement validation so both agree on remaining energy.
-export const getEnergyStatus = (faction:Faction = Faction.Player) => {
-    const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
-    const solarMills = ownFactories.filter(f => f.kind === BuildingType.SolarMill).length
-    const maxEnergy = BASE_MAX_ENERGY + solarMills*SOLAR_MILL_MAX_ENERGY_BONUS
-    const energyUsed = ownFactories.reduce((sum, f) => sum + getFactoryEnergyCost(f.kind), 0)
-    const energyRemaining = maxEnergy - energyUsed
-    return { maxEnergy, energyUsed, energyRemaining }
+// Each vehicle kind's own logistics upkeep.
+export const getVehicleLogisticsCost = (type:VehicleType) => VehicleData[type].logisticsCost
+
+// Shared by the HUD, building placement, and ship production so all three agree on remaining
+// logistics capacity — buildings and deployed vehicles alike draw against the same shared budget.
+export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
+    const { buildings, vehicles } = useAppStore.getState()
+    const ownFactories = buildings.filter(f => f.faction === faction)
+    const ownVehicles = vehicles.filter(v => v.faction === faction)
+    const maxLogistics = BASE_MAX_LOGISTICS
+    const logisticsUsed = ownFactories.reduce((sum, f) => sum + getFactoryLogisticsCost(f.kind), 0)
+        + ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
+    const logisticsRemaining = maxLogistics - logisticsUsed
+    return { maxLogistics, logisticsUsed, logisticsRemaining }
 }
 
 export const drawCirclePercent = (x:number, y:number, g:GameObjects.Graphics, percent:number) => {

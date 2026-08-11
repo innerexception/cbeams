@@ -18,11 +18,10 @@ export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(wo
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
-// --- Economy ---
-export const BASE_MAX_ENERGY = 10
-export const SOLAR_MILL_MAX_ENERGY_BONUS = 10
-export const METAL_PER_MINING_STATION = 1
-export const METAL_TICK_MS = 3000
+// --- Logistics ---
+// Every faction shares one logistics budget, spent by each building it owns (see BuildingData's
+// logisticsCost in enum.ts) — placement is refused once a new building would push usage over the cap.
+export const BASE_MAX_LOGISTICS = 20
 
 // --- Shipyard production/orders ---
 export const MAX_QUEUE = 3
