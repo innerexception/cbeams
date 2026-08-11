@@ -89,7 +89,7 @@ export const MISSILE_MAX_LIFETIME_MS = 8000
 
 // --- BLM (a placeable building, not a ship) ---
 // A slow, long-range single-missile launcher: on a long cooldown, fires one missile at its nearest
-// hostile target — a vehicle OR a building, unlike MLRS which only ever targets vehicles.
+// hostile *building*, never a vehicle — the opposite targeting scope from MLRS (vehicles only).
 export const BLM_FIRE_COOLDOWN_MS = 10000
 export const BLM_RANGE_PX = 4000
 export const ENERGY_PER_BLM = 3

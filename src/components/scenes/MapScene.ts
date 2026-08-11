@@ -780,33 +780,22 @@ export default class MapScene extends Scene {
         return { targetShip, targetMissile }
     }
 
-    // Same shape as findNearestHostileInRange, but for BLM: it targets a hostile vehicle OR building
-    // (never a missile), so the query includes static bodies (buildingsGroup) too.
-    findNearestHostileVehicleOrBuilding = (fromFaction:Faction, x:number, y:number, range:number) => {
-        const hits = this.physics.overlapCirc(x, y, range, true, true)
-        let targetShip:Physics.Arcade.Sprite = null
+    // Same shape as findNearestHostileInRange, but for BLM: it only ever targets a hostile building
+    // (never a ship or a missile), so the query only needs static bodies (buildingsGroup).
+    findNearestHostileBuilding = (fromFaction:Faction, x:number, y:number, range:number) => {
+        const hits = this.physics.overlapCirc(x, y, range, false, true)
         let targetBuilding:Physics.Arcade.Sprite = null
-        let nearestShipDist = Infinity
         let nearestBuildingDist = Infinity
 
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            const kind:BodyKind = obj.getData('kind')
+            const building = this.getBuildingEntry(obj)
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
-
-            if(kind === 'ship'){
-                const ship = this.getShipEntry(obj)
-                if(ship && ship.faction !== fromFaction && d < nearestShipDist){ nearestShipDist = d; targetShip = obj }
-            }
-            else if(kind === 'building'){
-                const building = this.getBuildingEntry(obj)
-                if(building && building.faction !== fromFaction && d < nearestBuildingDist){ nearestBuildingDist = d; targetBuilding = obj }
-            }
+            if(building && building.faction !== fromFaction && d < nearestBuildingDist){ nearestBuildingDist = d; targetBuilding = obj }
         })
 
-        if(targetShip && targetBuilding) return nearestShipDist <= nearestBuildingDist ? { targetShip, targetBuilding:null } : { targetShip:null, targetBuilding }
-        return { targetShip, targetBuilding }
+        return targetBuilding
     }
 
     // Each MLRS, on cooldown, launches a whole salvo (MISSILE_SALVO_SIZE) of missiles at once, all
@@ -833,8 +822,8 @@ export default class MapScene extends Scene {
         if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
     }
 
-    // Each BLM turret, on its long cooldown, fires a single missile at whichever hostile ship OR
-    // building is nearest in range — a stationary building, so its own world position (not a sprite) is
+    // Each BLM turret, on its long cooldown, fires a single missile at whichever hostile building (never
+    // a vehicle) is nearest in range — a stationary building, so its own world position (not a sprite) is
     // the launch point, and only its cooldown lives in the store (see updateCramTurrets for the pattern).
     updateBlm = (time:number) => {
         const { buildings: factories, setFactories } = useAppStore.getState()
@@ -845,12 +834,11 @@ export default class MapScene extends Scene {
             if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BLM_FIRE_COOLDOWN_MS) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
-            const { targetShip, targetBuilding } = this.findNearestHostileVehicleOrBuilding(turret.faction, x, y, BLM_RANGE_PX)
-            if(!targetShip && !targetBuilding) return
+            const targetBuilding = this.findNearestHostileBuilding(turret.faction, x, y, BLM_RANGE_PX)
+            if(!targetBuilding) return
 
             shooterIds.add(turret.id)
-            if(targetShip) this.spawnMissile(turret.faction, x, y, 'ship', targetShip.getData('id'))
-            else this.spawnMissile(turret.faction, x, y, 'building', targetBuilding.getData('id'))
+            this.spawnMissile(turret.faction, x, y, 'building', targetBuilding.getData('id'))
         })
 
         if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
