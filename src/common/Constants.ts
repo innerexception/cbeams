@@ -31,6 +31,8 @@ export const METAL_TICK_MS = 3000
 // Baseline hit points for every building (Shipyard, Mining Station, Solar Mill, CRAM turret) —
 // what a drone's contact/blast damage is actually chipping away at.
 export const BUILDING_HP = 40
+// A faction's starting headquarters is a building too, just a tougher, non-placeable one.
+export const BASE_HP = 20
 
 // --- Shipyard production/orders ---
 export const MAX_QUEUE = 3

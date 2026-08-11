@@ -34,8 +34,11 @@ export enum NodeKind {
     Asteroid='asteroid', Star='star'
 }
 
+// Base isn't player-placeable — it's the pre-existing headquarters each faction starts the match with,
+// promoted into a real building (physics body, hp, drone-contact target) at map load — see
+// MapScene's spawnBases. It's otherwise just another FactoryKind: hp loss/destruction works the same way.
 export enum FactoryKind {
-    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram'
+    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base'
 }
 
 // KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
