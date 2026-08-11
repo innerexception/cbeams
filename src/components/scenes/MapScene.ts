@@ -16,9 +16,9 @@ import {
     BLM_FIRE_COOLDOWN_MS, BLM_RANGE_PX,
     THADD_FIRE_COOLDOWN_MS, THADD_RANGE_PX, THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS, ENEMY_RAID_SIZE,
-    NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX,
-    GREEN_HEX as GREEN, GREEN as GREEN_CSS, GREEN_DIM_HEX as GREEN_DIM, GREY_DIM_HEX as GREY_DIM,
+    NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
+import { colors } from "../../styles/AppStyles";
 
 const TWO_PI = Math.PI*2
 
@@ -208,10 +208,10 @@ export default class MapScene extends Scene {
 
         const factorySize = Math.ceil(CELL_SIZE*3)
         Object.values(BuildingType).forEach(kind => {
-            bake('factory_'+kind, factorySize, (g, cx, cy) => this.drawFactoryShapeAt(g, kind, cx, cy, GREEN, 1))
+            bake('factory_'+kind, factorySize, (g, cx, cy) => this.drawFactoryShapeAt(g, kind, cx, cy, GREEN_HEX, 1))
         })
 
-        bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN, 0.9); g.fillCircle(cx, cy, 2) })
+        bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
 
         tmp.destroy()
     }
@@ -245,7 +245,7 @@ export default class MapScene extends Scene {
             const angle = (i/8)*Math.PI*2 + Math.PI/8
             points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*r, y + Math.sin(angle)*r))
         }
-        this.selectionG.lineStyle(2, GREEN, 1)
+        this.selectionG.lineStyle(2, GREEN_HEX, 1)
         this.selectionG.strokePoints(points, true, true)
     }
 
@@ -263,9 +263,9 @@ export default class MapScene extends Scene {
             const w = CELL_SIZE * 1.6, h = 4
             const barX = x - w/2, barY = y - CELL_SIZE*2 - h
 
-            g.lineStyle(1, GREEN, 1)
+            g.lineStyle(1, GREEN_HEX, 1)
             g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN, 0.9)
+            g.fillStyle(GREEN_HEX, 0.9)
             g.fillRect(barX, barY, w*percent, h)
         })
     }
@@ -285,9 +285,9 @@ export default class MapScene extends Scene {
             const w = CELL_SIZE * 1.4, h = 4
             const barX = x - w/2, barY = y + getBuildingFootprintRadius(f.kind) + h
 
-            g.lineStyle(1, GREEN, 1)
+            g.lineStyle(1, GREEN_HEX, 1)
             g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN, 0.9)
+            g.fillStyle(GREEN_HEX, 0.9)
             g.fillRect(barX, barY, w*percent, h)
         })
     }
@@ -304,7 +304,7 @@ export default class MapScene extends Scene {
 
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:GREEN_CSS }).setOrigin(0.5).setDepth(5)
+        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
         this.tweens.add({
             targets: label,
             y: y-20,
@@ -446,7 +446,7 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(sprite)
         this.shipSprites.set(ship.id, sprite)
 
-        const label = this.add.text(ship.x, ship.y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color:GREEN_CSS }).setOrigin(0.5).setDepth(4)
+        const label = this.add.text(ship.x, ship.y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.lGreen }).setOrigin(0.5).setDepth(4)
         this.shipLabels.set(ship.id, label)
     }
 
@@ -973,7 +973,7 @@ export default class MapScene extends Scene {
                 const dotProgress = Math.min(1, progress + i*0.12)
                 const x = t.x1 + (t.x2-t.x1)*dotProgress
                 const y = t.y1 + (t.y2-t.y1)*dotProgress
-                g.fillStyle(GREEN, (1-progress) * (1-i*0.2))
+                g.fillStyle(GREEN_HEX, (1-progress) * (1-i*0.2))
                 g.fillCircle(x, y, 1.5)
             }
         })
@@ -991,7 +991,7 @@ export default class MapScene extends Scene {
             const alpha = 1 - progress
             const rand = seededRandom(s.seed)
 
-            g.lineStyle(1.5, GREEN, alpha)
+            g.lineStyle(1.5, GREEN_HEX, alpha)
             const pieces = 6
             for(let i=0; i<pieces; i++){
                 const angle = rand()*TWO_PI
@@ -1032,9 +1032,9 @@ export default class MapScene extends Scene {
             new Phaser.Math.Vector2(cx-w/2, cy),
         ]
 
-        g.fillStyle(GREEN, 0.15)
+        g.fillStyle(GREEN_HEX, 0.15)
         g.fillPoints(points, true)
-        g.lineStyle(1.5, GREEN, 1)
+        g.lineStyle(1.5, GREEN_HEX, 1)
         g.strokePoints(points, true, true)
     }
 
@@ -1050,13 +1050,13 @@ export default class MapScene extends Scene {
         // faint grid, brighter every 5 cells
         for(let i=0; i<=this.mapData.width; i++){
             const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_DIM, isMajor ? 0.6 : 0.25)
+            g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
             g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldSize)
             g.lineBetween(0, i*CELL_SIZE, worldSize, i*CELL_SIZE)
         }
 
         // dividing line through each base, marking the boundary of that faction's territory
-        g.lineStyle(1, GREEN, 0.35)
+        g.lineStyle(1, GREEN_HEX, 0.35)
         this.mapData.bases.forEach(base => {
             const lineX = base.x * CELL_SIZE + CELL_SIZE/2
             g.lineBetween(lineX, 0, lineX, worldSize)
@@ -1084,16 +1084,16 @@ export default class MapScene extends Scene {
         if(!factory || waypoints.length === 0) return
 
         const points = [this.toWorld(factory.x, factory.y), ...waypoints.map(w => this.toWorld(w.x, w.y))]
-        g.lineStyle(1.5, GREEN, 0.5)
+        g.lineStyle(1.5, GREEN_HEX, 0.5)
         for(let i=0; i<points.length-1; i++) g.lineBetween(points[i].x, points[i].y, points[i+1].x, points[i+1].y)
 
         waypoints.forEach((w, i) => {
             const { x, y } = this.toWorld(w.x, w.y)
-            g.fillStyle(GREEN, 0.9)
+            g.fillStyle(GREEN_HEX, 0.9)
             g.fillCircle(x, y, 5)
-            g.lineStyle(1, GREEN, 1)
+            g.lineStyle(1, GREEN_HEX, 1)
             g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:GREEN_CSS }).setOrigin(0.5).setDepth(5)
+            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
             this.orderLabels.push(label)
         })
     }
@@ -1107,7 +1107,7 @@ export default class MapScene extends Scene {
         const circles = structures.map(s => ({ ...this.toWorld(s.x, s.y), r: getStructureRadius(s), faction: s.faction }))
 
         // Rounded portions: each circle's boundary where it doesn't touch any other bubble.
-        g.lineStyle(1, GREEN, 0.25)
+        g.lineStyle(1, GREEN_HEX, 0.25)
         circles.forEach((circle, i) => {
             let visible:Array<[number,number]> = [[0, TWO_PI]]
 
@@ -1185,7 +1185,7 @@ export default class MapScene extends Scene {
                     }
                 })
 
-                g.lineStyle(4, GREEN, 0.9)
+                g.lineStyle(4, GREEN_HEX, 0.9)
                 segVisible.forEach(([t0, t1]) => {
                     if(t1-t0 < 0.001) return
                     g.lineBetween(ax+segDX*t0, ay+segDY*t0, ax+segDX*t1, ay+segDY*t1)
@@ -1208,7 +1208,7 @@ export default class MapScene extends Scene {
                 const radius = baseRadius * (0.6 + rand()*0.5)
                 points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*radius, y + Math.sin(angle)*radius))
             }
-            g.lineStyle(1.5, GREEN, 1)
+            g.lineStyle(1.5, GREEN_HEX, 1)
             g.strokePoints(points, true, true)
         }
         else {
@@ -1221,9 +1221,9 @@ export default class MapScene extends Scene {
                 const radius = i % 2 === 0 ? outerRadius : innerRadius
                 points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*radius, y + Math.sin(angle)*radius))
             }
-            g.fillStyle(GREEN, 0.15)
+            g.fillStyle(GREEN_HEX, 0.15)
             g.fillPoints(points, true)
-            g.lineStyle(1.5, GREEN, 1)
+            g.lineStyle(1.5, GREEN_HEX, 1)
             g.strokePoints(points, true, true)
         }
     }
@@ -1361,7 +1361,7 @@ export default class MapScene extends Scene {
         if(!placingFactory || !this.hoveredCell) return
 
         const valid = this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
-        this.drawFactoryShape(this.previewG, placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN : GREY_DIM, valid ? 0.9 : 0.5)
+        this.drawFactoryShape(this.previewG, placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
     }
 
     enablePlacementControls = () => {

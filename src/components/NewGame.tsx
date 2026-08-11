@@ -1,11 +1,12 @@
 import * as React from 'react'
 import { onShowModal } from '../common/Thunks';
 import { SceneNames } from '../../enum';
-import { MAP_SIZE, GREEN } from '../common/Constants';
+import { MAP_SIZE } from '../common/Constants';
 import { tryLoadFile } from '../common/Utils';
 import { useAppStore } from '../common/store';
 import { generateMap } from '../common/MapGenerator';
 import ToolButton from './ToolButton'
+import { colors } from '../styles/AppStyles';
 
 export default () => {
 
@@ -33,7 +34,7 @@ export default () => {
                 <ToolButton onClick={startNewGame}>New</ToolButton>
                 <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
             </div>
-            {!saveFile && <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
+            {!saveFile && <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
         </div>
     )
 }

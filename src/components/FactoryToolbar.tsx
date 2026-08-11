@@ -1,9 +1,10 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { BuildingType, VehicleType } from '../../enum'
-import { GREEN, MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
+import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
 import { ShipData } from '../common/ShipData'
 import ToolButton from './ToolButton'
+import { colors } from '../styles/AppStyles'
 
 const hints = {
     [BuildingType.MiningStation]: 'Click an asteroid to build a Mining Station',
@@ -57,7 +58,7 @@ export default () => {
                     </ToolButton>
                     {waypoints.length > 0 && <ToolButton onClick={()=>clearWaypoints(selectedFactory.id)}>Clear Orders</ToolButton>}
                 </div>
-                <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>
+                <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>
                     {waypoints.length >= MAX_WAYPOINTS
                         ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
                         : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
@@ -67,10 +68,10 @@ export default () => {
                         const item = queue[i]
                         const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
                         return (
-                            <div key={i} style={{ width:100, border:'2px solid '+GREEN, padding:4, fontFamily:'Body', fontSize:11, color:GREEN }}>
+                            <div key={i} style={{ width:100, border:'2px solid '+colors.lGreen, padding:4, fontFamily:'Body', fontSize:11, color:colors.lGreen }}>
                                 <div>{item ? ShipData[item.type].name : '—'}</div>
-                                <div style={{ width:'100%', height:6, border:'1px solid '+GREEN, marginTop:4 }}>
-                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:GREEN }}/>}
+                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.lGreen, marginTop:4 }}>
+                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.lGreen }}/>}
                                 </div>
                             </div>
                         )
@@ -90,7 +91,7 @@ export default () => {
                 <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.THADD} onClick={()=>toggle(BuildingType.THADD)}>THADD</ToolButton>
             </div>
-            {placingFactory && <div style={{ color: GREEN, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
+            {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>
     )
 }

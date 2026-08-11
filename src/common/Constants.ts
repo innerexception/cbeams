@@ -114,10 +114,6 @@ export const ENEMY_RAID_SIZE = 3
 // --- Theme colors ---
 // GREEN is the game's one wireframe accent color, everywhere: Phaser draws want the 0xRRGGBB number,
 // React/DOM styling and Phaser text colors want the '#rrggbb' string — both are derived from one value.
-export const GREEN_HEX = 0x33ff55
-export const GREEN = hexToCss(GREEN_HEX)
-export const GREEN_DIM_HEX = 0x114422
+export const GREEN_HEX = 0x55FF55
+export const GREEN_DIM_HEX = 0x006500
 export const GREY_DIM_HEX = 0x666666
-
-export const RED_HEX = 0xff3333
-export const RED = hexToCss(RED_HEX)
