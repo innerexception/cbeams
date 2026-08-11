@@ -1,5 +1,5 @@
 import { v4 } from 'uuid'
-import { Faction, NodeKind, ResourceType } from '../../enum'
+import { Faction, ResourceNode, ResourceType } from '../../enum'
 
 const BASE_MARGIN = 4
 const MIN_NODE_DISTANCE = 4
@@ -36,8 +36,8 @@ export const generateMap = (size:number = 50, nodeCount:number = 24):MapData => 
         const tooCloseToNode = nodes.some(n => dist(x,y,n.x,n.y) < MIN_NODE_DISTANCE || dist(mx,my,n.x,n.y) < MIN_NODE_DISTANCE)
         if(tooCloseToNode) continue
 
-        const kind = Math.random() < 0.5 ? NodeKind.Asteroid : NodeKind.Star
-        const resource = kind === NodeKind.Asteroid ? ResourceType.Metal : ResourceType.Energy
+        const kind = Math.random() < 0.5 ? ResourceNode.Asteroid : ResourceNode.Star
+        const resource = kind === ResourceNode.Asteroid ? ResourceType.Metal : ResourceType.Energy
         const amount = resource === ResourceType.Metal ? randomInt(500,1000) : randomInt(300,600)
 
         nodes.push({ id: v4(), x, y, kind, resource, amount })

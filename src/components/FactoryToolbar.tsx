@@ -1,24 +1,24 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { FactoryKind, ShipType } from '../../enum'
+import { BuildingType, VehicleType } from '../../enum'
 import { GREEN, MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
 import { ShipData } from '../common/ShipData'
 import ToolButton from './ToolButton'
 
 const hints = {
-    [FactoryKind.MiningStation]: 'Click an asteroid to build a Mining Station',
-    [FactoryKind.SolarMill]: 'Click a star to build a Solar Mill',
-    [FactoryKind.Shipyard]: 'Click empty ground near your base to build a Shipyard',
-    [FactoryKind.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
+    [BuildingType.MiningStation]: 'Click an asteroid to build a Mining Station',
+    [BuildingType.SolarMill]: 'Click a star to build a Solar Mill',
+    [BuildingType.Shipyard]: 'Click empty ground near your base to build a Shipyard',
+    [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
 }
 
 export default () => {
     const { placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints } = useAppStore((state) => ({
         placingFactory: state.placingFactory,
-        setPlacingFactory: state.setPlacingFactory,
+        setPlacingFactory: state.setPlacingBuilding,
         selectedFactoryId: state.selectedFactoryId,
-        setSelectedFactoryId: state.setSelectedFactoryId,
-        factories: state.factories,
+        setSelectedFactoryId: state.setSelectedBuildingId,
+        factories: state.buildings,
         queueShip: state.queueShip,
         clearWaypoints: state.clearWaypoints,
     }))
@@ -30,11 +30,11 @@ export default () => {
         return () => clearInterval(interval)
     }, [])
 
-    const toggle = (kind:FactoryKind) => setPlacingFactory(placingFactory === kind ? null : kind)
+    const toggle = (kind:BuildingType) => setPlacingFactory(placingFactory === kind ? null : kind)
 
     const selectedFactory = factories.find(f => f.id === selectedFactoryId)
 
-    if(selectedFactory && selectedFactory.kind === FactoryKind.Shipyard){
+    if(selectedFactory && selectedFactory.kind === BuildingType.Shipyard){
         const queue = selectedFactory.queue || []
         const queueFull = queue.length >= MAX_QUEUE
         const waypoints = selectedFactory.waypoints || []
@@ -44,7 +44,7 @@ export default () => {
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
-                    {Object.values(ShipType).map(type => (
+                    {Object.values(VehicleType).map(type => (
                         <ToolButton key={type} disabled={queueFull} onClick={()=>queueShip(selectedFactory.id, type)}>{ShipData[type].name}</ToolButton>
                     ))}
                     <ToolButton onClick={()=>setSelectedFactoryId(null)}>Cancel</ToolButton>
@@ -81,10 +81,10 @@ export default () => {
     return (
         <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
             <div style={{ display:'flex' }}>
-                <ToolButton active={placingFactory === FactoryKind.MiningStation} onClick={()=>toggle(FactoryKind.MiningStation)}>Mining Station</ToolButton>
-                <ToolButton active={placingFactory === FactoryKind.SolarMill} onClick={()=>toggle(FactoryKind.SolarMill)}>Solar Mill</ToolButton>
-                <ToolButton active={placingFactory === FactoryKind.Shipyard} onClick={()=>toggle(FactoryKind.Shipyard)}>Shipyard</ToolButton>
-                <ToolButton active={placingFactory === FactoryKind.CRAM} onClick={()=>toggle(FactoryKind.CRAM)}>CRAM Turret</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.MiningStation} onClick={()=>toggle(BuildingType.MiningStation)}>Mining Station</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.SolarMill} onClick={()=>toggle(BuildingType.SolarMill)}>Solar Mill</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.Shipyard} onClick={()=>toggle(BuildingType.Shipyard)}>Shipyard</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
             </div>
             {placingFactory && <div style={{ color: GREEN, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>

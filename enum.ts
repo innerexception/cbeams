@@ -30,14 +30,14 @@ export enum ResourceType {
     Metal='metal', Energy='energy'
 }
 
-export enum NodeKind {
+export enum ResourceNode {
     Asteroid='asteroid', Star='star'
 }
 
 // Base isn't player-placeable — it's the pre-existing headquarters each faction starts the match with,
 // promoted into a real building (physics body, hp, drone-contact target) at map load — see
 // MapScene's spawnBases. It's otherwise just another FactoryKind: hp loss/destruction works the same way.
-export enum FactoryKind {
+export enum BuildingType {
     MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base'
 }
 
@@ -45,7 +45,7 @@ export enum FactoryKind {
 // reaches, dealing single-target damage. ATD: a guided drone restricted to one waypoint, detonating
 // in an area-of-effect blast either on contact or on reaching that waypoint. MLRS: a mobile ship that
 // launches a salvo of homing missiles at its nearest target in range (see updateMissiles in MapScene).
-export enum ShipType {
+export enum VehicleType {
     KK='kk', ATD='atd', MLRS='mlrs'
 }
 

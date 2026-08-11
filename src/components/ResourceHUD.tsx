@@ -5,7 +5,7 @@ import { GREEN, RED } from '../common/Constants'
 
 export default () => {
     const { factories, metal } = useAppStore((state) => ({
-        factories: state.factories,
+        factories: state.buildings,
         metal: state.metal,
     }))
 

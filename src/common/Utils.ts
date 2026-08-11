@@ -1,6 +1,6 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Layers, Faction, FactoryKind } from "../../enum"
+import { Layers, Faction, BuildingType } from "../../enum"
 import { SAVE_NAME, BASE_MAX_ENERGY, ENERGY_PER_MINING_STATION, ENERGY_PER_SOLAR_MILL, ENERGY_PER_SHIPYARD, ENERGY_PER_CRAM, SOLAR_MILL_MAX_ENERGY_BONUS } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
@@ -26,17 +26,17 @@ export const tryLoadFile = async () => {
 }
 
 // Each factory kind's own energy upkeep.
-export const getFactoryEnergyCost = (kind:FactoryKind) => {
-    if(kind === FactoryKind.Shipyard) return ENERGY_PER_SHIPYARD
-    if(kind === FactoryKind.MiningStation) return ENERGY_PER_MINING_STATION
-    if(kind === FactoryKind.CRAM) return ENERGY_PER_CRAM
+export const getFactoryEnergyCost = (kind:BuildingType) => {
+    if(kind === BuildingType.Shipyard) return ENERGY_PER_SHIPYARD
+    if(kind === BuildingType.MiningStation) return ENERGY_PER_MINING_STATION
+    if(kind === BuildingType.CRAM) return ENERGY_PER_CRAM
     return ENERGY_PER_SOLAR_MILL
 }
 
 // Shared by the HUD and placement validation so both agree on remaining energy.
 export const getEnergyStatus = (faction:Faction = Faction.Player) => {
-    const ownFactories = useAppStore.getState().factories.filter(f => f.faction === faction)
-    const solarMills = ownFactories.filter(f => f.kind === FactoryKind.SolarMill).length
+    const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
+    const solarMills = ownFactories.filter(f => f.kind === BuildingType.SolarMill).length
     const maxEnergy = BASE_MAX_ENERGY + solarMills*SOLAR_MILL_MAX_ENERGY_BONUS
     const energyUsed = ownFactories.reduce((sum, f) => sum + getFactoryEnergyCost(f.kind), 0)
     const energyRemaining = maxEnergy - energyUsed

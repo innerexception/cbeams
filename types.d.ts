@@ -19,7 +19,7 @@ interface ResourceNodeData {
     id: string
     x: number
     y: number
-    kind: import('./enum').NodeKind
+    kind: import('./enum').ResourceNode
     resource: import('./enum').ResourceType
     amount: number
 }
@@ -33,37 +33,44 @@ interface MapData {
 
 interface ProductionQueueItem {
     id: string
-    type: import('./enum').ShipType
+    type: import('./enum').VehicleType
     startedAt: number | null
 }
 
-interface FactoryData {
+interface BuildingData {
     id: string
     x: number
     y: number
-    kind: import('./enum').FactoryKind
+    kind: import('./enum').BuildingType
     faction: import('./enum').Faction
     resource?: import('./enum').ResourceType
     nodeId?: string
     queue?: Array<ProductionQueueItem>
     waypoints?: Array<{ x:number, y:number }>
-    // Buildings can now take damage (a CRAM turret's cannon, a drone detonation) — always set at
-    // construction (see BUILDING_HP), removed from play once it drops to 0.
     hp: number
-    // CRAM turret cannon cooldown tracking (unused by every other FactoryKind).
-    lastFiredAt?: number
+    lastFiredAtMs?: number
 }
 
-interface ShipInstanceData {
+interface VehicleStats {
+    name: string
+    speed: number
+    sightRadius: number
+    armor: number
+    hp: number
+    sizeHex: number
+    productionTimeMs: number
+}
+
+interface VehicleData {
     id: string
     faction: import('./enum').Faction
-    type: import('./enum').ShipType
+    type: import('./enum').VehicleType
     shipyardId: string
     x: number
     y: number
     pathIndex?: number
     orbitAnchor?: { x:number, y:number }
-    lastFiredAt?: number
+    lastFiredAtMs?: number
     hp: number
 }
 

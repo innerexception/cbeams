@@ -5,7 +5,7 @@ import { onSetScene } from "../../common/Thunks";
 import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { ShipData } from "../../common/ShipData";
-import { Faction, NodeKind, FactoryKind, ShipType } from "../../../enum";
+import { Faction, ResourceNode, BuildingType, VehicleType } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -36,14 +36,14 @@ const shipOrbitPhase = (id:string) => {
 }
 
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
-const FULL_RADIUS_KINDS = new Set([FactoryKind.Shipyard, FactoryKind.CRAM, FactoryKind.Base])
-const getStructureRadius = (structure:FactoryData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
+const FULL_RADIUS_KINDS = new Set([BuildingType.Shipyard, BuildingType.CRAM, BuildingType.Base])
+const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
 
 // Every building shares one HP pool (BUILDING_HP) except the tougher, non-placeable Base.
-const getBuildingMaxHp = (kind:FactoryKind) => kind === FactoryKind.Base ? BASE_HP : BUILDING_HP
+const getBuildingMaxHp = (kind:BuildingType) => kind === BuildingType.Base ? BASE_HP : BUILDING_HP
 
 // Bases have a bigger physical footprint than an ordinary building.
-const getBuildingFootprintRadius = (kind:FactoryKind) => kind === FactoryKind.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
+const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
 
 // Applies accumulated damage to any {id, hp} collection (ships or buildings alike), removing anything
 // that drops to 0 HP or below. `onDeath` lets the caller leave its own effect at the death location —
@@ -200,7 +200,7 @@ export default class MapScene extends Scene {
         bake('ship_hostile', shipSize, (g, cx, cy) => this.drawShipShapeAt(g, cx, cy, false))
 
         const factorySize = Math.ceil(CELL_SIZE*3)
-        Object.values(FactoryKind).forEach(kind => {
+        Object.values(BuildingType).forEach(kind => {
             bake('factory_'+kind, factorySize, (g, cx, cy) => this.drawFactoryShapeAt(g, kind, cx, cy, GREEN, 1))
         })
 
@@ -224,7 +224,7 @@ export default class MapScene extends Scene {
         this.drawShatters(time)
 
         this.selectionG.clear()
-        const { selectedFactoryId, factories } = useAppStore.getState()
+        const { selectedFactoryId, buildings: factories } = useAppStore.getState()
         const selectedFactory = factories.find(f => f.id === selectedFactoryId)
         if(!selectedFactory) return
 
@@ -245,9 +245,9 @@ export default class MapScene extends Scene {
         const g = this.progressG
         g.clear()
 
-        useAppStore.getState().factories.forEach(f => {
+        useAppStore.getState().buildings.forEach(f => {
             const item = f.queue?.[0]
-            if(f.kind !== FactoryKind.Shipyard || !item?.startedAt) return
+            if(f.kind !== BuildingType.Shipyard || !item?.startedAt) return
 
             const { x, y } = this.toWorld(f.x, f.y)
             const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / ShipData[item.type].productionTimeMs, 0, 1)
@@ -267,7 +267,7 @@ export default class MapScene extends Scene {
         const g = this.healthG
         g.clear()
 
-        useAppStore.getState().factories.forEach(f => {
+        useAppStore.getState().buildings.forEach(f => {
             const maxHp = getBuildingMaxHp(f.kind)
             if(f.hp >= maxHp) return
 
@@ -285,8 +285,8 @@ export default class MapScene extends Scene {
 
     // Every mining station the player owns yields metal on each tick.
     tickResources = () => {
-        const { factories, addMetal } = useAppStore.getState()
-        const miningStations = factories.filter(f => f.faction === Faction.Player && f.kind === FactoryKind.MiningStation)
+        const { buildings: factories, addMetal } = useAppStore.getState()
+        const miningStations = factories.filter(f => f.faction === Faction.Player && f.kind === BuildingType.MiningStation)
         if(miningStations.length === 0) return
 
         addMetal(miningStations.length * METAL_PER_MINING_STATION)
@@ -306,7 +306,7 @@ export default class MapScene extends Scene {
 
     // Completes any shipyard's front-of-queue item once its production time has elapsed.
     tickProduction = () => {
-        const { factories, completeQueueItem } = useAppStore.getState()
+        const { buildings: factories, completeQueueItem } = useAppStore.getState()
         const now = Date.now()
 
         factories.forEach(f => {
@@ -319,10 +319,10 @@ export default class MapScene extends Scene {
     }
 
     // Places a newly completed ship near its shipyard, trying to avoid overlapping other loitering ships or any building.
-    spawnShip = (shipyard:FactoryData, type:ShipType) => {
+    spawnShip = (shipyard:BuildingData, type:VehicleType) => {
         const center = this.toWorld(shipyard.x, shipyard.y)
         const size = ShipData[type].sizeHex * CELL_SIZE
-        const existingShips = useAppStore.getState().ships
+        const existingShips = useAppStore.getState().vehicles
         let pos = center
 
         for(let attempt=0; attempt<40; attempt++){
@@ -336,7 +336,7 @@ export default class MapScene extends Scene {
             if(!overlapsShip && !this.buildingOverlapsPoint(candidate.x, candidate.y, size/2 + SHIP_BUILDING_CLEARANCE_PX)){ pos = candidate; break }
         }
 
-        const ship:ShipInstanceData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:ShipData[type].hp }
+        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:ShipData[type].hp }
         useAppStore.getState().addShip(ship)
         this.createShipSprite(ship)
     }
@@ -347,7 +347,7 @@ export default class MapScene extends Scene {
     // other building, rather than the inert Graphics-only shape it used to be.
     spawnBases = () => {
         this.mapData.bases.forEach(base => {
-            const factory:FactoryData = { id:v4(), x:base.x, y:base.y, kind:FactoryKind.Base, faction:base.faction, hp:getBuildingMaxHp(FactoryKind.Base) }
+            const factory:BuildingData = { id:v4(), x:base.x, y:base.y, kind:BuildingType.Base, faction:base.faction, hp:getBuildingMaxHp(BuildingType.Base) }
             useAppStore.getState().addFactory(factory)
             this.createBuildingSprite(factory)
         })
@@ -365,7 +365,7 @@ export default class MapScene extends Scene {
 
         for(let x=0; x<this.mapData.width; x++){
             for(let y=0; y<this.mapData.height; y++){
-                if(!this.isValidPlacement(FactoryKind.Shipyard, x, y, Faction.Enemy)) continue
+                if(!this.isValidPlacement(BuildingType.Shipyard, x, y, Faction.Enemy)) continue
 
                 const { x:wx, y:wy } = this.toWorld(x, y)
                 const score = uncovered.filter(n => {
@@ -378,7 +378,7 @@ export default class MapScene extends Scene {
         }
 
         if(!best) return
-        const factory:FactoryData = { id:v4(), x:best.x, y:best.y, kind:FactoryKind.Shipyard, faction:Faction.Enemy, hp:getBuildingMaxHp(FactoryKind.Shipyard) }
+        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.Shipyard, faction:Faction.Enemy, hp:getBuildingMaxHp(BuildingType.Shipyard) }
         useAppStore.getState().addFactory(factory)
         this.createBuildingSprite(factory)
         this.enemyShipyardId = factory.id
@@ -390,7 +390,7 @@ export default class MapScene extends Scene {
     spawnEnemyRaid = () => {
         const { queueShip } = useAppStore.getState()
         if(!this.enemyShipyardId) return
-        for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(this.enemyShipyardId, ShipType.KK)
+        for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(this.enemyShipyardId, VehicleType.KK)
     }
 
     // Watches the enemy shipyard's own production output and, the moment it has massed a full raid's
@@ -400,7 +400,7 @@ export default class MapScene extends Scene {
     checkEnemyRaid = () => {
         if(this.enemyRaidLaunched || !this.enemyShipyardId) return
 
-        const { ships, addWaypoint } = useAppStore.getState()
+        const { vehicles: ships, addWaypoint } = useAppStore.getState()
         const massed = ships.filter(s => s.shipyardId === this.enemyShipyardId).length
         if(massed < ENEMY_RAID_SIZE) return
 
@@ -418,7 +418,7 @@ export default class MapScene extends Scene {
     // applyDamage in detonateDrone/onMissileShipContact/updateCramTurrets). None of this is
     // polled or diffed against the store in the per-frame update loop.
 
-    createShipSprite = (ship:ShipInstanceData) => {
+    createShipSprite = (ship:VehicleData) => {
         const isFriend = ship.faction === Faction.Player
         const sprite = this.physics.add.sprite(ship.x, ship.y, isFriend ? 'ship_friend' : 'ship_hostile')
         this.centerCircleBody(sprite, DRONE_CONTACT_RADIUS_PX/2)
@@ -438,7 +438,7 @@ export default class MapScene extends Scene {
         this.shipLabels.delete(id)
     }
 
-    createBuildingSprite = (factory:FactoryData) => {
+    createBuildingSprite = (factory:BuildingData) => {
         const { x, y } = this.toWorld(factory.x, factory.y)
         const sprite = this.physics.add.staticSprite(x, y, 'factory_'+factory.kind)
         this.centerCircleBody(sprite, getBuildingFootprintRadius(factory.kind))
@@ -451,7 +451,7 @@ export default class MapScene extends Scene {
         // A Solar Mill spins slowly forever — set up once, here, as a tween rather than hand-rotating
         // it every frame. The tween is only ever referenced by the TweenManager and this sprite; once
         // destroyBuildingSprite destroys the sprite, nothing keeps the tween reachable and it's collected.
-        if(factory.kind === FactoryKind.SolarMill){
+        if(factory.kind === BuildingType.SolarMill){
             this.tweens.add({ targets:sprite, angle: 360, duration: SOLAR_MILL_ROTATION_DURATION_MS, repeat: -1, ease: 'Linear' })
         }
 
@@ -481,11 +481,11 @@ export default class MapScene extends Scene {
     // (physics.moveTo sets velocity towards the target, the physics step integrates position); this
     // just decides *where* that target is and detects arrival to advance the route.
     moveShips = (time:number, deltaMs:number) => {
-        const { ships, factories, setShips } = useAppStore.getState()
+        const { vehicles: ships, buildings: factories, setShips } = useAppStore.getState()
         // ATDs that reach the end of their route detonate — but not mid-map (that would clobber this
         // very setShips call below with a store snapshot that still has them in it), so they're
         // collected here and only actually detonated once this pass's positions have been committed.
-        const arrivedAtds:Array<{ ship:ShipInstanceData, sprite:Physics.Arcade.Sprite }> = []
+        const arrivedAtds:Array<{ ship:VehicleData, sprite:Physics.Arcade.Sprite }> = []
 
         const updated = ships.map(ship => {
             const sprite = this.shipSprites.get(ship.id)
@@ -495,7 +495,7 @@ export default class MapScene extends Scene {
             const shipyardWaypoints = shipyard?.waypoints || []
             // An ATD is a guided munition, not a patrol ship — it only ever follows its shipyard's
             // route to the first waypoint (its detonation target), never any further ones.
-            const waypoints = ship.type === ShipType.ATD ? shipyardWaypoints.slice(0, 1) : shipyardWaypoints
+            const waypoints = ship.type === VehicleType.ATD ? shipyardWaypoints.slice(0, 1) : shipyardWaypoints
             const pathIndex = ship.pathIndex ?? 0
             const speed = ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
@@ -533,7 +533,7 @@ export default class MapScene extends Scene {
 
             // ATD is a one-shot guided munition: reaching the end of its (single-waypoint) route
             // detonates it right here, same as a contact hit does in onDroneShipContact/onDroneBuildingContact.
-            if(ship.type === ShipType.ATD && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
+            if(ship.type === VehicleType.ATD && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
 
             return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, orbitAnchor }
         })
@@ -544,12 +544,12 @@ export default class MapScene extends Scene {
 
     getShipEntry = (sprite:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         const id = (sprite as any).getData('id')
-        return useAppStore.getState().ships.find(s => s.id === id)
+        return useAppStore.getState().vehicles.find(s => s.id === id)
     }
 
     getBuildingEntry = (sprite:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         const id = (sprite as any).getData('id')
-        return useAppStore.getState().factories.find(f => f.id === id)
+        return useAppStore.getState().buildings.find(f => f.id === id)
     }
 
     isHostileDroneShipPair = (a:Phaser.Types.Physics.Arcade.GameObjectWithBody, b:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
@@ -557,14 +557,14 @@ export default class MapScene extends Scene {
         const shipA = this.getShipEntry(a)
         const shipB = this.getShipEntry(b)
         if(!shipA || !shipB || shipA.faction === shipB.faction) return false
-        return shipA.type === ShipType.KK || shipA.type === ShipType.ATD || shipB.type === ShipType.KK || shipB.type === ShipType.ATD
+        return shipA.type === VehicleType.KK || shipA.type === VehicleType.ATD || shipB.type === VehicleType.KK || shipB.type === VehicleType.ATD
     }
 
     isHostileDroneBuildingPair = (shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, buildingObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         const ship = this.getShipEntry(shipObj)
         const building = this.getBuildingEntry(buildingObj)
         if(!ship || !building || ship.faction === building.faction) return false
-        return ship.type === ShipType.KK || ship.type === ShipType.ATD
+        return ship.type === VehicleType.KK || ship.type === VehicleType.ATD
     }
 
     isHostileMissileShipPair = (missileObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
@@ -583,10 +583,10 @@ export default class MapScene extends Scene {
         const shipB = this.getShipEntry(b)
         if(!shipA || !shipB) return
 
-        if(shipA.type === ShipType.KK || shipA.type === ShipType.ATD) this.detonateDrone(shipA, spriteA, { kind:'ship', id:shipB.id })
+        if(shipA.type === VehicleType.KK || shipA.type === VehicleType.ATD) this.detonateDrone(shipA, spriteA, { kind:'ship', id:shipB.id })
 
         const survivingShipB = this.shipSprites.has(shipB.id) ? this.getShipEntry(b) : null
-        if(survivingShipB && (survivingShipB.type === ShipType.KK || survivingShipB.type === ShipType.ATD)) this.detonateDrone(survivingShipB, spriteB, { kind:'ship', id:shipA.id })
+        if(survivingShipB && (survivingShipB.type === VehicleType.KK || survivingShipB.type === VehicleType.ATD)) this.detonateDrone(survivingShipB, spriteB, { kind:'ship', id:shipA.id })
     }
 
     // A drone touching a hostile building detonates immediately, right here — no queueing.
@@ -602,18 +602,18 @@ export default class MapScene extends Scene {
     // CRAM turret's range check uses) for ATD, which ignores `primary` and just blasts everything hostile
     // nearby. Called exactly once per detonation, directly from whatever triggered it (a contact overlap
     // callback above, or — for an ATD reaching its route's end — moveShips).
-    detonateDrone = (drone:ShipInstanceData, sprite:Physics.Arcade.Sprite, primary:{ kind:'ship'|'building', id:string } | null) => {
+    detonateDrone = (drone:VehicleData, sprite:Physics.Arcade.Sprite, primary:{ kind:'ship'|'building', id:string } | null) => {
         const time = this.time.now
         const shipDamage = new Map<string, number>([[drone.id, drone.hp]])
         const factoryDamage = new Map<string, number>()
 
         this.shatters.push({ x:sprite.x, y:sprite.y, createdAt:time, seed:drone.id })
 
-        if(drone.type === ShipType.KK && primary){
+        if(drone.type === VehicleType.KK && primary){
             if(primary.kind === 'ship') shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + KK_DAMAGE)
             else factoryDamage.set(primary.id, (factoryDamage.get(primary.id) || 0) + KK_DAMAGE)
         }
-        else if(drone.type === ShipType.ATD){
+        else if(drone.type === VehicleType.ATD){
             const hits = this.physics.overlapCirc(sprite.x, sprite.y, ATD_BLAST_RADIUS_PX, true, true)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
@@ -629,7 +629,7 @@ export default class MapScene extends Scene {
             })
         }
 
-        const { ships, factories, setShips, setFactories } = useAppStore.getState()
+        const { vehicles: ships, buildings: factories, setShips, setFactories } = useAppStore.getState()
         setShips(applyDamage(ships, shipDamage, dead => {
             this.destroyShipSprite(dead.id)
             if(dead.id !== drone.id) this.shatters.push({ x:dead.x, y:dead.y, createdAt:time, seed:dead.id })
@@ -655,7 +655,7 @@ export default class MapScene extends Scene {
         missile.destroy()
         this.shatters.push({ x, y, createdAt:time, seed })
 
-        const { ships, setShips } = useAppStore.getState()
+        const { vehicles: ships, setShips } = useAppStore.getState()
         setShips(applyDamage(ships, new Map([[ship.id, MISSILE_DAMAGE]]), dead => {
             this.destroyShipSprite(dead.id)
             this.shatters.push({ x:dead.x, y:dead.y, createdAt:time, seed:dead.id })
@@ -667,15 +667,15 @@ export default class MapScene extends Scene {
     // position instead of a mobile ship. A shot at a ship always lands; a shot at a missile only has a
     // chance to bring it down. Range acquisition is a physics.overlapCirc query, not a full ship sweep.
     updateCramTurrets = (time:number) => {
-        const { factories, setShips, setFactories } = useAppStore.getState()
-        const turrets = factories.filter(f => f.kind === FactoryKind.CRAM)
+        const { buildings: factories, setShips, setFactories } = useAppStore.getState()
+        const turrets = factories.filter(f => f.kind === BuildingType.CRAM)
         if(turrets.length === 0) return
 
         const shooterIds = new Set<string>()
         const damageByTarget = new Map<string, number>()
 
         turrets.forEach(turret => {
-            if(turret.lastFiredAt && time - turret.lastFiredAt < CRAM_FIRE_COOLDOWN_MS) return
+            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < CRAM_FIRE_COOLDOWN_MS) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
             const { targetShip, targetMissile } = this.findNearestHostileInRange(turret.faction, x, y, CRAM_RANGE_PX)
@@ -698,8 +698,8 @@ export default class MapScene extends Scene {
 
         if(shooterIds.size === 0) return
 
-        setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAt:time } : f))
-        setShips(applyDamage(useAppStore.getState().ships, damageByTarget, ship => {
+        setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
+        setShips(applyDamage(useAppStore.getState().vehicles, damageByTarget, ship => {
             this.destroyShipSprite(ship.id)
             this.shatters.push({ x:ship.x, y:ship.y, createdAt:time, seed:ship.id })
         }))
@@ -740,12 +740,12 @@ export default class MapScene extends Scene {
     // Each MLRS, on cooldown, launches a whole salvo (MISSILE_SALVO_SIZE) of missiles at once, all
     // homing on whichever hostile ship is nearest in range (found the same way CRAM finds its targets).
     updateMlrs = (time:number) => {
-        const { ships, setShips } = useAppStore.getState()
+        const { vehicles: ships, setShips } = useAppStore.getState()
         const shooterIds = new Set<string>()
 
         ships.forEach(ship => {
-            if(ship.type !== ShipType.MLRS) return
-            if(ship.lastFiredAt && time - ship.lastFiredAt < MLRS_FIRE_COOLDOWN_MS) return
+            if(ship.type !== VehicleType.MLRS) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < MLRS_FIRE_COOLDOWN_MS) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
@@ -757,7 +757,7 @@ export default class MapScene extends Scene {
             for(let i=0; i<MISSILE_SALVO_SIZE; i++) this.spawnMissile(ship.faction, sprite.x, sprite.y, targetShip.getData('id'))
         })
 
-        if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship))
+        if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
     }
 
     spawnMissile = (faction:Faction, x:number, y:number, targetShipId:string) => {
@@ -839,7 +839,7 @@ export default class MapScene extends Scene {
     // True if a point (with the given clearance around it) would overlap a building's footprint —
     // bases included, since they're just another (tougher, bigger-footprint) building now.
     buildingOverlapsPoint = (worldX:number, worldY:number, clearance:number) => {
-        return useAppStore.getState().factories.some(f => {
+        return useAppStore.getState().buildings.some(f => {
             const p = this.toWorld(f.x, f.y)
             return Phaser.Math.Distance.Between(worldX, worldY, p.x, p.y) < getBuildingFootprintRadius(f.kind) + clearance
         })
@@ -902,9 +902,9 @@ export default class MapScene extends Scene {
     // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected.
     // Rebuilt only when the selected shipyard or its waypoint count changes, not every frame.
     drawOrders = () => {
-        const { selectedFactoryId, factories } = useAppStore.getState()
+        const { selectedFactoryId, buildings: factories } = useAppStore.getState()
         const factory = factories.find(f => f.id === selectedFactoryId)
-        const waypoints = (factory && factory.kind === FactoryKind.Shipyard) ? (factory.waypoints || []) : []
+        const waypoints = (factory && factory.kind === BuildingType.Shipyard) ? (factory.waypoints || []) : []
 
         const key = factory ? factory.id+':'+waypoints.length : ''
         if(key === this.lastOrdersKey) return
@@ -936,7 +936,7 @@ export default class MapScene extends Scene {
     // curved overlap — trimmed by any other bubble covering part of that edge so nothing draws jagged.
     drawPlacementRanges = () => {
         const g = this.g
-        const structures = useAppStore.getState().factories
+        const structures = useAppStore.getState().buildings
         const circles = structures.map(s => ({ ...this.toWorld(s.x, s.y), r: getStructureRadius(s), faction: s.faction }))
 
         // Rounded portions: each circle's boundary where it doesn't touch any other bubble.
@@ -1032,7 +1032,7 @@ export default class MapScene extends Scene {
         const { x, y } = this.toWorld(node.x, node.y)
         const rand = seededRandom(node.id)
 
-        if(node.kind === NodeKind.Asteroid){
+        if(node.kind === ResourceNode.Asteroid){
             const baseRadius = CELL_SIZE * 0.4
             const sides = 8
             const points = []
@@ -1064,15 +1064,15 @@ export default class MapScene extends Scene {
     // Shared shape renderer so the placement preview matches the built factory exactly, and so
     // generateTextures can bake the same shape into each building's sprite texture. `rotation` (radians)
     // only affects the Solar Mill's rays — used solely for the flat preview; the live sprite spins itself.
-    drawFactoryShapeAt = (g:GameObjects.Graphics, kind:FactoryKind, x:number, y:number, color:number, alpha:number, rotation:number = 0) => {
-        if(kind === FactoryKind.MiningStation){
+    drawFactoryShapeAt = (g:GameObjects.Graphics, kind:BuildingType, x:number, y:number, color:number, alpha:number, rotation:number = 0) => {
+        if(kind === BuildingType.MiningStation){
             const r = CELL_SIZE * 0.65
             g.lineStyle(2, color, alpha)
             g.strokeRect(x-r, y-r, r*2, r*2)
             g.lineBetween(x-r, y, x+r, y)
             g.lineBetween(x, y-r, x, y+r)
         }
-        else if(kind === FactoryKind.SolarMill){
+        else if(kind === BuildingType.SolarMill){
             const r = CELL_SIZE * 0.45
             const rayR = CELL_SIZE * 0.7
             g.lineStyle(2, color, alpha)
@@ -1082,7 +1082,7 @@ export default class MapScene extends Scene {
                 g.lineBetween(x + Math.cos(angle)*r, y + Math.sin(angle)*r, x + Math.cos(angle)*rayR, y + Math.sin(angle)*rayR)
             }
         }
-        else if(kind === FactoryKind.CRAM){
+        else if(kind === BuildingType.CRAM){
             // A little turret: circular base, a barrel pointing "up" with a muzzle crossbar.
             const r = CELL_SIZE * 0.5
             g.lineStyle(2, color, alpha)
@@ -1090,7 +1090,7 @@ export default class MapScene extends Scene {
             g.lineBetween(x, y, x, y-r*1.4)
             g.lineBetween(x-r*0.3, y-r*1.1, x+r*0.3, y-r*1.1)
         }
-        else if(kind === FactoryKind.Base){
+        else if(kind === BuildingType.Base){
             // The faction headquarters: a larger filled diamond, distinct from every other building.
             const r = CELL_SIZE * 1.5
             const points = [
@@ -1121,14 +1121,14 @@ export default class MapScene extends Scene {
     // Grid-coordinate wrapper around drawFactoryShapeAt, for the two Graphics-based (non-sprite) uses
     // that still deal in grid cells: the placement ghost preview, and... nothing else now that built
     // factories render as sprites — kept as its own method so updatePreview reads naturally.
-    drawFactoryShape = (g:GameObjects.Graphics, kind:FactoryKind, gridX:number, gridY:number, color:number, alpha:number, rotation:number = 0) => {
+    drawFactoryShape = (g:GameObjects.Graphics, kind:BuildingType, gridX:number, gridY:number, color:number, alpha:number, rotation:number = 0) => {
         const { x, y } = this.toWorld(gridX, gridY)
         this.drawFactoryShapeAt(g, kind, x, y, color, alpha, rotation)
     }
 
     findNodeAt = (gridX:number, gridY:number) => this.mapData.nodes.find(n => n.x === gridX && n.y === gridY)
 
-    findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().factories.find(f => f.x === gridX && f.y === gridY)
+    findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().buildings.find(f => f.x === gridX && f.y === gridY)
 
     // Placement is allowed anywhere within the placement radius of one of a faction's own structures —
     // bases included, now that they're regular (if non-placeable) factories. Defaults to the player so
@@ -1136,21 +1136,21 @@ export default class MapScene extends Scene {
     // territory the same way the player's is evaluated.
     isNearOwnStructure = (gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const ownFactories = useAppStore.getState().factories.filter(f => f.faction === faction)
+        const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
         return ownFactories.some(s => {
             const p = this.toWorld(s.x, s.y)
             return Phaser.Math.Distance.Between(x, y, p.x, p.y) <= getStructureRadius(s)
         })
     }
 
-    isValidPlacement = (kind:FactoryKind, gridX:number, gridY:number, faction:Faction = Faction.Player) => {
+    isValidPlacement = (kind:BuildingType, gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
         // A base occupies a factory slot too now, so this alone also blocks placing on top of one.
         if(this.findFactoryAt(gridX, gridY)) return false
         if(getEnergyStatus(faction).energyRemaining - getFactoryEnergyCost(kind) < 0) return false
 
         const worldPos = this.toWorld(gridX, gridY)
-        const overlapsShip = useAppStore.getState().ships.some(s => {
+        const overlapsShip = useAppStore.getState().vehicles.some(s => {
             const minDist = FACTORY_FOOTPRINT_RADIUS + ShipData[s.type].sizeHex*CELL_SIZE/2 + SHIP_BUILDING_CLEARANCE_PX
             return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, s.x, s.y) < minDist
         })
@@ -1158,8 +1158,8 @@ export default class MapScene extends Scene {
 
         const node = this.findNodeAt(gridX, gridY)
 
-        if(kind === FactoryKind.MiningStation) return node?.kind === NodeKind.Asteroid && this.isNearOwnStructure(gridX, gridY, faction)
-        if(kind === FactoryKind.SolarMill) return node?.kind === NodeKind.Star && this.isNearOwnStructure(gridX, gridY, faction)
+        if(kind === BuildingType.MiningStation) return node?.kind === ResourceNode.Asteroid && this.isNearOwnStructure(gridX, gridY, faction)
+        if(kind === BuildingType.SolarMill) return node?.kind === ResourceNode.Star && this.isNearOwnStructure(gridX, gridY, faction)
         if(node) return false
 
         return this.isNearOwnStructure(gridX, gridY, faction)
@@ -1176,12 +1176,12 @@ export default class MapScene extends Scene {
 
     enablePlacementControls = () => {
         this.input.on('pointerdown', () => {
-            const { placingFactory, setPlacingFactory, setSelectedFactoryId, addFactory, factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
+            const { placingFactory, setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, addFactory, buildings: factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
             if(!this.hoveredCell) return
 
             // Selecting one of the player's own shipyards puts the map straight into orders-editing mode —
             // the Orders button in FactoryToolbar is just a label now, not a prerequisite for this.
-            const selectedShipyard = factories.find(f => f.id === selectedFactoryId && f.kind === FactoryKind.Shipyard && f.faction === Faction.Player)
+            const selectedShipyard = factories.find(f => f.id === selectedFactoryId && f.kind === BuildingType.Shipyard && f.faction === Faction.Player)
             if(selectedShipyard){
                 const { x, y } = this.hoveredCell
                 if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
@@ -1195,14 +1195,14 @@ export default class MapScene extends Scene {
 
             if(!placingFactory){
                 const clicked = this.findFactoryAt(this.hoveredCell.x, this.hoveredCell.y)
-                setSelectedFactoryId(clicked && clicked.faction === Faction.Player && clicked.kind === FactoryKind.Shipyard ? clicked.id : null)
+                setSelectedFactoryId(clicked && clicked.faction === Faction.Player && clicked.kind === BuildingType.Shipyard ? clicked.id : null)
                 return
             }
 
             if(!this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)) return
 
             const node = this.findNodeAt(this.hoveredCell.x, this.hoveredCell.y)
-            const factory:FactoryData = {
+            const factory:BuildingData = {
                 id: v4(),
                 x: this.hoveredCell.x,
                 y: this.hoveredCell.y,
@@ -1219,7 +1219,7 @@ export default class MapScene extends Scene {
         })
 
         this.input.keyboard.on('keydown-ESC', () => {
-            const { setPlacingFactory, setSelectedFactoryId } = useAppStore.getState()
+            const { setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId } = useAppStore.getState()
             setPlacingFactory(null)
             setSelectedFactoryId(null)
             this.previewG.clear()
