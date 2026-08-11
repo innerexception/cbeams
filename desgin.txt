@@ -1,3 +1,7 @@
+Factions start with a pre-set number of logistics centers from which units may be spawned. 
+Defenses may be deployed within a radius of a logistics center.
+Total logistics available = number of logistics centers * 10
+Logistics centers must be placed at least 500px away from another logistics center
 
-    
-    
+
+Placement phase

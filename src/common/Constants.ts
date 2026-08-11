@@ -18,11 +18,6 @@ export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(wo
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
-// --- Logistics ---
-// Every faction shares one logistics budget, spent by each building it owns (see BuildingData's
-// logisticsCost in enum.ts) — placement is refused once a new building would push usage over the cap.
-export const BASE_MAX_LOGISTICS = 20
-
 // --- Shipyard production/orders ---
 export const MAX_QUEUE = 3
 export const MAX_WAYPOINTS = 5
@@ -31,6 +26,13 @@ export const MAX_WAYPOINTS = 5
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards.
 export const PLACEMENT_RADIUS_PX = 200
 export const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX / 2
+
+// --- Placement phase ---
+// Before a match goes live, the player plants exactly this many LogisticsCenters on their own side of
+// the map, each at least LOGISTICS_CENTER_MIN_SPACING_PX from every other one they've already placed —
+// see MapScene's isValidLogisticsPlacement/handleLogisticsPlacementClick.
+export const LOGISTICS_CENTER_COUNT = 3
+export const LOGISTICS_CENTER_MIN_SPACING_PX = 500
 
 // --- Ship movement ---
 // Once a ship finishes its route (or its orders are cleared) it loiters in a circle around the

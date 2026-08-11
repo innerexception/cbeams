@@ -15,10 +15,23 @@ interface BaseData {
     y: number
 }
 
+// A rectangular lattice of signed elevation samples (one per grid cell) covering the terrain's
+// bounding box — positive values are raised terrain (Hill, Spur), negative values are sunken terrain
+// (Valley, and the low side of a Cliff), magnitude in [-1,1]. origin+cols/rows locate the lattice back
+// in map-grid space. Rendered as topographic contour lines (see MapScene's drawTerrain), not as shapes.
+interface TerrainData {
+    originX: number
+    originY: number
+    cols: number
+    rows: number
+    elevations: Array<Array<number>>
+}
+
 interface MapData {
     width: number
     height: number
     bases: Array<BaseData>
+    terrain: TerrainData
 }
 
 interface ProductionQueueItem {

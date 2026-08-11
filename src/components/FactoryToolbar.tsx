@@ -1,20 +1,20 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { BuildingType, VehicleType, VehicleData } from '../../enum'
-import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
+import { BuildingType, VehicleType, VehicleData, Faction } from '../../enum'
+import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT } from '../common/Constants'
 import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
 const hints = {
-    [BuildingType.LogisticsCenter]: 'Click empty ground near your base to build a Shipyard',
     [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
     [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
     [BuildingType.THADD]: 'Click empty ground near your base to build a THADD',
 }
 
 export default () => {
-    const { placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints } = useAppStore((state) => ({
+    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints } = useAppStore((state) => ({
+        phase: state.phase,
         placingFactory: state.placingFactory,
         setPlacingFactory: state.setPlacingBuilding,
         selectedFactoryId: state.selectedFactoryId,
@@ -24,7 +24,8 @@ export default () => {
         clearWaypoints: state.clearWaypoints,
     }))
 
-    // Re-render periodically so queue progress bars stay live.
+    // Re-render periodically so queue progress bars (and, during placement, the LogisticsCenter
+    // counter) stay live.
     const [, forceTick] = React.useState(0)
     React.useEffect(() => {
         const interval = setInterval(() => forceTick(t => t+1), 200)
@@ -32,6 +33,18 @@ export default () => {
     }, [])
 
     const toggle = (kind:BuildingType) => setPlacingFactory(placingFactory === kind ? null : kind)
+
+    if(phase === 'placement'){
+        const placed = factories.filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter).length
+        return (
+            <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14 }}>
+                <div>Place your LogisticsCenters: {placed} / {LOGISTICS_CENTER_COUNT}</div>
+                <div style={{ marginTop:6, fontSize:12 }}>
+                    Click anywhere on your side of the map. Each one must be at least 500px from any other.
+                </div>
+            </div>
+        )
+    }
 
     const selectedFactory = factories.find(f => f.id === selectedFactoryId)
 
@@ -86,7 +99,6 @@ export default () => {
     return (
         <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
             <div style={{ display:'flex' }}>
-                <ToolButton active={placingFactory === BuildingType.LogisticsCenter} onClick={()=>toggle(BuildingType.LogisticsCenter)}>Shipyard</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.THADD} onClick={()=>toggle(BuildingType.THADD)}>THADD</ToolButton>

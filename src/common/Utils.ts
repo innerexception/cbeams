@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
 import { Layers, Faction, BuildingType, BuildingData, VehicleType, VehicleData } from "../../enum"
-import { SAVE_NAME, BASE_MAX_LOGISTICS } from "./Constants"
+import { SAVE_NAME } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -37,7 +37,7 @@ export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
     const { buildings, vehicles } = useAppStore.getState()
     const ownFactories = buildings.filter(f => f.faction === faction)
     const ownVehicles = vehicles.filter(v => v.faction === faction)
-    const maxLogistics = BASE_MAX_LOGISTICS
+    const maxLogistics = ownFactories.filter(b=>b.kind === BuildingType.LogisticsCenter).length*10
     const logisticsUsed = ownFactories.reduce((sum, f) => sum + getFactoryLogisticsCost(f.kind), 0)
         + ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed

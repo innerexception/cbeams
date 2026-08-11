@@ -4,7 +4,8 @@ import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
-import { spawnEnemyShipyard, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
+import { spawnEnemyLogisticsCenters, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
+import { marchingSquaresSegments } from "../../common/Contours";
 import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
@@ -14,6 +15,7 @@ import {
     MLRS_FIRE_COOLDOWN_MS, MLRS_RANGE_PX, MISSILE_SALVO_SIZE, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
     THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS,
+    LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
@@ -32,6 +34,8 @@ const shipOrbitPhase = (id:string) => {
 }
 
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
+// This same per-structure radius is also each faction's sight range (see updateFogOfWar) — the
+// territory border drawn by drawPlacementRanges doubles as "how far that faction can currently see".
 const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
 const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
 
@@ -41,6 +45,14 @@ const getBuildingMaxHp = (kind:BuildingType) => BuildingData[kind].maxHp
 
 // Bases have a bigger physical footprint than an ordinary building.
 const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
+
+// Blends two 0xRRGGBB colors — used to brighten a hill contour's green as its elevation level rises.
+const lerpHexColor = (colorA:number, colorB:number, t:number) => {
+    const ar=(colorA>>16)&0xff, ag=(colorA>>8)&0xff, ab=colorA&0xff
+    const br=(colorB>>16)&0xff, bg=(colorB>>8)&0xff, bb=colorB&0xff
+    const r = Math.round(ar+(br-ar)*t), g = Math.round(ag+(bg-ag)*t), b = Math.round(ab+(bb-ab)*t)
+    return (r<<16)|(g<<8)|b
+}
 
 // Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
 // contact target — TargetType.Any covers both. Replaces the old hardcoded KK/ATD type checks that
@@ -177,16 +189,19 @@ export default class MapScene extends Scene {
         this.physics.add.overlap(this.missilesGroup, this.missilesGroup, this.onMissileMissileContact, this.isHostileMissilePair, this)
 
         this.mapData = useAppStore.getState().activeMap || generateMap(MAP_SIZE)
+        // Every match starts in the placement phase — the enemy's own building/ships (spawned below)
+        // stay hidden and the AI holds its raid until the player finishes placing their 3
+        // LogisticsCenters (see startCombatPhase).
+        useAppStore.getState().setPhase('placement')
 
         this.cameras.main.setZoom(1)
         this.centerCameraBounds()
 
         this.spawnBases()
-        spawnEnemyShipyard(this)
+        spawnEnemyLogisticsCenters(this)
         this.drawMap()
         this.enableCameraControls()
         this.enablePlacementControls()
-        spawnEnemyRaid(this)
 
         this.time.addEvent({ delay: 500, loop: true, callback: this.tickProduction })
 
@@ -233,6 +248,7 @@ export default class MapScene extends Scene {
         this.updateThadd(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
+        this.updateFogOfWar()
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
@@ -257,7 +273,10 @@ export default class MapScene extends Scene {
         this.selectionG.strokePoints(points, true, true)
     }
 
-    // Progress bar above every shipyard currently building something.
+    // Progress bar above every shipyard currently building something. Skips any building whose sprite
+    // is currently hidden by fog of war (see updateFogOfWar) — the bar is drawn on its own Graphics
+    // layer, not attached to the sprite, so without this check it would still show through the fog and
+    // give away a hidden enemy LogisticsCenter's position.
     drawProductionProgress = () => {
         const g = this.progressG
         g.clear()
@@ -265,6 +284,7 @@ export default class MapScene extends Scene {
         useAppStore.getState().buildings.forEach(f => {
             const item = f.queue?.[0]
             if(f.kind !== BuildingType.LogisticsCenter || !item?.startedAt) return
+            if(this.buildingSprites.get(f.id)?.visible === false) return
 
             const { x, y } = this.toWorld(f.x, f.y)
             const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / VehicleData[item.type].productionTimeMs, 0, 1)
@@ -280,6 +300,7 @@ export default class MapScene extends Scene {
 
     // HP bar below any building that's taken damage (a CRAM turret's cannon, a drone detonation) —
     // hidden entirely at full health so an undamaged base doesn't clutter the map with empty bars.
+    // Also skips anything currently hidden by fog of war, same as drawProductionProgress.
     drawBuildingHealth = () => {
         const g = this.healthG
         g.clear()
@@ -287,6 +308,7 @@ export default class MapScene extends Scene {
         useAppStore.getState().buildings.forEach(f => {
             const maxHp = getBuildingMaxHp(f.kind)
             if(f.hp >= maxHp) return
+            if(this.buildingSprites.get(f.id)?.visible === false) return
 
             const { x, y } = this.toWorld(f.x, f.y)
             const percent = PhaserMath.Clamp(f.hp / maxHp, 0, 1)
@@ -374,9 +396,41 @@ export default class MapScene extends Scene {
         onShowModal(faction === Faction.Player ? Modal.Defeat : Modal.Victory)
     }
 
+    // The placement->combat handoff: called once, the instant the player's 3rd LogisticsCenter goes
+    // down (see handleLogisticsPlacementClick). Whatever the enemy quietly built during placement (its
+    // own 3 LogisticsCenters, so far) stays hidden until updateFogOfWar (run every frame from here on)
+    // finds it inside the player's sight range — there's no one-time "reveal everything" step anymore.
+    // spawnEnemyRaid queues the enemy's opening raid, which checkEnemyRaid sends at the player's
+    // nearest LogisticsCenter the moment it's massed.
+    startCombatPhase = () => {
+        useAppStore.getState().setPhase('combat')
+        spawnEnemyRaid(this)
+    }
+
+    // Fog of war: the player's territory border (the same placement-radius circles drawn by
+    // drawPlacementRanges) doubles as their sight range. Every enemy building/ship is only ever
+    // visible while it's standing inside that border — during the placement phase nothing enemy is
+    // visible at all, no matter what (the player has no border yet to begin with), and once combat
+    // starts visibility is re-evaluated fresh every frame as both sides' units move around.
+    updateFogOfWar = () => {
+        const { phase, buildings, vehicles } = useAppStore.getState()
+
+        buildings.filter(f => f.faction === Faction.Enemy).forEach(f => {
+            const { x, y } = this.toWorld(f.x, f.y)
+            const visible = phase === 'combat' && this.isWithinFactionStructureRadius(x, y, Faction.Player)
+            this.buildingSprites.get(f.id)?.setVisible(visible)
+        })
+
+        vehicles.filter(s => s.faction === Faction.Enemy).forEach(s => {
+            const visible = phase === 'combat' && this.isWithinFactionStructureRadius(s.x, s.y, Faction.Player)
+            this.shipSprites.get(s.id)?.setVisible(visible)
+            this.shipLabels.get(s.id)?.setVisible(visible)
+        })
+    }
+
     // --- Physics sprite lifecycle -------------------------------------------------------------------
     // Every sprite is created exactly once, at the moment its entity is actually added to the store
-    // (spawnShip; spawnEnemyShipyard/enablePlacementControls for buildings), and destroyed exactly once,
+    // (spawnShip; spawnEnemyLogisticsCenters/enablePlacementControls for buildings), and destroyed exactly once,
     // at the moment damage actually drops that entity's HP to 0 (the onDeath callbacks passed to
     // applyDamage in detonateDrone/onMissileShipContact/updateCramTurrets). None of this is
     // polled or diffed against the store in the per-frame update loop.
@@ -392,6 +446,14 @@ export default class MapScene extends Scene {
 
         const label = this.add.text(ship.x, ship.y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.lGreen }).setOrigin(0.5).setDepth(4)
         this.shipLabels.set(ship.id, label)
+
+        // Fog of war: an enemy ship starts hidden regardless of phase — updateFogOfWar (run every
+        // frame) is what actually decides visibility from here, based on the player's sight range.
+        // Starting hidden just avoids a one-frame flash of visibility before that first check runs.
+        if(!isFriend){
+            sprite.setVisible(false)
+            label.setVisible(false)
+        }
     }
 
     destroyShipSprite = (id:string) => {
@@ -410,6 +472,10 @@ export default class MapScene extends Scene {
         sprite.setData('factoryKind', factory.kind)
         this.buildingsGroup.add(sprite)
         this.buildingSprites.set(factory.id, sprite)
+
+        // Fog of war: an enemy building starts hidden regardless of phase — updateFogOfWar (run every
+        // frame) is what actually decides visibility from here, based on the player's sight range.
+        if(factory.faction === Faction.Enemy) sprite.setVisible(false)
 
         // The static map layer (drawMap) includes each structure's placement-range bubble — a new
         // building means the player's (or enemy's) territory border changed shape, so it needs a redraw.
@@ -712,8 +778,11 @@ export default class MapScene extends Scene {
     }
 
     // Nearest hostile ship AND nearest hostile missile within radius of a point, found via a spatial
-    // physics query (physics.overlapCirc) instead of sweeping every ship/missile in the game. Shared by
-    // the CRAM turret (cares about both) and MLRS (ships only, but reuses the same query for simplicity).
+    // physics query (physics.overlapCirc) instead of sweeping every ship/missile in the game. Used by
+    // the CRAM turret, which cares about both (a ship target always wins over a missile one below).
+    // Every candidate also has to fall within the player's own sight range (see updateFogOfWar) —
+    // weapon range alone isn't enough to fire on something neither side can actually see, whichever
+    // faction's turret/ship is doing the shooting.
     findNearestHostileInRange = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let targetShip:Physics.Arcade.Sprite = null
@@ -724,6 +793,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
+            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
             const kind:BodyKind = obj.getData('kind')
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
 
@@ -743,8 +813,9 @@ export default class MapScene extends Scene {
         return { targetShip, targetMissile }
     }
 
-    // Same shape as findNearestHostileInRange, but for BLM: it only ever targets a hostile building
-    // (never a ship or a missile), so the query only needs static bodies (buildingsGroup).
+    // Same shape as findNearestHostileInRange, but for buildings only (never a ship or a missile), so
+    // the query only needs static bodies (buildingsGroup) — used by both BLM and MLRS, neither of which
+    // ever targets a ship. Same player-sight-range requirement as findNearestHostileInRange.
     findNearestHostileBuilding = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, false, true)
         let targetBuilding:Physics.Arcade.Sprite = null
@@ -753,6 +824,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
+            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
             const building = this.getBuildingEntry(obj)
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(building && building.faction !== fromFaction && d < nearestBuildingDist){ nearestBuildingDist = d; targetBuilding = obj }
@@ -762,7 +834,8 @@ export default class MapScene extends Scene {
     }
 
     // Same shape again, but for THADD: it only ever targets a hostile missile (never a ship or
-    // building), so the query only needs dynamic bodies and just checks kind === 'missile'.
+    // building), so the query only needs dynamic bodies and just checks kind === 'missile'. Same
+    // player-sight-range requirement as findNearestHostileInRange.
     findNearestHostileMissile = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let target:Physics.Arcade.Sprite = null
@@ -771,6 +844,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active || obj.getData('kind') !== 'missile' || obj.getData('faction') === fromFaction) return
+            if(!this.isWithinFactionStructureRadius(obj.x, obj.y, Faction.Player)) return
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(d < nearestDist){ nearestDist = d; target = obj }
         })
@@ -791,8 +865,9 @@ export default class MapScene extends Scene {
     }
 
     // Each MLRS, on cooldown, launches a whole salvo (MISSILE_SALVO_SIZE) of missiles at once, all
-    // homing on whichever hostile ship is nearest in range (found the same way CRAM finds its targets).
-    // MLRS only ever targets ships — see updateBlm for the vehicle-or-building version.
+    // homing on whichever hostile building is nearest in range (found the same way BLM finds its
+    // targets). MLRS only ever targets buildings, never a ship — the opposite targeting scope from
+    // CRAM (ships and missiles only).
     updateMlrs = (time:number) => {
         const { vehicles: ships, setShips } = useAppStore.getState()
         const shooterIds = new Set<string>()
@@ -804,11 +879,11 @@ export default class MapScene extends Scene {
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
 
-            const { targetShip } = this.findNearestHostileInRange(ship.faction, sprite.x, sprite.y, MLRS_RANGE_PX)
-            if(!targetShip) return
+            const targetBuilding = this.findNearestHostileBuilding(ship.faction, sprite.x, sprite.y, MLRS_RANGE_PX)
+            if(!targetBuilding) return
 
             shooterIds.add(ship.id)
-            for(let i=0; i<MISSILE_SALVO_SIZE; i++) this.spawnMissile(ship.faction, sprite.x, sprite.y, 'ship', targetShip.getData('id'))
+            for(let i=0; i<MISSILE_SALVO_SIZE; i++) this.spawnMissile(ship.faction, sprite.x, sprite.y, 'building', targetBuilding.getData('id'))
         })
 
         if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
@@ -999,7 +1074,40 @@ export default class MapScene extends Scene {
             g.lineBetween(lineX, 0, lineX, worldSize)
         })
 
+        this.drawTerrain()
         this.drawPlacementRanges()
+    }
+
+    // Topographic contour lines over the map's terrain field (see MapGenerator's buildTerrain).
+    // Raised terrain (Hill, Spur, the high side of a Cliff) brightens toward green as elevation rises;
+    // sunk terrain (Valley, the low side of a Cliff) stays a flat dim tone — FM 3-25.26 never has
+    // low ground read as brighter than high ground. marchingSquaresSegments is run once per contour
+    // interval (not once per feature) since it works directly off the shared elevation lattice — every
+    // feature, including a Cliff's tightly-packed lines, falls out of the same two threshold passes
+    // with no feature-specific drawing code.
+    drawTerrain = () => {
+        const g = this.g
+        const { originX, originY, cols, rows, elevations } = this.mapData.terrain
+        const toWorldFrac = (gx:number, gy:number) => this.toWorld(originX+gx, originY+gy)
+
+        const drawLevel = (grid:Array<Array<number>>, level:number, color:number) => {
+            g.lineStyle(1, color, 0.9)
+            marchingSquaresSegments(grid, cols, rows, level).forEach(seg => {
+                const a = toWorldFrac(seg.a.x, seg.a.y)
+                const b = toWorldFrac(seg.b.x, seg.b.y)
+                g.lineBetween(a.x, a.y, b.x, b.y)
+            })
+        }
+
+        const RAISED_LEVELS = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]
+        RAISED_LEVELS.forEach(level => drawLevel(elevations, level, lerpHexColor(GREEN_DIM_HEX, GREEN_HEX, level/0.9)))
+
+        // Sunk terrain: same marching-squares pass, but run against the negated field so
+        // "elevation <= -level" (a Valley/Cliff's actual shape) reuses the same >=threshold case table
+        // a raised contour uses.
+        const negated = elevations.map(column => column.map(v => -v))
+        const SUNK_LEVELS = [0.15, 0.3, 0.45, 0.6]
+        SUNK_LEVELS.forEach(level => drawLevel(negated, level, GREEN_DIM_HEX))
     }
 
     // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected.
@@ -1203,17 +1311,26 @@ export default class MapScene extends Scene {
 
     findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().buildings.find(f => f.x === gridX && f.y === gridY)
 
+    // Whether a world-space point falls within the placement radius of any of a faction's own
+    // structures — this same radius doubles as both "territory border" (isNearOwnStructure, for
+    // placement) and, for the player specifically, sight range (updateFogOfWar). Takes world
+    // coordinates rather than grid ones since fog-of-war has to test continuously-moving ship
+    // positions, not just grid cells.
+    isWithinFactionStructureRadius = (worldX:number, worldY:number, faction:Faction) => {
+        const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
+        return ownFactories.some(s => {
+            const p = this.toWorld(s.x, s.y)
+            return Phaser.Math.Distance.Between(worldX, worldY, p.x, p.y) <= getStructureRadius(s)
+        })
+    }
+
     // Placement is allowed anywhere within the placement radius of one of a faction's own structures —
     // bases included, now that they're regular (if non-placeable) factories. Defaults to the player so
     // existing call sites are unaffected; the AI reuses this with Faction.Enemy to evaluate its own
     // territory the same way the player's is evaluated.
     isNearOwnStructure = (gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const ownFactories = useAppStore.getState().buildings.filter(f => f.faction === faction)
-        return ownFactories.some(s => {
-            const p = this.toWorld(s.x, s.y)
-            return Phaser.Math.Distance.Between(x, y, p.x, p.y) <= getStructureRadius(s)
-        })
+        return this.isWithinFactionStructureRadius(x, y, faction)
     }
 
     isValidPlacement = (kind:BuildingType, gridX:number, gridY:number, faction:Faction = Faction.Player) => {
@@ -1232,10 +1349,57 @@ export default class MapScene extends Scene {
         return this.isNearOwnStructure(gridX, gridY, faction)
     }
 
+    // Governs each faction's 3 starting LogisticsCenters specifically — deliberately not routed
+    // through isValidPlacement, since that requires being near an already-owned structure (impossible
+    // for a faction's very first one) and checks the logistics budget (these 3 are a free, mandatory
+    // starting commitment, not a normal build either side could get priced out of). Just: on the map,
+    // on that faction's own side of it (player: left half, enemy: right half — matching where their
+    // Base sits), not on top of anything else, and far enough from every LogisticsCenter that faction
+    // has already placed this phase. The AI uses this exact same rule via Faction.Enemy — same
+    // separation, just mirrored to the other half of the map.
+    isValidLogisticsPlacement = (gridX:number, gridY:number, faction:Faction = Faction.Player) => {
+        if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
+        const onOwnHalf = faction === Faction.Player ? gridX < this.mapData.width/2 : gridX >= this.mapData.width/2
+        if(!onOwnHalf) return false
+        if(this.findFactoryAt(gridX, gridY)) return false
+
+        const worldPos = this.toWorld(gridX, gridY)
+        const tooClose = useAppStore.getState().buildings.some(f => {
+            if(f.faction !== faction || f.kind !== BuildingType.LogisticsCenter) return false
+            const p = this.toWorld(f.x, f.y)
+            return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, p.x, p.y) < LOGISTICS_CENTER_MIN_SPACING_PX
+        })
+        return !tooClose
+    }
+
+    // Placement phase's click handler: places a LogisticsCenter directly on click (no toolbar
+    // selection step — FactoryToolbar just shows a placement counter during this phase), and hands
+    // off to the real-time combat phase the instant the 3rd one goes down.
+    handleLogisticsPlacementClick = () => {
+        const { x, y } = this.hoveredCell
+        if(!this.isValidLogisticsPlacement(x, y)) return
+
+        const factory:BuildingData = { id:v4(), x, y, kind:BuildingType.LogisticsCenter, faction:Faction.Player, hp:getBuildingMaxHp(BuildingType.LogisticsCenter) }
+        useAppStore.getState().addFactory(factory)
+        this.createBuildingSprite(factory)
+        this.previewG.clear()
+
+        const placedCount = useAppStore.getState().buildings.filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter).length
+        if(placedCount >= LOGISTICS_CENTER_COUNT) this.startCombatPhase()
+    }
+
     updatePreview = () => {
         this.previewG.clear()
+        if(!this.hoveredCell) return
+
+        if(useAppStore.getState().phase === 'placement'){
+            const valid = this.isValidLogisticsPlacement(this.hoveredCell.x, this.hoveredCell.y)
+            this.drawFactoryShape(this.previewG, BuildingType.LogisticsCenter, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
+            return
+        }
+
         const { placingFactory } = useAppStore.getState()
-        if(!placingFactory || !this.hoveredCell) return
+        if(!placingFactory) return
 
         const valid = this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
         this.drawFactoryShape(this.previewG, placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
@@ -1243,8 +1407,14 @@ export default class MapScene extends Scene {
 
     enablePlacementControls = () => {
         this.input.on('pointerdown', () => {
-            const { placingFactory, setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, addFactory, buildings: factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
             if(!this.hoveredCell) return
+
+            if(useAppStore.getState().phase === 'placement'){
+                this.handleLogisticsPlacementClick()
+                return
+            }
+
+            const { placingFactory, setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, addFactory, buildings: factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
 
             // Selecting one of the player's own shipyards puts the map straight into orders-editing mode —
             // the Orders button in FactoryToolbar is just a label now, not a prerequisite for this.

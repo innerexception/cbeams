@@ -17,6 +17,8 @@ const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x
   return bestIndex;
 };
 
+export type GamePhase = 'placement' | 'combat';
+
 export interface AppState {
   activeModal: Modal | null;
   isLoaded: boolean;
@@ -27,6 +29,10 @@ export interface AppState {
   vehicles: Array<VehicleData>;
   placingFactory: BuildingType | null;
   selectedFactoryId: string | null;
+  // 'placement': the player is placing their 3 starting LogisticsCenters before the match goes live —
+  // the opposing faction's buildings/ships stay hidden and the AI holds off attacking until this ends.
+  // 'combat': the real-time match — see MapScene's startCombatPhase for the placement->combat handoff.
+  phase: GamePhase;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
   setSave: (save: SaveFile | null) => void;
@@ -43,6 +49,7 @@ export interface AppState {
   completeQueueItem: (shipyardId: string) => void;
   addShip: (ship: VehicleData) => void;
   setShips: (ships: Array<VehicleData>) => void;
+  setPhase: (phase: GamePhase) => void;
 }
 
 const initialState = {
@@ -55,6 +62,7 @@ const initialState = {
   vehicles: [] as Array<VehicleData>,
   placingFactory: null as BuildingType | null,
   selectedFactoryId: null as string | null,
+  phase: 'placement' as GamePhase,
 };
 
 export const useAppStore = create<AppState>((set) => ({
@@ -141,4 +149,5 @@ export const useAppStore = create<AppState>((set) => ({
   })),
   addShip: (ship) => set((state) => ({ vehicles: [...state.vehicles, ship] })),
   setShips: (ships) => set({ vehicles: ships }),
+  setPhase: (phase) => set({ phase }),
 }));
