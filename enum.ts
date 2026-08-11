@@ -41,6 +41,16 @@ export enum BuildingType {
     MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base', BLM='blm', THADD='thadd'
 }
 
+export const BuildingData:Record<BuildingType,BuildingMetaData> = {
+    [BuildingType.MiningStation]: { maxHp:40, cooldownMs:0, damage:0, energyCost:2, rangePx:0 },
+    [BuildingType.SolarMill]: { maxHp:40, cooldownMs:0, damage:0, energyCost:0, rangePx:0 },
+    [BuildingType.Shipyard]: { maxHp:40, cooldownMs:0, damage:0, energyCost:3, rangePx:0 },
+    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, energyCost:2, rangePx:320 },
+    [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, energyCost:0, rangePx:0 },
+    [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:0, energyCost:3, rangePx:4000 },
+    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, energyCost:3, rangePx:400 },
+}
+
 // KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
 // reaches, dealing single-target damage. ATD: a guided drone restricted to one waypoint, detonating
 // in an area-of-effect blast either on contact or on reaching that waypoint. MLRS: a mobile ship that

@@ -20,19 +20,9 @@ export const SAVE_NAME = 'xeno3_save'
 
 // --- Economy ---
 export const BASE_MAX_ENERGY = 10
-export const ENERGY_PER_MINING_STATION = 2
-export const ENERGY_PER_SOLAR_MILL = 0
-export const ENERGY_PER_SHIPYARD = 3
-export const ENERGY_PER_CRAM = 2
 export const SOLAR_MILL_MAX_ENERGY_BONUS = 10
 export const METAL_PER_MINING_STATION = 1
 export const METAL_TICK_MS = 3000
-
-// Baseline hit points for every building (Shipyard, Mining Station, Solar Mill, CRAM turret) —
-// what a drone's contact/blast damage is actually chipping away at.
-export const BUILDING_HP = 40
-// A faction's starting headquarters is a building too, just a tougher, non-placeable one.
-export const BASE_HP = 20
 
 // --- Shipyard production/orders ---
 export const MAX_QUEUE = 3
@@ -55,17 +45,10 @@ export const BASE_FOOTPRINT_RADIUS = CELL_SIZE * 1.5
 export const FACTORY_FOOTPRINT_RADIUS = CELL_SIZE * 0.75
 export const SHIP_BUILDING_CLEARANCE_PX = 20
 
-// --- Solar Mill animation ---
-// One full rotation roughly every 40 seconds.
-export const SOLAR_MILL_ROTATION_SPEED = 0.00016 // radians per ms
-
 // --- CRAM turret (a placeable building, not a ship) ---
-// Its 23mm cannon: how often it can fire, how much damage a hit does, its range (double the old
-// mobile CRV's), and how long a burst's tracer dots stay on screen. It can also target an incoming
-// MLRS missile instead of a ship, with a chance to shoot it down.
-export const CRAM_FIRE_COOLDOWN_MS = 350
-export const CRAM_DAMAGE = 1
-export const CRAM_RANGE_PX = 320
+// Its cooldown, damage and range now live on its BuildingMetaData entry in enum.ts. It can also
+// target an incoming MLRS missile instead of a ship, with a chance to shoot it down; how long a
+// burst's tracer dots stay on screen is still a plain constant.
 export const TRACER_LIFETIME_MS = 220
 export const MISSILE_INTERCEPT_CHANCE = 0.4
 
@@ -90,18 +73,14 @@ export const MISSILE_MAX_LIFETIME_MS = 8000
 // --- BLM (a placeable building, not a ship) ---
 // A slow, long-range single-missile launcher: on a long cooldown, fires one missile at its nearest
 // hostile *building*, never a vehicle — the opposite targeting scope from MLRS (vehicles only).
-export const BLM_FIRE_COOLDOWN_MS = 10000
-export const BLM_RANGE_PX = 4000
-export const ENERGY_PER_BLM = 3
+// Its cooldown and range now live on its BuildingMetaData entry in enum.ts.
 
 // --- THADD (a placeable building, not a ship) ---
 // An anti-missile battery: on cooldown, fires a 2-missile salvo at its nearest *hostile missile* in
 // range — never a vehicle or building. An interceptor missile destroys (and is destroyed by) whatever
-// hostile missile it touches, regardless of which one it was actually launched at.
-export const THADD_FIRE_COOLDOWN_MS = 10000
-export const THADD_RANGE_PX = 400
+// hostile missile it touches, regardless of which one it was actually launched at. Its cooldown and
+// range now live on its BuildingMetaData entry in enum.ts.
 export const THADD_SALVO_SIZE = 2
-export const ENERGY_PER_THADD = 3
 
 // --- Wreckage ---
 // Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.

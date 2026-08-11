@@ -5,26 +5,20 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { ShipData } from "../../common/ShipData";
-import { Faction, ResourceNode, BuildingType, VehicleType, Modal } from "../../../enum";
+import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
-    SOLAR_MILL_ROTATION_SPEED,
-    CRAM_FIRE_COOLDOWN_MS, CRAM_DAMAGE, CRAM_RANGE_PX, TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
-    DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX, BUILDING_HP, BASE_HP,
+    TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
+    DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX,
     MLRS_FIRE_COOLDOWN_MS, MLRS_RANGE_PX, MISSILE_SALVO_SIZE, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
-    BLM_FIRE_COOLDOWN_MS, BLM_RANGE_PX,
-    THADD_FIRE_COOLDOWN_MS, THADD_RANGE_PX, THADD_SALVO_SIZE,
+    THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS, ENEMY_RAID_SIZE,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
 const TWO_PI = Math.PI*2
-
-// How long a Solar Mill's one-time, infinitely-repeating spin tween takes for a full rotation —
-// derived from SOLAR_MILL_ROTATION_SPEED (radians/ms) so it still matches that stat.
-const SOLAR_MILL_ROTATION_DURATION_MS = TWO_PI / SOLAR_MILL_ROTATION_SPEED
 
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
 const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
@@ -41,8 +35,9 @@ const shipOrbitPhase = (id:string) => {
 const FULL_RADIUS_KINDS = new Set([BuildingType.Shipyard, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
 const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
 
-// Every building shares one HP pool (BUILDING_HP) except the tougher, non-placeable Base.
-const getBuildingMaxHp = (kind:BuildingType) => kind === BuildingType.Base ? BASE_HP : BUILDING_HP
+// Each building kind's max HP now lives on its BuildingMetaData entry in enum.ts (the tougher,
+// non-placeable Base has its own, higher, value there).
+const getBuildingMaxHp = (kind:BuildingType) => BuildingData[kind].maxHp
 
 // Bases have a bigger physical footprint than an ordinary building.
 const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
@@ -471,7 +466,7 @@ export default class MapScene extends Scene {
         // it every frame. The tween is only ever referenced by the TweenManager and this sprite; once
         // destroyBuildingSprite destroys the sprite, nothing keeps the tween reachable and it's collected.
         if(factory.kind === BuildingType.SolarMill){
-            this.tweens.add({ targets:sprite, angle: 360, duration: SOLAR_MILL_ROTATION_DURATION_MS, repeat: -1, ease: 'Linear' })
+            this.tweens.add({ targets:sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear' })
         }
 
         // The static map layer (drawMap) includes each structure's placement-range bubble — a new
@@ -744,17 +739,17 @@ export default class MapScene extends Scene {
         const damageByTarget = new Map<string, number>()
 
         turrets.forEach(turret => {
-            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < CRAM_FIRE_COOLDOWN_MS) return
+            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.CRAM].cooldownMs) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
-            const { targetShip, targetMissile } = this.findNearestHostileInRange(turret.faction, x, y, CRAM_RANGE_PX)
+            const { targetShip, targetMissile } = this.findNearestHostileInRange(turret.faction, x, y, BuildingData[BuildingType.CRAM].rangePx)
             if(!targetShip && !targetMissile) return
 
             shooterIds.add(turret.id)
             if(targetShip){
                 this.tracers.push({ x1:x, y1:y, x2:targetShip.x, y2:targetShip.y, createdAt:time })
                 const targetShipId = targetShip.getData('id')
-                damageByTarget.set(targetShipId, (damageByTarget.get(targetShipId) || 0) + CRAM_DAMAGE)
+                damageByTarget.set(targetShipId, (damageByTarget.get(targetShipId) || 0) + BuildingData[BuildingType.CRAM].damage)
             }
             else {
                 this.tracers.push({ x1:x, y1:y, x2:targetMissile.x, y2:targetMissile.y, createdAt:time })
@@ -886,10 +881,10 @@ export default class MapScene extends Scene {
 
         factories.forEach(turret => {
             if(turret.kind !== BuildingType.BLM) return
-            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BLM_FIRE_COOLDOWN_MS) return
+            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.BLM].cooldownMs) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
-            const targetBuilding = this.findNearestHostileBuilding(turret.faction, x, y, BLM_RANGE_PX)
+            const targetBuilding = this.findNearestHostileBuilding(turret.faction, x, y, BuildingData[BuildingType.BLM].rangePx)
             if(!targetBuilding) return
 
             shooterIds.add(turret.id)
@@ -908,10 +903,10 @@ export default class MapScene extends Scene {
 
         factories.forEach(turret => {
             if(turret.kind !== BuildingType.THADD) return
-            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < THADD_FIRE_COOLDOWN_MS) return
+            if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.THADD].cooldownMs) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
-            const targetMissile = this.findNearestHostileMissile(turret.faction, x, y, THADD_RANGE_PX)
+            const targetMissile = this.findNearestHostileMissile(turret.faction, x, y, BuildingData[BuildingType.THADD].rangePx)
             if(!targetMissile) return
 
             shooterIds.add(turret.id)

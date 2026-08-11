@@ -37,6 +37,14 @@ interface ProductionQueueItem {
     startedAt: number | null
 }
 
+interface BuildingMetaData {
+    maxHp:number
+    cooldownMs:number
+    damage:number
+    energyCost:number
+    rangePx:number
+}
+
 interface BuildingData {
     id: string
     x: number
