@@ -35,11 +35,15 @@ export enum NodeKind {
 }
 
 export enum FactoryKind {
-    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard'
+    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram'
 }
 
+// KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
+// reaches, dealing single-target damage. ATD: a guided drone restricted to one waypoint, detonating
+// in an area-of-effect blast either on contact or on reaching that waypoint. MLRS: a mobile ship that
+// launches a salvo of homing missiles at its nearest target in range (see updateMissiles in MapScene).
 export enum ShipType {
-    CRV='crv', DDG='ddg', CC='cc'
+    KK='kk', ATD='atd', MLRS='mlrs'
 }
 
 // Plain constant values (grid sizing, economy/combat tuning, theme colors, ...) live in

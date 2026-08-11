@@ -4,19 +4,20 @@ export interface ShipStats {
     name: string
     speed: number
     sightRadius: number
-    weaponRange: number
-    weaponType: 'gun' | 'missile'
     armor: number
     hp: number
     sizeHex: number
     productionTimeMs: number
 }
 
-// CRV (Corvette): fast scout with a short-range (but long for its size) 23mm gun and a wide sight radius.
-// DDG (Destroyer): medium speed, very long range missiles.
-// CC (Cruiser): slow, heavily armored, medium range guns.
+// KK and ATD are unarmed drones — they don't fire a ranged weapon, they detonate on contact instead
+// (see MapScene's updateDrones). MLRS is a proper warship: its salvo-fire behavior (range, cooldown,
+// missile stats) lives in Constants.ts alongside CRAM's cannon stats, not here.
+// KK: small, fast, fragile kamikaze drone — single-target contact damage, then it's spent.
+// ATD: medium drone restricted to a single waypoint — a wide-blast detonation on contact or arrival.
+// MLRS: slow, lightly armored rocket ship — launches a 3-missile salvo at its nearest target in range.
 export const ShipData:Record<ShipType, ShipStats> = {
-    [ShipType.CRV]: { name:'Corvette', speed:60, sightRadius:300, weaponRange:160, weaponType:'gun', armor:20, hp:10, sizeHex:0.5, productionTimeMs:6000 },
-    [ShipType.DDG]: { name:'Destroyer', speed:35, sightRadius:180, weaponRange:350, weaponType:'missile', armor:50, hp:20, sizeHex:1, productionTimeMs:12000 },
-    [ShipType.CC]: { name:'Cruiser', speed:20, sightRadius:150, weaponRange:150, weaponType:'gun', armor:120, hp:60, sizeHex:1.5, productionTimeMs:20000 },
+    [ShipType.KK]: { name:'Kamikaze Drone', speed:90, sightRadius:150, armor:5, hp:5, sizeHex:0.4, productionTimeMs:5000 },
+    [ShipType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:150, armor:10, hp:8, sizeHex:0.6, productionTimeMs:10000 },
+    [ShipType.MLRS]: { name:'MLRS', speed:30, sightRadius:200, armor:30, hp:15, sizeHex:1, productionTimeMs:12000 },
 }

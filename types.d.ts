@@ -47,6 +47,11 @@ interface FactoryData {
     nodeId?: string
     queue?: Array<ProductionQueueItem>
     waypoints?: Array<{ x:number, y:number }>
+    // Buildings can now take damage (a CRAM turret's cannon, a drone detonation) — always set at
+    // construction (see BUILDING_HP), removed from play once it drops to 0.
+    hp: number
+    // CRAM turret cannon cooldown tracking (unused by every other FactoryKind).
+    lastFiredAt?: number
 }
 
 interface ShipInstanceData {

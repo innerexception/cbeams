@@ -9,6 +9,7 @@ const hints = {
     [FactoryKind.MiningStation]: 'Click an asteroid to build a Mining Station',
     [FactoryKind.SolarMill]: 'Click a star to build a Solar Mill',
     [FactoryKind.Shipyard]: 'Click empty ground near your base to build a Shipyard',
+    [FactoryKind.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
 }
 
 export default () => {
@@ -83,6 +84,7 @@ export default () => {
                 <ToolButton active={placingFactory === FactoryKind.MiningStation} onClick={()=>toggle(FactoryKind.MiningStation)}>Mining Station</ToolButton>
                 <ToolButton active={placingFactory === FactoryKind.SolarMill} onClick={()=>toggle(FactoryKind.SolarMill)}>Solar Mill</ToolButton>
                 <ToolButton active={placingFactory === FactoryKind.Shipyard} onClick={()=>toggle(FactoryKind.Shipyard)}>Shipyard</ToolButton>
+                <ToolButton active={placingFactory === FactoryKind.CRAM} onClick={()=>toggle(FactoryKind.CRAM)}>CRAM Turret</ToolButton>
             </div>
             {placingFactory && <div style={{ color: GREEN, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>

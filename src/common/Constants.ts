@@ -23,9 +23,14 @@ export const BASE_MAX_ENERGY = 10
 export const ENERGY_PER_MINING_STATION = 2
 export const ENERGY_PER_SOLAR_MILL = 0
 export const ENERGY_PER_SHIPYARD = 3
+export const ENERGY_PER_CRAM = 2
 export const SOLAR_MILL_MAX_ENERGY_BONUS = 10
 export const METAL_PER_MINING_STATION = 1
 export const METAL_TICK_MS = 3000
+
+// Baseline hit points for every building (Shipyard, Mining Station, Solar Mill, CRAM turret) —
+// what a drone's contact/blast damage is actually chipping away at.
+export const BUILDING_HP = 40
 
 // --- Shipyard production/orders ---
 export const MAX_QUEUE = 3
@@ -37,8 +42,6 @@ export const PLACEMENT_RADIUS_PX = 200
 export const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX / 2
 
 // --- Ship movement ---
-// Ships following shipyard orders travel at half their listed ShipData speed.
-export const WAYPOINT_SPEED_MULTIPLIER = 0.5
 // Once a ship finishes its route (or its orders are cleared) it loiters in a circle around the
 // final waypoint / wherever it was.
 export const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
@@ -54,28 +57,40 @@ export const SHIP_BUILDING_CLEARANCE_PX = 20
 // One full rotation roughly every 40 seconds.
 export const SOLAR_MILL_ROTATION_SPEED = 0.00016 // radians per ms
 
-// --- CRV 23mm cannon ---
-// How often it can fire, how much damage a hit does, and how long a burst's tracer dots stay on
-// screen. Its cannon can also target an incoming missile instead of a ship, with a chance to shoot it down.
-export const CRV_FIRE_COOLDOWN_MS = 350
-export const CRV_DAMAGE = 1
+// --- CRAM turret (a placeable building, not a ship) ---
+// Its 23mm cannon: how often it can fire, how much damage a hit does, its range (double the old
+// mobile CRV's), and how long a burst's tracer dots stay on screen. It can also target an incoming
+// MLRS missile instead of a ship, with a chance to shoot it down.
+export const CRAM_FIRE_COOLDOWN_MS = 350
+export const CRAM_DAMAGE = 1
+export const CRAM_RANGE_PX = 320
 export const TRACER_LIFETIME_MS = 220
 export const MISSILE_INTERCEPT_CHANCE = 0.4
 
-// --- DDG missiles ---
-// A DDG fires a homing missile at its nearest target in range once a second. It always eventually
-// catches a non-evasive target (its speed comfortably outruns any ship), unless intercepted first.
-export const DDG_FIRE_COOLDOWN_MS = 1000
+// --- Kamikaze drones (KK, ATD) ---
+// How close a drone has to get to a hostile unit/building to count as "contact".
+export const DRONE_CONTACT_RADIUS_PX = 14
+export const KK_DAMAGE = 5
+export const ATD_DAMAGE = 10
+export const ATD_BLAST_RADIUS_PX = 10
+
+// --- MLRS rocket ship ---
+// On cooldown, it launches a whole salvo of missiles at once, all homing on the same nearest target
+// in range — each missile is a scene-local projectile (not stored in the app state), tracked only
+// while in flight, that steers towards its target's live position every frame.
+export const MLRS_FIRE_COOLDOWN_MS = 1500
+export const MLRS_RANGE_PX = 350
+export const MISSILE_SALVO_SIZE = 3
 export const MISSILE_DAMAGE = 5
 export const MISSILE_SPEED_PX_S = 220
 export const MISSILE_MAX_LIFETIME_MS = 8000
 
 // --- Wreckage ---
-// Left behind by a destroyed ship (or a missile detonating), lingers for 10 seconds while fading out.
+// Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.
 export const SHATTER_LIFETIME_MS = 10000
 
 // --- Enemy AI ---
-// How many CRVs the enemy shipyard masses before launching them at the player, once, at the start of the match.
+// How many drones the enemy shipyard masses before launching them at the player, once, at the start of the match.
 export const ENEMY_RAID_SIZE = 3
 
 // --- Theme colors ---

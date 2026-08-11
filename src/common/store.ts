@@ -34,6 +34,7 @@ interface AppState {
   setLoaded: (loaded: boolean) => void;
   setActiveMap: (map: MapData | null) => void;
   addFactory: (factory: FactoryData) => void;
+  setFactories: (factories: Array<FactoryData>) => void;
   setPlacingFactory: (kind: FactoryKind | null) => void;
   setSelectedFactoryId: (id: string | null) => void;
   addWaypoint: (shipyardId: string, x: number, y: number) => void;
@@ -67,6 +68,7 @@ export const useAppStore = create<AppState>((set) => ({
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMap: (activeMap) => set({ activeMap }),
   addFactory: (factory) => set((state) => ({ factories: [...state.factories, factory] })),
+  setFactories: (factories) => set({ factories }),
   setPlacingFactory: (placingFactory) => set((state) => ({
     placingFactory,
     selectedFactoryId: placingFactory ? null : state.selectedFactoryId,
