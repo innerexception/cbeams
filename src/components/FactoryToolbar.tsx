@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { BuildingType, VehicleType } from '../../enum'
+import { BuildingType, VehicleType, VehicleData } from '../../enum'
 import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
-import { ShipData } from '../common/ShipData'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
@@ -48,7 +47,7 @@ export default () => {
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
                     {Object.values(VehicleType).map(type => (
-                        <ToolButton key={type} disabled={queueFull} onClick={()=>queueShip(selectedFactory.id, type)}>{ShipData[type].name}</ToolButton>
+                        <ToolButton key={type} disabled={queueFull} onClick={()=>queueShip(selectedFactory.id, type)}>{VehicleData[type].name}</ToolButton>
                     ))}
                     <ToolButton onClick={()=>setSelectedFactoryId(null)}>Cancel</ToolButton>
                 </div>
@@ -66,10 +65,10 @@ export default () => {
                 <div style={{ marginTop:8, display:'flex', gap:8 }}>
                     {Array.from({ length: MAX_QUEUE }).map((_, i) => {
                         const item = queue[i]
-                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
+                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/VehicleData[item.type].productionTimeMs)*100) : 0
                         return (
                             <div key={i} style={{ width:100, border:'2px solid '+colors.lGreen, padding:4, fontFamily:'Body', fontSize:11, color:colors.lGreen }}>
-                                <div>{item ? ShipData[item.type].name : '—'}</div>
+                                <div>{item ? VehicleData[item.type].name : '—'}</div>
                                 <div style={{ width:'100%', height:6, border:'1px solid '+colors.lGreen, marginTop:4 }}>
                                     {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.lGreen }}/>}
                                 </div>

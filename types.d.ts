@@ -67,6 +67,7 @@ interface VehicleStats {
     hp: number
     sizeHex: number
     productionTimeMs: number
+    targetType: import('./enum').TargetType
 }
 
 interface VehicleData {

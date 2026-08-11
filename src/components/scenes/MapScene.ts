@@ -4,8 +4,7 @@ import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
-import { ShipData } from "../../common/ShipData";
-import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData } from "../../../enum";
+import { Faction, ResourceNode, BuildingType, VehicleType, Modal, BuildingData, VehicleData } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -254,7 +253,7 @@ export default class MapScene extends Scene {
             if(f.kind !== BuildingType.Shipyard || !item?.startedAt) return
 
             const { x, y } = this.toWorld(f.x, f.y)
-            const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / ShipData[item.type].productionTimeMs, 0, 1)
+            const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / VehicleData[item.type].productionTimeMs, 0, 1)
             const w = CELL_SIZE * 1.6, h = 4
             const barX = x - w/2, barY = y - CELL_SIZE*2 - h
 
@@ -315,7 +314,7 @@ export default class MapScene extends Scene {
 
         factories.forEach(f => {
             const item = f.queue?.[0]
-            if(item?.startedAt && now - item.startedAt >= ShipData[item.type].productionTimeMs){
+            if(item?.startedAt && now - item.startedAt >= VehicleData[item.type].productionTimeMs){
                 completeQueueItem(f.id)
                 this.spawnShip(f, item.type)
             }
@@ -325,7 +324,7 @@ export default class MapScene extends Scene {
     // Places a newly completed ship near its shipyard, trying to avoid overlapping other loitering ships or any building.
     spawnShip = (shipyard:BuildingData, type:VehicleType) => {
         const center = this.toWorld(shipyard.x, shipyard.y)
-        const size = ShipData[type].sizeHex * CELL_SIZE
+        const size = VehicleData[type].sizeHex * CELL_SIZE
         const existingShips = useAppStore.getState().vehicles
         let pos = center
 
@@ -334,13 +333,13 @@ export default class MapScene extends Scene {
             const angle = Math.random()*Math.PI*2
             const candidate = { x: center.x+Math.cos(angle)*radius, y: center.y+Math.sin(angle)*radius }
             const overlapsShip = existingShips.some(s => {
-                const minDist = (size + ShipData[s.type].sizeHex*CELL_SIZE)/2 + 12
+                const minDist = (size + VehicleData[s.type].sizeHex*CELL_SIZE)/2 + 12
                 return Phaser.Math.Distance.Between(candidate.x, candidate.y, s.x, s.y) < minDist
             })
             if(!overlapsShip && !this.buildingOverlapsPoint(candidate.x, candidate.y, size/2 + SHIP_BUILDING_CLEARANCE_PX)){ pos = candidate; break }
         }
 
-        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:ShipData[type].hp }
+        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:VehicleData[type].hp }
         useAppStore.getState().addShip(ship)
         this.createShipSprite(ship)
     }
@@ -511,7 +510,7 @@ export default class MapScene extends Scene {
             // route to the first waypoint (its detonation target), never any further ones.
             const waypoints = ship.type === VehicleType.ATD ? shipyardWaypoints.slice(0, 1) : shipyardWaypoints
             const pathIndex = ship.pathIndex ?? 0
-            const speed = ShipData[ship.type].speed
+            const speed = VehicleData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
             let target:{x:number,y:number}
@@ -1336,7 +1335,7 @@ export default class MapScene extends Scene {
 
         const worldPos = this.toWorld(gridX, gridY)
         const overlapsShip = useAppStore.getState().vehicles.some(s => {
-            const minDist = FACTORY_FOOTPRINT_RADIUS + ShipData[s.type].sizeHex*CELL_SIZE/2 + SHIP_BUILDING_CLEARANCE_PX
+            const minDist = FACTORY_FOOTPRINT_RADIUS + VehicleData[s.type].sizeHex*CELL_SIZE/2 + SHIP_BUILDING_CLEARANCE_PX
             return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, s.x, s.y) < minDist
         })
         if(overlapsShip) return false
