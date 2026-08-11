@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
 import { Layers, Faction, BuildingType } from "../../enum"
-import { SAVE_NAME, BASE_MAX_ENERGY, ENERGY_PER_MINING_STATION, ENERGY_PER_SOLAR_MILL, ENERGY_PER_SHIPYARD, ENERGY_PER_CRAM, SOLAR_MILL_MAX_ENERGY_BONUS } from "./Constants"
+import { SAVE_NAME, BASE_MAX_ENERGY, ENERGY_PER_MINING_STATION, ENERGY_PER_SOLAR_MILL, ENERGY_PER_SHIPYARD, ENERGY_PER_CRAM, ENERGY_PER_BLM, SOLAR_MILL_MAX_ENERGY_BONUS } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -30,6 +30,7 @@ export const getFactoryEnergyCost = (kind:BuildingType) => {
     if(kind === BuildingType.Shipyard) return ENERGY_PER_SHIPYARD
     if(kind === BuildingType.MiningStation) return ENERGY_PER_MINING_STATION
     if(kind === BuildingType.CRAM) return ENERGY_PER_CRAM
+    if(kind === BuildingType.BLM) return ENERGY_PER_BLM
     return ENERGY_PER_SOLAR_MILL
 }
 

@@ -10,6 +10,7 @@ const hints = {
     [BuildingType.SolarMill]: 'Click a star to build a Solar Mill',
     [BuildingType.Shipyard]: 'Click empty ground near your base to build a Shipyard',
     [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
+    [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
 }
 
 export default () => {
@@ -85,6 +86,7 @@ export default () => {
                 <ToolButton active={placingFactory === BuildingType.SolarMill} onClick={()=>toggle(BuildingType.SolarMill)}>Solar Mill</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.Shipyard} onClick={()=>toggle(BuildingType.Shipyard)}>Shipyard</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
             </div>
             {placingFactory && <div style={{ color: GREEN, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>

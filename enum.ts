@@ -38,7 +38,7 @@ export enum ResourceNode {
 // promoted into a real building (physics body, hp, drone-contact target) at map load — see
 // MapScene's spawnBases. It's otherwise just another FactoryKind: hp loss/destruction works the same way.
 export enum BuildingType {
-    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base'
+    MiningStation='mining_station', SolarMill='solar_mill', Shipyard='shipyard', CRAM='cram', Base='base', BLM='blm'
 }
 
 // KK: a kamikaze drone that self-destructs on contact with the first hostile unit or building it
