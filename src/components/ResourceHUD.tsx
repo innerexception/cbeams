@@ -1,9 +1,7 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { getEnergyStatus } from '../common/Utils'
-
-const GREEN = '#33ff55'
-const RED = '#ff3333'
+import { GREEN, RED } from '../common/Constants'
 
 export default () => {
     const { factories, metal } = useAppStore((state) => ({

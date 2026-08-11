@@ -1,10 +1,8 @@
 import { create } from 'zustand';
 import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, FactoryKind, ShipType, MAX_WAYPOINTS, CELL_SIZE } from '../../enum';
-
-// Mirrors MapScene's grid-to-world conversion so ship-to-waypoint distances can be compared here too.
-const toWorld = (x: number, y: number) => ({ x: x*CELL_SIZE + CELL_SIZE/2, y: y*CELL_SIZE + CELL_SIZE/2 });
+import { Modal, FactoryKind, ShipType } from '../../enum';
+import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld } from './Constants';
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
 // the ship already is without ever sending it back to a waypoint it has already passed.
@@ -12,7 +10,7 @@ const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x
   let bestIndex = Math.min(minIndex, waypoints.length-1);
   let bestDistSq = Infinity;
   for(let i = minIndex; i < waypoints.length; i++){
-    const p = toWorld(waypoints[i].x, waypoints[i].y);
+    const p = gridToWorld(waypoints[i].x, waypoints[i].y);
     const distSq = (p.x-shipX)**2 + (p.y-shipY)**2;
     if(distSq < bestDistSq){ bestDistSq = distSq; bestIndex = i; }
   }
@@ -130,7 +128,7 @@ export const useAppStore = create<AppState>((set) => ({
     factories: state.factories.map((f) => {
       if(f.id !== shipyardId) return f;
       const queue = f.queue || [];
-      if(queue.length >= 3) return f;
+      if(queue.length >= MAX_QUEUE) return f;
       const item: ProductionQueueItem = { id: v4(), type, startedAt: queue.length === 0 ? Date.now() : null };
       return { ...f, queue: [...queue, item] };
     }),

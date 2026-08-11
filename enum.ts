@@ -42,16 +42,5 @@ export enum ShipType {
     CRV='crv', DDG='ddg', CC='cc'
 }
 
-export const MAP_SIZE = 100
-export const CELL_SIZE = 20
-
-export const BASE_MAX_ENERGY = 10
-export const ENERGY_PER_MINING_STATION = 2
-export const ENERGY_PER_SOLAR_MILL = 0
-export const ENERGY_PER_SHIPYARD = 3
-export const SOLAR_MILL_MAX_ENERGY_BONUS = 10
-export const METAL_PER_MINING_STATION = 1
-export const METAL_TICK_MS = 3000
-export const MAX_WAYPOINTS = 5
-
-export const SAVE_NAME='xeno3_save'
+// Plain constant values (grid sizing, economy/combat tuning, theme colors, ...) live in
+// src/common/Constants.ts, not here — this file is enums only.

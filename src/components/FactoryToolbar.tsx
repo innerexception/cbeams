@@ -1,23 +1,9 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { FactoryKind, ShipType, MAX_WAYPOINTS } from '../../enum'
+import { FactoryKind, ShipType } from '../../enum'
+import { GREEN, MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
 import { ShipData } from '../common/ShipData'
-
-const GREEN = '#33ff55'
-const MAX_QUEUE = 3
-
-const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProperties => ({
-    padding: '8px 14px',
-    marginRight: '8px',
-    background: active ? GREEN : 'black',
-    color: active ? '#000' : GREEN,
-    border: '2px solid '+GREEN,
-    cursor: disabled ? 'default' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-    fontFamily: 'Body',
-    fontSize: '14px',
-    userSelect: 'none',
-})
+import ToolButton from './ToolButton'
 
 const hints = {
     [FactoryKind.MiningStation]: 'Click an asteroid to build a Mining Station',
@@ -58,15 +44,15 @@ export default () => {
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
                     {Object.values(ShipType).map(type => (
-                        <div key={type} style={toolButtonStyle(false, queueFull)} onClick={()=>!queueFull && queueShip(selectedFactory.id, type)}>{ShipData[type].name}</div>
+                        <ToolButton key={type} disabled={queueFull} onClick={()=>queueShip(selectedFactory.id, type)}>{ShipData[type].name}</ToolButton>
                     ))}
-                    <div style={toolButtonStyle(false)} onClick={()=>setSelectedFactoryId(null)}>Cancel</div>
+                    <ToolButton onClick={()=>setSelectedFactoryId(null)}>Cancel</ToolButton>
                 </div>
                 <div style={{ marginTop:8, display:'flex' }}>
-                    <div style={toolButtonStyle(true)}>
+                    <ToolButton active>
                         Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
-                    </div>
-                    {waypoints.length > 0 && <div style={toolButtonStyle(false)} onClick={()=>clearWaypoints(selectedFactory.id)}>Clear Orders</div>}
+                    </ToolButton>
+                    {waypoints.length > 0 && <ToolButton onClick={()=>clearWaypoints(selectedFactory.id)}>Clear Orders</ToolButton>}
                 </div>
                 <div style={{ color:GREEN, marginTop:6, fontSize:12, fontFamily:'Body' }}>
                     {waypoints.length >= MAX_WAYPOINTS
@@ -94,12 +80,11 @@ export default () => {
     return (
         <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
             <div style={{ display:'flex' }}>
-                <div style={toolButtonStyle(placingFactory === FactoryKind.MiningStation)} onClick={()=>toggle(FactoryKind.MiningStation)}>Mining Station</div>
-                <div style={toolButtonStyle(placingFactory === FactoryKind.SolarMill)} onClick={()=>toggle(FactoryKind.SolarMill)}>Solar Mill</div>
-                <div style={toolButtonStyle(placingFactory === FactoryKind.Shipyard)} onClick={()=>toggle(FactoryKind.Shipyard)}>Shipyard</div>
+                <ToolButton active={placingFactory === FactoryKind.MiningStation} onClick={()=>toggle(FactoryKind.MiningStation)}>Mining Station</ToolButton>
+                <ToolButton active={placingFactory === FactoryKind.SolarMill} onClick={()=>toggle(FactoryKind.SolarMill)}>Solar Mill</ToolButton>
+                <ToolButton active={placingFactory === FactoryKind.Shipyard} onClick={()=>toggle(FactoryKind.Shipyard)}>Shipyard</ToolButton>
             </div>
             {placingFactory && <div style={{ color: GREEN, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>
     )
 }
-

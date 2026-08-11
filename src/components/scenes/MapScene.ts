@@ -2,17 +2,21 @@ import { Scene, GameObjects, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene } from "../../common/Thunks";
-import { getEnergyStatus, getFactoryEnergyCost } from "../../common/Utils";
+import { getEnergyStatus, getFactoryEnergyCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { ShipData } from "../../common/ShipData";
-import { Faction, NodeKind, FactoryKind, ShipType, MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION } from "../../../enum";
+import { Faction, NodeKind, FactoryKind, ShipType } from "../../../enum";
+import {
+    MAP_SIZE, CELL_SIZE, METAL_TICK_MS, METAL_PER_MINING_STATION, gridToWorld, worldToGrid,
+    PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
+    SOLAR_MILL_ROTATION_SPEED,
+    CRV_FIRE_COOLDOWN_MS, CRV_DAMAGE, TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
+    DDG_FIRE_COOLDOWN_MS, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
+    SHATTER_LIFETIME_MS, ENEMY_RAID_SIZE,
+    NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX,
+    GREEN_HEX as GREEN, GREEN as GREEN_CSS, GREEN_DIM_HEX as GREEN_DIM, GREY_DIM_HEX as GREY_DIM,
+} from "../../common/Constants";
 
-const GREEN = 0x33ff55
-const GREEN_DIM = 0x114422
-const GREY_DIM = 0x666666
-
-const PLACEMENT_RADIUS_PX = 200
-const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX/2
 const TWO_PI = Math.PI*2
 
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
@@ -25,31 +29,6 @@ const shipOrbitPhase = (id:string) => {
     for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
     return ((h >>> 0) % 1000) / 1000 * TWO_PI
 }
-
-// Solar Mills spin slowly in place — one full rotation roughly every 40 seconds.
-const SOLAR_MILL_ROTATION_SPEED = 0.00016 // radians per ms
-
-// A CRV's 23mm cannon: how often it can fire, how much damage a hit does, and how long a burst's
-// tracer dots stay on screen. Tracers render in the same wireframe green as everything else. Its
-// cannon can also target an incoming missile instead of a ship, with a chance to shoot it down.
-const CRV_FIRE_COOLDOWN_MS = 350
-const CRV_DAMAGE = 1
-const TRACER_LIFETIME_MS = 220
-const MISSILE_INTERCEPT_CHANCE = 0.4
-
-// A DDG fires a homing missile at its nearest target in range once a second. It always eventually
-// catches a non-evasive target (its speed comfortably outruns any ship), unless intercepted first.
-const DDG_FIRE_COOLDOWN_MS = 1000
-const MISSILE_DAMAGE = 5
-const MISSILE_SPEED_PX_S = 220
-const MISSILE_MAX_LIFETIME_MS = 8000
-
-// Wreckage left behind by a destroyed ship (or a missile detonating) lingers for 10 seconds, fading
-// out over that time.
-const SHATTER_LIFETIME_MS = 10000
-
-// How many CRVs the enemy base launches at the player, once, at the start of the match.
-const ENEMY_RAID_SIZE = 3
 
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards.
 const getStructureRadius = (structure:BaseData|FactoryData) =>
@@ -65,23 +44,42 @@ interface Missile {
     createdAt: number
 }
 
-// All ships render at one standardized NATO map-symbol size, regardless of their actual sizeHex footprint.
-const NATO_ICON_SIZE = CELL_SIZE * 1.5
+// Nearest hostile ship (any faction other than `from`'s) and, if given a missile list, the nearest
+// hostile missile too — whichever of the two is closer overall wins. Shared by the CRV cannon (which
+// can shoot at either) and the DDG launcher (which only ever considers ships, so it just omits missiles).
+const findNearestHostile = (from:ShipInstanceData, ships:Array<ShipInstanceData>, missiles:Array<Missile> = [], excludeMissileIds:Set<string> = new Set()) => {
+    let nearestShip:ShipInstanceData = null
+    let nearestMissile:Missile = null
+    let nearestDist = Infinity
 
-// Physical footprints used to keep ships and buildings from overlapping each other.
-const BASE_FOOTPRINT_RADIUS = CELL_SIZE * 1.5
-const FACTORY_FOOTPRINT_RADIUS = CELL_SIZE * 0.75
-const SHIP_BUILDING_CLEARANCE_PX = 20
+    ships.forEach(other => {
+        if(other.faction === from.faction) return
+        const d = Phaser.Math.Distance.Between(from.x, from.y, other.x, other.y)
+        if(d < nearestDist){ nearestDist = d; nearestShip = other; nearestMissile = null }
+    })
+    missiles.forEach(missile => {
+        if(missile.faction === from.faction || excludeMissileIds.has(missile.id)) return
+        const d = Phaser.Math.Distance.Between(from.x, from.y, missile.x, missile.y)
+        if(d < nearestDist){ nearestDist = d; nearestMissile = missile; nearestShip = null }
+    })
 
-// Simple deterministic PRNG so a node's jagged shape stays stable across redraws.
-const seededRandom = (seed:string) => {
-    let h = 0
-    for(let i=0; i<seed.length; i++) h = (h*31 + seed.charCodeAt(i)) | 0
-    return () => {
-        h = (h*1664525 + 1013904223) | 0
-        return ((h >>> 0) / 0xffffffff)
-    }
+    return { nearestShip, nearestMissile, nearestDist }
 }
+
+// Applies accumulated damage to ships, removing any that drop to 0 HP or below. `onDeath` lets the
+// caller leave its own effect at the death location (a cannon kill leaves a shatter; a missile impact
+// already left one on arrival, so it passes nothing). Shared by the CRV cannon and DDG missile impacts.
+const applyDamage = (ships:Array<ShipInstanceData>, damageByTarget:Map<string, number>, onDeath?:(ship:ShipInstanceData) => void) =>
+    ships.map(ship => {
+        const damage = damageByTarget.get(ship.id)
+        if(damage === undefined) return ship
+        const hp = ship.hp - damage
+        if(hp <= 0){
+            onDeath?.(ship)
+            return null
+        }
+        return { ...ship, hp }
+    }).filter(ship => ship !== null)
 
 const normalizeAngle = (a:number) => {
     a = a % TWO_PI
@@ -243,7 +241,7 @@ export default class MapScene extends Scene {
 
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:'#33ff55' }).setOrigin(0.5).setDepth(5)
+        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:GREEN_CSS }).setOrigin(0.5).setDepth(5)
         this.tweens.add({
             targets: label,
             y: y-20,
@@ -406,19 +404,7 @@ export default class MapScene extends Scene {
             if(ship.type !== ShipType.CRV) return
             if(ship.lastFiredAt && time - ship.lastFiredAt < CRV_FIRE_COOLDOWN_MS) return
 
-            let nearestShip:ShipInstanceData = null
-            let nearestMissile:Missile = null
-            let nearestDist = Infinity
-            ships.forEach(other => {
-                if(other.faction === ship.faction) return
-                const d = Phaser.Math.Distance.Between(ship.x, ship.y, other.x, other.y)
-                if(d < nearestDist){ nearestDist = d; nearestShip = other; nearestMissile = null }
-            })
-            this.missiles.forEach(missile => {
-                if(missile.faction === ship.faction || interceptedMissileIds.has(missile.id)) return
-                const d = Phaser.Math.Distance.Between(ship.x, ship.y, missile.x, missile.y)
-                if(d < nearestDist){ nearestDist = d; nearestMissile = missile; nearestShip = null }
-            })
+            const { nearestShip, nearestMissile, nearestDist } = findNearestHostile(ship, ships, this.missiles, interceptedMissileIds)
             if(nearestDist > range || (!nearestShip && !nearestMissile)) return
 
             shooterIds.add(ship.id)
@@ -439,18 +425,8 @@ export default class MapScene extends Scene {
 
         if(shooterIds.size === 0) return
 
-        const updated = ships.map(ship => {
-            const damage = damageByTarget.get(ship.id)
-            if(damage === undefined) return shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship
-
-            const hp = ship.hp - damage
-            if(hp <= 0){
-                this.shatters.push({ x:ship.x, y:ship.y, createdAt:time, seed:ship.id })
-                return null
-            }
-            return shooterIds.has(ship.id) ? { ...ship, hp, lastFiredAt:time } : { ...ship, hp }
-        }).filter(ship => ship !== null)
-
+        const withCooldown = ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship)
+        const updated = applyDamage(withCooldown, damageByTarget, ship => this.shatters.push({ x:ship.x, y:ship.y, createdAt:time, seed:ship.id }))
         setShips(updated)
     }
 
@@ -467,17 +443,11 @@ export default class MapScene extends Scene {
             if(ship.type !== ShipType.DDG) return
             if(ship.lastFiredAt && time - ship.lastFiredAt < DDG_FIRE_COOLDOWN_MS) return
 
-            let nearest:ShipInstanceData = null
-            let nearestDist = Infinity
-            ships.forEach(other => {
-                if(other.faction === ship.faction) return
-                const d = Phaser.Math.Distance.Between(ship.x, ship.y, other.x, other.y)
-                if(d < nearestDist){ nearestDist = d; nearest = other }
-            })
-            if(!nearest || nearestDist > range) return
+            const { nearestShip, nearestDist } = findNearestHostile(ship, ships)
+            if(!nearestShip || nearestDist > range) return
 
             shooterIds.add(ship.id)
-            this.missiles.push({ id:v4(), faction:ship.faction, targetId:nearest.id, x:ship.x, y:ship.y, createdAt:time })
+            this.missiles.push({ id:v4(), faction:ship.faction, targetId:nearestShip.id, x:ship.x, y:ship.y, createdAt:time })
         })
 
         if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAt:time } : ship))
@@ -511,15 +481,7 @@ export default class MapScene extends Scene {
 
         if(spentMissileIds.size > 0) this.missiles = this.missiles.filter(m => !spentMissileIds.has(m.id))
 
-        if(damageByTarget.size > 0){
-            const afterImpact = useAppStore.getState().ships.map(ship => {
-                const damage = damageByTarget.get(ship.id)
-                if(damage === undefined) return ship
-                const hp = ship.hp - damage
-                return hp <= 0 ? null : { ...ship, hp }
-            }).filter(ship => ship !== null)
-            useAppStore.getState().setShips(afterImpact)
-        }
+        if(damageByTarget.size > 0) useAppStore.getState().setShips(applyDamage(useAppStore.getState().ships, damageByTarget))
     }
 
     // Missiles in flight render as small homing dots, same wireframe green as everything else.
@@ -618,7 +580,7 @@ export default class MapScene extends Scene {
 
         let label = this.shipLabels.get(ship.id)
         if(!label){
-            label = this.add.text(x, y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color:'#33ff55' }).setOrigin(0.5).setDepth(4)
+            label = this.add.text(x, y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color:GREEN_CSS }).setOrigin(0.5).setDepth(4)
             this.shipLabels.set(ship.id, label)
         }
         else {
@@ -626,15 +588,8 @@ export default class MapScene extends Scene {
         }
     }
 
-    toWorld = (x:number, y:number) => ({
-        x: x*CELL_SIZE + CELL_SIZE/2,
-        y: y*CELL_SIZE + CELL_SIZE/2
-    })
-
-    toGrid = (worldX:number, worldY:number) => ({
-        x: Math.floor(worldX/CELL_SIZE),
-        y: Math.floor(worldY/CELL_SIZE)
-    })
+    toWorld = gridToWorld
+    toGrid = worldToGrid
 
     drawMap = () => {
         const g = this.g
@@ -718,7 +673,7 @@ export default class MapScene extends Scene {
             g.fillCircle(x, y, 5)
             g.lineStyle(1, GREEN, 1)
             g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:'#33ff55' }).setOrigin(0.5).setDepth(5)
+            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:GREEN_CSS }).setOrigin(0.5).setDepth(5)
             this.orderLabels.push(label)
         })
     }

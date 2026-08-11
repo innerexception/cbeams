@@ -1,6 +1,18 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Layers, SAVE_NAME, Faction, FactoryKind, BASE_MAX_ENERGY, ENERGY_PER_MINING_STATION, ENERGY_PER_SOLAR_MILL, ENERGY_PER_SHIPYARD, SOLAR_MILL_MAX_ENERGY_BONUS } from "../../enum"
+import { Layers, Faction, FactoryKind } from "../../enum"
+import { SAVE_NAME, BASE_MAX_ENERGY, ENERGY_PER_MINING_STATION, ENERGY_PER_SOLAR_MILL, ENERGY_PER_SHIPYARD, SOLAR_MILL_MAX_ENERGY_BONUS } from "./Constants"
+
+// Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
+// wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
+export const seededRandom = (seed:string) => {
+    let h = 0
+    for(let i=0; i<seed.length; i++) h = (h*31 + seed.charCodeAt(i)) | 0
+    return () => {
+        h = (h*1664525 + 1013904223) | 0
+        return ((h >>> 0) / 0xffffffff)
+    }
+}
 
 export const tryLoadFile = async () => {
     //try{
