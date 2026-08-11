@@ -6,17 +6,18 @@ import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, s
 import { generateMap } from "../../common/MapGenerator";
 import { spawnEnemyLogisticsCenters, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
 import { marchingSquaresSegments } from "../../common/Contours";
+import { BUILDING_SIDC_FUNCTION, VEHICLE_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
 import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
     TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
-    DRONE_CONTACT_RADIUS_PX, KK_DAMAGE, ATD_DAMAGE, ATD_BLAST_RADIUS_PX,
-    MLRS_FIRE_COOLDOWN_MS, MLRS_RANGE_PX, MISSILE_SALVO_SIZE, MISSILE_DAMAGE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
+    ATD_BLAST_RADIUS_PX,
+    MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS,
     THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS,
     LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
-    NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
+    NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, BUILDING_MIN_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -25,6 +26,10 @@ const TWO_PI = Math.PI*2
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
 const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
+
+// How far above a ship's own position its type label floats — clear of the (now unframed) icon
+// itself, which is roughly NATO_ICON_SIZE*0.6 tall, so the text never sits on top of it.
+const SHIP_LABEL_OFFSET_PX = NATO_ICON_SIZE * 0.7
 
 // Stable per-ship angular offset so multiple ships orbiting the same point spread out instead of stacking.
 const shipOrbitPhase = (id:string) => {
@@ -52,6 +57,68 @@ const lerpHexColor = (colorA:number, colorB:number, t:number) => {
     const br=(colorB>>16)&0xff, bg=(colorB>>8)&0xff, bb=colorB&0xff
     const r = Math.round(ar+(br-ar)*t), g = Math.round(ag+(bg-ag)*t), b = Math.round(ab+(bb-ab)*t)
     return (r<<16)|(g<<8)|b
+}
+
+// --- NATO APP-6 main icons (placement-preview use only) -------------------------------------------
+// Built sprites now render real APP-6 symbols via milsymbol (see generateTextures/src/common/AppSix.ts).
+// These hand-drawn glyphs remain only for drawFactoryShapeAt's placement-preview ghost — each draws
+// just the icon glyph, the small symbol inside a building's frame that identifies what it actually is,
+// centered at (x,y) at roughly `r` in size.
+
+// "Headquarters": a circle at the top of a short staff line, above the main symbol — command
+// authority over whatever's below it.
+const drawHqGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
+    g.lineStyle(1.5, color, alpha)
+    g.lineBetween(x, y-r*0.3, x, y-r*1.5)
+    g.strokeCircle(x, y-r*1.8, r*0.3)
+}
+
+
+// "Multiple Rocket Launcher": a row of launch tubes — shared by BLM (building) and MLRS (vehicle),
+// the same weapon system either fixed-emplaced or vehicle-mounted.
+const drawMlrsGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
+    g.lineStyle(1.5, color, alpha)
+    for(let i=-1; i<=1; i++){
+        const rx = x + i*r*0.5
+        g.strokeRect(rx-r*0.15, y-r*0.6, r*0.3, r*1.2)
+    }
+}
+
+// "Air Defense": a dome over a baseline, symbolizing overhead defensive coverage against aerial threats.
+const drawAirDefenseGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
+    g.lineStyle(1.5, color, alpha)
+    g.beginPath()
+    g.arc(x, y, r*0.7, Math.PI, 0, false)
+    g.strokePath()
+    g.lineBetween(x-r*0.7, y, x+r*0.7, y)
+}
+
+// "Missile/Rocket Unit": an upward rocket profile — pointed nose cone over a shaft, with tail fins.
+const drawMissileGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
+    g.lineStyle(1.5, color, alpha)
+    g.lineBetween(x, y+r*0.7, x, y-r*0.5)
+    const nose = [
+        new Phaser.Math.Vector2(x, y-r*1.1),
+        new Phaser.Math.Vector2(x+r*0.25, y-r*0.5),
+        new Phaser.Math.Vector2(x-r*0.25, y-r*0.5),
+    ]
+    g.fillStyle(color, alpha*0.5)
+    g.fillPoints(nose, true)
+    g.strokePoints(nose, true, true)
+    g.lineBetween(x-r*0.3, y+r*0.7, x, y+r*0.4)
+    g.lineBetween(x+r*0.3, y+r*0.7, x, y+r*0.4)
+}
+
+// "Supply/Sustainment": a simplified funnel/hopper — distribution of materiel.
+const drawSupplyGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
+    g.lineStyle(1.5, color, alpha)
+    const points = [
+        new Phaser.Math.Vector2(x-r*0.6, y-r*0.5),
+        new Phaser.Math.Vector2(x+r*0.6, y-r*0.5),
+        new Phaser.Math.Vector2(x+r*0.15, y+r*0.5),
+        new Phaser.Math.Vector2(x-r*0.15, y+r*0.5),
+    ]
+    g.strokePoints(points, true, true)
 }
 
 // Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
@@ -219,9 +286,10 @@ export default class MapScene extends Scene {
         useAppStore.getState().setLoaded(true)
     }
 
-    // Every wireframe shape (ships, buildings, a missile dot) is baked into a texture once, up front,
-    // via a throwaway Graphics object — real Sprites can then be physics bodies, unlike a shape drawn
-    // fresh into a shared Graphics layer every frame the old rendering used.
+    // Every ship/building sprite renders a real APP-6 unit symbol, generated at runtime by milsymbol
+    // from a SIDC built out of BUILDING_SIDC_FUNCTION/VEHICLE_SIDC_FUNCTION (see src/common/AppSix.ts)
+    // — baked into a texture once, up front, exactly like the old hand-drawn Graphics shapes were, just
+    // via addCanvas instead of generateTexture since milsymbol hands back a ready-made canvas.
     generateTextures = () => {
         const tmp = this.add.graphics()
         const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
@@ -230,13 +298,17 @@ export default class MapScene extends Scene {
             tmp.generateTexture(key, size, size)
         }
 
-        const shipSize = Math.ceil(NATO_ICON_SIZE*1.6)
-        bake('ship_friend', shipSize, (g, cx, cy) => this.drawShipShapeAt(g, cx, cy, true))
-        bake('ship_hostile', shipSize, (g, cx, cy) => this.drawShipShapeAt(g, cx, cy, false))
+        const shipSize = Math.ceil(NATO_ICON_SIZE)
+        const buildingSize = Math.ceil(CELL_SIZE*2)
 
-        const factorySize = Math.ceil(CELL_SIZE*3)
+        Object.values(VehicleType).forEach(type => {
+            const fn = VEHICLE_SIDC_FUNCTION[type]
+            this.textures.addCanvas('ship_friend_'+type, renderAppSixIcon(buildSidc(Faction.Player, fn), shipSize, GREEN_HEX))
+            this.textures.addCanvas('ship_hostile_'+type, renderAppSixIcon(buildSidc(Faction.Enemy, fn), shipSize, GREY_DIM_HEX))
+        })
         Object.values(BuildingType).forEach(kind => {
-            bake('factory_'+kind, factorySize, (g, cx, cy) => this.drawFactoryShapeAt(g, kind, cx, cy, GREEN_HEX, 1))
+            const fn = BUILDING_SIDC_FUNCTION[kind]
+            this.textures.addCanvas('factory_'+kind, renderAppSixIcon(buildSidc(Faction.Player, fn), buildingSize, GREEN_HEX))
         })
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
@@ -249,6 +321,7 @@ export default class MapScene extends Scene {
         this.moveShips(time, delta)
         this.updateCramTurrets(time)
         this.updateMlrs(time)
+        this.updateArmor(time)
         this.updateBlm(time)
         this.updateThadd(time)
         this.updateMissiles(time, delta)
@@ -444,14 +517,15 @@ export default class MapScene extends Scene {
 
     createShipSprite = (ship:VehicleData) => {
         const isFriend = ship.faction === Faction.Player
-        const sprite = this.physics.add.sprite(ship.x, ship.y, isFriend ? 'ship_friend' : 'ship_hostile')
-        this.centerCircleBody(sprite, DRONE_CONTACT_RADIUS_PX/2)
+        const textureKey = (isFriend ? 'ship_friend_' : 'ship_hostile_') + ship.type
+        const sprite = this.physics.add.sprite(ship.x, ship.y, textureKey)
+        this.centerCircleBody(sprite)
         sprite.setData('kind', 'ship' as BodyKind)
         sprite.setData('id', ship.id)
         this.shipsGroup.add(sprite)
         this.shipSprites.set(ship.id, sprite)
 
-        const label = this.add.text(ship.x, ship.y, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.lGreen }).setOrigin(0.5).setDepth(4)
+        const label = this.add.text(ship.x, ship.y-SHIP_LABEL_OFFSET_PX, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.lGreen }).setOrigin(0.5).setDepth(4)
         this.shipLabels.set(ship.id, label)
 
         // Fog of war: an enemy ship starts hidden regardless of phase — updateFogOfWar (run every
@@ -473,7 +547,7 @@ export default class MapScene extends Scene {
     createBuildingSprite = (factory:BuildingData) => {
         const { x, y } = this.toWorld(factory.x, factory.y)
         const sprite = this.physics.add.staticSprite(x, y, 'factory_'+factory.kind)
-        this.centerCircleBody(sprite, getBuildingFootprintRadius(factory.kind))
+        this.centerCircleBody(sprite)
         sprite.setData('kind', 'building' as BodyKind)
         sprite.setData('id', factory.id)
         sprite.setData('factoryKind', factory.kind)
@@ -496,8 +570,13 @@ export default class MapScene extends Scene {
     }
 
     // A physics body's offset is relative to its texture frame's top-left corner — this centers a
-    // circle of the given radius within whatever frame the sprite is currently showing.
-    centerCircleBody = (sprite:Physics.Arcade.Sprite, radius:number) => {
+    // circle within whatever frame the sprite is currently showing. The radius is derived from the
+    // texture's own dimensions rather than passed in: milsymbol's asCanvas() bakes each icon's canvas
+    // to exactly its symbol bounding box (see AppSix.ts/renderAppSixIcon), so sprite.width/height
+    // already *is* the real rendered icon footprint — friendly rectangle frames and hostile diamond
+    // frames alike. Half the shorter side keeps the circle inscribed inside that frame on both shapes.
+    centerCircleBody = (sprite:Physics.Arcade.Sprite) => {
+        const radius = Math.min(sprite.width, sprite.height) / 2
         const body = sprite.body as Physics.Arcade.Body
         body.setCircle(radius, sprite.width/2 - radius, sprite.height/2 - radius)
     }
@@ -558,7 +637,7 @@ export default class MapScene extends Scene {
                 this.physics.moveTo(sprite, target.x, target.y, speed)
             }
 
-            this.shipLabels.get(ship.id)?.setPosition(sprite.x, sprite.y)
+            this.shipLabels.get(ship.id)?.setPosition(sprite.x, sprite.y-SHIP_LABEL_OFFSET_PX)
 
             // ATD is a one-shot guided munition: reaching the end of its (single-waypoint) route
             // detonates it right here, same as a contact hit does in onDroneShipContact/onDroneBuildingContact.
@@ -652,21 +731,23 @@ export default class MapScene extends Scene {
         this.shatters.push({ x:sprite.x, y:sprite.y, createdAt:time, seed:drone.id })
 
         if(drone.type === VehicleType.KK && primary){
-            if(primary.kind === 'ship') shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + KK_DAMAGE)
-            else factoryDamage.set(primary.id, (factoryDamage.get(primary.id) || 0) + KK_DAMAGE)
+            const damage = VehicleData[VehicleType.KK].damage
+            if(primary.kind === 'ship') shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + damage)
+            else factoryDamage.set(primary.id, (factoryDamage.get(primary.id) || 0) + damage)
         }
         else if(drone.type === VehicleType.ATD){
+            const damage = VehicleData[VehicleType.ATD].damage
             const hits = this.physics.overlapCirc(sprite.x, sprite.y, ATD_BLAST_RADIUS_PX, true, true)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
                 const kind:BodyKind = obj.getData('kind')
                 if(kind === 'ship'){
                     const hitShip = this.getShipEntry(obj as Phaser.Types.Physics.Arcade.GameObjectWithBody)
-                    if(hitShip && hitShip.faction !== drone.faction) shipDamage.set(hitShip.id, (shipDamage.get(hitShip.id) || 0) + ATD_DAMAGE)
+                    if(hitShip && hitShip.faction !== drone.faction) shipDamage.set(hitShip.id, (shipDamage.get(hitShip.id) || 0) + damage)
                 }
                 else if(kind === 'building'){
                     const hitBuilding = this.getBuildingEntry(obj as Phaser.Types.Physics.Arcade.GameObjectWithBody)
-                    if(hitBuilding && hitBuilding.faction !== drone.faction) factoryDamage.set(hitBuilding.id, (factoryDamage.get(hitBuilding.id) || 0) + ATD_DAMAGE)
+                    if(hitBuilding && hitBuilding.faction !== drone.faction) factoryDamage.set(hitBuilding.id, (factoryDamage.get(hitBuilding.id) || 0) + damage)
                 }
             })
         }
@@ -694,12 +775,12 @@ export default class MapScene extends Scene {
         if(!ship) return
 
         const time = this.time.now
-        const x = missile.x, y = missile.y, seed = missile.getData('id')
+        const x = missile.x, y = missile.y, seed = missile.getData('id'), damage = missile.getData('damage')
         missile.destroy()
         this.shatters.push({ x, y, createdAt:time, seed })
 
         const { vehicles: ships, setShips } = useAppStore.getState()
-        setShips(applyDamage(ships, new Map([[ship.id, MISSILE_DAMAGE]]), dead => {
+        setShips(applyDamage(ships, new Map([[ship.id, damage]]), dead => {
             this.destroyShipSprite(dead.id)
             this.shatters.push({ x:dead.x, y:dead.y, createdAt:time, seed:dead.id })
         }))
@@ -714,12 +795,12 @@ export default class MapScene extends Scene {
         if(!building) return
 
         const time = this.time.now
-        const x = missile.x, y = missile.y, seed = missile.getData('id')
+        const x = missile.x, y = missile.y, seed = missile.getData('id'), damage = missile.getData('damage')
         missile.destroy()
         this.shatters.push({ x, y, createdAt:time, seed })
 
         const { buildings: factories, setFactories } = useAppStore.getState()
-        setFactories(applyDamage(factories, new Map([[building.id, MISSILE_DAMAGE]]), dead => {
+        setFactories(applyDamage(factories, new Map([[building.id, damage]]), dead => {
             this.destroyBuildingSprite(dead.id)
             const p = this.toWorld(dead.x, dead.y)
             this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
@@ -881,19 +962,54 @@ export default class MapScene extends Scene {
 
         ships.forEach(ship => {
             if(ship.type !== VehicleType.MLRS) return
-            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < MLRS_FIRE_COOLDOWN_MS) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < VehicleData[VehicleType.MLRS].cooldownMs) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
 
-            const targetBuilding = this.findNearestHostileBuilding(ship.faction, sprite.x, sprite.y, MLRS_RANGE_PX)
+            const targetBuilding = this.findNearestHostileBuilding(ship.faction, sprite.x, sprite.y, VehicleData[VehicleType.MLRS].rangePx)
             if(!targetBuilding) return
 
             shooterIds.add(ship.id)
-            for(let i=0; i<MISSILE_SALVO_SIZE; i++) this.spawnMissile(ship.faction, sprite.x, sprite.y, 'building', targetBuilding.getData('id'))
+            for(let i=0; i<MISSILE_SALVO_SIZE; i++) this.spawnMissile(ship.faction, sprite.x, sprite.y, 'building', targetBuilding.getData('id'), VehicleData[VehicleType.MLRS].damage)
         })
 
         if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
+    }
+
+    // Each ARMOR unit, on cooldown, fires a single instant shot — like CRAM's cannon, not a homing
+    // missile — at whichever hostile building is nearest in range.
+    updateArmor = (time:number) => {
+        const { vehicles: ships, setShips } = useAppStore.getState()
+        const shooterIds = new Set<string>()
+        const damageByTarget = new Map<string, number>()
+
+        ships.forEach(ship => {
+            if(ship.type !== VehicleType.ARMOR) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < VehicleData[VehicleType.ARMOR].cooldownMs) return
+
+            const sprite = this.shipSprites.get(ship.id)
+            if(!sprite) return
+
+            const targetBuilding = this.findNearestHostileBuilding(ship.faction, sprite.x, sprite.y, VehicleData[VehicleType.ARMOR].rangePx)
+            if(!targetBuilding) return
+
+            shooterIds.add(ship.id)
+            this.tracers.push({ x1:sprite.x, y1:sprite.y, x2:targetBuilding.x, y2:targetBuilding.y, createdAt:time })
+            const targetId = targetBuilding.getData('id')
+            damageByTarget.set(targetId, (damageByTarget.get(targetId) || 0) + VehicleData[VehicleType.ARMOR].damage)
+        })
+
+        if(shooterIds.size === 0) return
+
+        setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
+        const { buildings: factories, setFactories } = useAppStore.getState()
+        setFactories(applyDamage(factories, damageByTarget, dead => {
+            this.destroyBuildingSprite(dead.id)
+            const p = this.toWorld(dead.x, dead.y)
+            this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
+            if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
+        }))
     }
 
     // Each BLM turret, on its long cooldown, fires a single missile at whichever hostile building (never
@@ -912,7 +1028,7 @@ export default class MapScene extends Scene {
             if(!targetBuilding) return
 
             shooterIds.add(turret.id)
-            this.spawnMissile(turret.faction, x, y, 'building', targetBuilding.getData('id'))
+            this.spawnMissile(turret.faction, x, y, 'building', targetBuilding.getData('id'), BuildingData[BuildingType.BLM].damage)
         })
 
         if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
@@ -935,19 +1051,25 @@ export default class MapScene extends Scene {
 
             shooterIds.add(turret.id)
             const targetId = targetMissile.getData('id')
-            for(let i=0; i<THADD_SALVO_SIZE; i++) this.spawnMissile(turret.faction, x, y, 'missile', targetId)
+            for(let i=0; i<THADD_SALVO_SIZE; i++) this.spawnMissile(turret.faction, x, y, 'missile', targetId, 0)
         })
 
         if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
     }
 
-    spawnMissile = (faction:Faction, x:number, y:number, targetKind:'ship'|'building'|'missile', targetId:string) => {
+    // `damage` is the firing vehicle/building's own damage stat (VehicleData/BuildingData) — carried on
+    // the missile itself so onMissileShipContact/onMissileBuildingContact don't need to look the firer
+    // back up (it may well be dead, or its type ambiguous, by the time the missile actually lands).
+    // Irrelevant for a THADD interceptor (targetKind 'missile'), which destroys outright on contact
+    // rather than dealing hp damage — callers just pass 0 for those.
+    spawnMissile = (faction:Faction, x:number, y:number, targetKind:'ship'|'building'|'missile', targetId:string, damage:number) => {
         const missile = this.physics.add.sprite(x, y, 'missile_dot')
         missile.setData('kind', 'missile' as BodyKind)
         missile.setData('id', v4())
         missile.setData('faction', faction)
         missile.setData('targetKind', targetKind)
         missile.setData('targetId', targetId)
+        missile.setData('damage', damage)
         missile.setData('createdAt', this.time.now)
         this.missilesGroup.add(missile)
     }
@@ -1031,30 +1153,25 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Every ship renders as a standard NATO APP-6 "unit" map symbol: a flattened hexagon frame for
-    // friendlies, a diamond frame for hostiles. Baked into a texture once by generateTextures — this
-    // just draws the shape centered at (cx,cy), reused both for that bake and (indirectly) nowhere else.
-    drawShipShapeAt = (g:GameObjects.Graphics, cx:number, cy:number, isFriend:boolean) => {
-        const w = NATO_ICON_SIZE, h = NATO_ICON_SIZE*0.6
+    // Half the shorter side of a kind's baked icon texture — same measure centerCircleBody uses for
+    // the physics body (see AppSix.ts/renderAppSixIcon: milsymbol bakes each canvas to exactly its
+    // symbol's bounding box), so this is that kind's real rendered footprint, not a guessed constant.
+    getBuildingIconRadius = (kind:BuildingType) => {
+        const img = this.textures.get('factory_'+kind).getSourceImage() as HTMLCanvasElement
+        return Math.min(img.width, img.height) / 2
+    }
 
-        const points = isFriend ? [
-            new Phaser.Math.Vector2(cx-w/2, cy-h/2),
-            new Phaser.Math.Vector2(cx+w/2, cy-h/2),
-            new Phaser.Math.Vector2(cx+w/2+h*0.3, cy),
-            new Phaser.Math.Vector2(cx+w/2, cy+h/2),
-            new Phaser.Math.Vector2(cx-w/2, cy+h/2),
-            new Phaser.Math.Vector2(cx-w/2-h*0.3, cy),
-        ] : [
-            new Phaser.Math.Vector2(cx, cy-w/2),
-            new Phaser.Math.Vector2(cx+w/2, cy),
-            new Phaser.Math.Vector2(cx, cy+w/2),
-            new Phaser.Math.Vector2(cx-w/2, cy),
-        ]
-
-        g.fillStyle(GREEN_HEX, 0.15)
-        g.fillPoints(points, true)
-        g.lineStyle(1.5, GREEN_HEX, 1)
-        g.strokePoints(points, true, true)
+    // Minimum spacing between any two buildings — own or hostile, any kind — is just their two icons'
+    // real radii plus a flat clearance, so frames never touch or overlap regardless of which kinds are
+    // involved. Both the player and the AI place buildings through isValidPlacement, so this applies
+    // to both alike.
+    isTooCloseToAnyBuilding = (kind:BuildingType, worldX:number, worldY:number) => {
+        const radius = this.getBuildingIconRadius(kind)
+        return useAppStore.getState().buildings.some(f => {
+            const p = this.toWorld(f.x, f.y)
+            const minDist = radius + this.getBuildingIconRadius(f.kind) + BUILDING_MIN_CLEARANCE_PX
+            return Phaser.Math.Distance.Between(worldX, worldY, p.x, p.y) < minDist
+        })
     }
 
     toWorld = gridToWorld
@@ -1087,12 +1204,11 @@ export default class MapScene extends Scene {
     }
 
     // Topographic contour lines over the map's terrain field (see MapGenerator's buildTerrain).
-    // Raised terrain (Hill, Spur, the high side of a Cliff) brightens toward green as elevation rises;
-    // sunk terrain (Valley, the low side of a Cliff) stays a flat dim tone — FM 3-25.26 never has
-    // low ground read as brighter than high ground. marchingSquaresSegments is run once per contour
-    // interval (not once per feature) since it works directly off the shared elevation lattice — every
-    // feature, including a Cliff's tightly-packed lines, falls out of the same two threshold passes
-    // with no feature-specific drawing code.
+    // Raised terrain (Hill, Spur) brightens toward green as elevation rises; sunk terrain (Valley)
+    // stays a flat dim tone — FM 3-25.26 never has low ground read as brighter than high ground.
+    // marchingSquaresSegments is run once per contour interval (not once per feature) since it works
+    // directly off the shared elevation lattice — every feature falls out of the same two threshold
+    // passes with no feature-specific drawing code.
     drawTerrain = () => {
         const g = this.g
         const { originX, originY, cols, rows, elevations } = this.mapData.terrain
@@ -1111,8 +1227,8 @@ export default class MapScene extends Scene {
         RAISED_LEVELS.forEach(level => drawLevel(elevations, level, lerpHexColor(GREEN_DIM_HEX, GREEN_HEX, level/0.9)))
 
         // Sunk terrain: same marching-squares pass, but run against the negated field so
-        // "elevation <= -level" (a Valley/Cliff's actual shape) reuses the same >=threshold case table
-        // a raised contour uses.
+        // "elevation <= -level" (a Valley's actual shape) reuses the same >=threshold case table a
+        // raised contour uses.
         const negated = elevations.map(column => column.map(v => -v))
         const SUNK_LEVELS = [0.15, 0.3, 0.45, 0.6]
         SUNK_LEVELS.forEach(level => drawLevel(negated, level, GREEN_DIM_HEX))
@@ -1252,20 +1368,24 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Shared shape renderer so the placement preview matches the built factory exactly, and so
-    // generateTextures can bake the same shape into each building's sprite texture. `rotation` (radians)
-    // only affects the Solar Mill's rays — used solely for the flat preview; the live sprite spins itself.
+    // Placement-preview-only shape renderer: the built building's actual sprite is a real APP-6 symbol
+    // now, generated at runtime by milsymbol (see generateTextures/src/common/AppSix.ts), but the live
+    // ghost that follows the cursor while placing is still this hand-drawn approximation — cheap to
+    // redraw every frame with a variable alpha/color, which a cached canvas texture doesn't lend itself
+    // to. Each kind draws its own footprint "pad" plus a rough version of that building's icon: CRAM is
+    // Air Defense, BLM draws the same MLRS launcher glyph the MLRS vehicle's real icon uses, THADD is a
+    // Missile/Rocket unit, LogisticsCenter is Supply/Sustainment, and Base gets an HQ glyph on top of
+    // its distinct oversized diamond. `rotation` (radians) only affects the Solar Mill's rays.
     drawFactoryShapeAt = (g:GameObjects.Graphics, kind:BuildingType, x:number, y:number, color:number, alpha:number, rotation:number = 0) => {
         if(kind === BuildingType.CRAM){
-            // A little turret: circular base, a barrel pointing "up" with a muzzle crossbar.
             const r = CELL_SIZE * 0.5
             g.lineStyle(2, color, alpha)
             g.strokeCircle(x, y, r)
-            g.lineBetween(x, y, x, y-r*1.4)
-            g.lineBetween(x-r*0.3, y-r*1.1, x+r*0.3, y-r*1.1)
+            drawAirDefenseGlyph(g, x, y, r, color, alpha)
         }
         else if(kind === BuildingType.Base){
-            // The faction headquarters: a larger filled diamond, distinct from every other building.
+            // The faction headquarters: a larger filled diamond, distinct from every other building,
+            // topped with the standard HQ staff-and-circle glyph.
             const r = CELL_SIZE * 1.5
             const points = [
                 new Phaser.Math.Vector2(x, y-r),
@@ -1277,31 +1397,23 @@ export default class MapScene extends Scene {
             g.fillPoints(points, true)
             g.lineStyle(2, color, alpha)
             g.strokePoints(points, true, true)
+            drawHqGlyph(g, x, y-r*0.3, r*0.7, color, alpha)
         }
         else if(kind === BuildingType.BLM){
-            // A missile silo: a square pad with a single rocket sitting on top, pointing up.
             const r = CELL_SIZE * 0.55
             g.lineStyle(2, color, alpha)
             g.strokeRect(x-r, y-r*0.5, r*2, r)
-            const points = [
-                new Phaser.Math.Vector2(x, y-r*1.5),
-                new Phaser.Math.Vector2(x+r*0.4, y-r*0.4),
-                new Phaser.Math.Vector2(x-r*0.4, y-r*0.4),
-            ]
-            g.fillStyle(color, alpha*0.3)
-            g.fillPoints(points, true)
-            g.lineStyle(1.5, color, alpha)
-            g.strokePoints(points, true, true)
+            drawMlrsGlyph(g, x, y-r*0.1, r, color, alpha)
         }
         else if(kind === BuildingType.THADD){
-            // An interceptor battery: a square pad watching the sky, marked with a crossed "X" array.
             const r = CELL_SIZE * 0.55
             g.lineStyle(2, color, alpha)
             g.strokeRect(x-r, y-r*0.5, r*2, r)
-            g.lineBetween(x-r*0.6, y-r*1.3, x+r*0.6, y-r*0.3)
-            g.lineBetween(x+r*0.6, y-r*1.3, x-r*0.6, y-r*0.3)
+            drawMissileGlyph(g, x, y-r*0.1, r, color, alpha)
         }
         else {
+            // LogisticsCenter: a hexagonal pad (its distinct footprint shape) with the standard
+            // Supply/Sustainment funnel glyph inside.
             const r = CELL_SIZE * 0.7
             const points = []
             for(let i=0; i<6; i++){
@@ -1312,6 +1424,7 @@ export default class MapScene extends Scene {
             g.fillPoints(points, true)
             g.lineStyle(2, color, alpha)
             g.strokePoints(points, true, true)
+            drawSupplyGlyph(g, x, y, r, color, alpha)
         }
     }
 
@@ -1370,6 +1483,7 @@ export default class MapScene extends Scene {
             return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, s.x, s.y) < minDist
         })
         if(overlapsShip) return false
+        if(this.isTooCloseToAnyBuilding(kind, worldPos.x, worldPos.y)) return false
 
         return this.isNearOwnStructure(gridX, gridY, faction)
     }
@@ -1389,6 +1503,11 @@ export default class MapScene extends Scene {
         if(this.findFactoryAt(gridX, gridY)) return false
 
         const worldPos = this.toWorld(gridX, gridY)
+        // Icon-overlap guard first (catches the faction's own Base, which the LogisticsCenter-only
+        // spacing rule below never checked against), then the much larger deliberate spread rule that
+        // governs LogisticsCenters specifically.
+        if(this.isTooCloseToAnyBuilding(BuildingType.LogisticsCenter, worldPos.x, worldPos.y)) return false
+
         const tooClose = useAppStore.getState().buildings.some(f => {
             if(f.faction !== faction || f.kind !== BuildingType.LogisticsCenter) return false
             const p = this.toWorld(f.x, f.y)

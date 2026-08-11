@@ -17,8 +17,8 @@ interface BaseData {
 
 // A rectangular lattice of signed elevation samples (one per grid cell) covering the terrain's
 // bounding box — positive values are raised terrain (Hill, Spur), negative values are sunken terrain
-// (Valley, and the low side of a Cliff), magnitude in [-1,1]. origin+cols/rows locate the lattice back
-// in map-grid space. Rendered as topographic contour lines (see MapScene's drawTerrain), not as shapes.
+// (Valley), magnitude in [-1,1]. origin+cols/rows locate the lattice back in map-grid space. Rendered
+// as topographic contour lines (see MapScene's drawTerrain), not as shapes.
 interface TerrainData {
     originX: number
     originY: number
@@ -66,6 +66,9 @@ interface VehicleStats {
     sightRadius: number
     armor: number
     hp: number
+    damage: number
+    cooldownMs: number
+    rangePx: number
     sizeHex: number
     productionTimeMs: number
     targetType: import('./enum').TargetType
