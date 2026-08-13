@@ -29,6 +29,11 @@ export const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX / 2
 // see MapScene's isValidLogisticsPlacement/handleLogisticsPlacementClick.
 export const LOGISTICS_CENTER_COUNT = 3
 export const LOGISTICS_CENTER_MIN_SPACING_PX = 500
+// Once a faction's 3 LogisticsCenters are down, placement moves into its second stage: every other
+// building kind unlocks, spendable against this flat points budget (see BuildingData's buildingPoints
+// per-kind cost) — the match goes live for that faction's side the instant it hits zero. See
+// MapScene's handleBonusBuildingPlacementClick / AIPlayers' spendEnemyBuildingPoints.
+export const BUILDING_POINTS_BUDGET = 20
 
 // --- Ship movement ---
 // Once a ship finishes its route (or its orders are cleared) it loiters in a circle around the
@@ -67,6 +72,18 @@ export const ATD_BLAST_RADIUS_PX = 10
 export const MISSILE_SALVO_SIZE = 3
 export const MISSILE_SPEED_PX_S = 220
 export const MISSILE_MAX_LIFETIME_MS = 8000
+// Missiles within a salvo (MLRS's own, or THADD's interceptors below) launch one at a time this far
+// apart instead of all at once, so a salvo actually reads as a salvo on screen rather than one stacked
+// blob of missiles flying in perfect lockstep.
+export const SALVO_STAGGER_MS = 500
+// An offensive missile's *collision* body still flies a straight line to its target (see updateMissiles)
+// — this is purely a visual lob layered on top, a sine bump peaking at MISSILE_ARC_HEIGHT_PX partway
+// through the flight and easing back to 0 at both ends, so it reads as a lobbed shot instead of a laser.
+// It leaves a trail of fading dots behind it (CONTRAIL_*) tracing that same visual arc. A THADD
+// interceptor (targetKind 'missile') gets neither — it's a fast, straight anti-missile shot, not a lob.
+export const MISSILE_ARC_HEIGHT_PX = 180
+export const CONTRAIL_INTERVAL_MS = 60
+export const CONTRAIL_LIFETIME_MS = 700
 
 // --- ARMOR ground vehicle ---
 // On cooldown, fires a single instant shot (like CRAM's cannon, not a homing missile) at whichever

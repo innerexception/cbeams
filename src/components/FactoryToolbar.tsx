@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { BuildingType, VehicleType, VehicleData, Faction } from '../../enum'
-import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT } from '../common/Constants'
+import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT, BUILDING_POINTS_BUDGET } from '../common/Constants'
 import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
@@ -13,7 +13,7 @@ const hints = {
 }
 
 export default () => {
-    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints } = useAppStore((state) => ({
+    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints, buildingPoints } = useAppStore((state) => ({
         phase: state.phase,
         placingFactory: state.placingFactory,
         setPlacingFactory: state.setPlacingBuilding,
@@ -22,6 +22,7 @@ export default () => {
         factories: state.buildings,
         queueShip: state.queueShip,
         clearWaypoints: state.clearWaypoints,
+        buildingPoints: state.buildingPoints,
     }))
 
     // Re-render periodically so queue progress bars (and, during placement, the LogisticsCenter
@@ -98,6 +99,11 @@ export default () => {
 
     return (
         <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
+            {phase === 'building' && (
+                <div style={{ color:colors.lGreen, marginBottom:6, fontFamily:'Body', fontSize:14 }}>
+                    Building points remaining: {buildingPoints[Faction.Player]} / {BUILDING_POINTS_BUDGET}
+                </div>
+            )}
             <div style={{ display:'flex' }}>
                 <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>

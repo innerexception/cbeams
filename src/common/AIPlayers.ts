@@ -4,6 +4,11 @@ import { useAppStore, AppState } from "./store"
 import { Faction, BuildingType, VehicleType, BuildingData } from "../../enum"
 import { ENEMY_RAID_SIZE, LOGISTICS_CENTER_COUNT } from "./Constants"
 
+// Every kind the placement phase's second stage unlocks — mirrors FactoryToolbar's own bonus-building
+// button row (LogisticsCenter/Base stay out of it: LogisticsCenter has its own dedicated opening-move
+// placement above, Base isn't placeable by either side).
+const BONUS_BUILDING_KINDS:Array<BuildingType> = [BuildingType.CRAM, BuildingType.BLM, BuildingType.THADD]
+
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reaches back into it only for the
 // handful of things a decision actually needs — placement validation, coordinate conversion, sprite
@@ -46,6 +51,34 @@ export const spawnEnemyLogisticsCenters = (scene:MapScene) => {
         useAppStore.getState().addFactory(factory)
         scene.createBuildingSprite(factory)
         if(i === 0) scene.enemyShipyardId = factory.id
+    }
+}
+
+// One-time opening move, mirroring the player's own placement-phase second stage: the enemy spends
+// its entire buildingPoints budget on a random mix of the same kinds the player's toolbar unlocks
+// there, each placed on whichever valid, empty cell sits closest to its base (findClosestValidCell,
+// the same heuristic spawnEnemyLogisticsCenters uses). Runs all at once, right after
+// spawnEnemyLogisticsCenters — the enemy has no interactive phase to spread this over. The guard just
+// caps the loop so a map with no room left (or a run of unlucky picks it can't afford) can't spin
+// forever; it isn't expected to matter in normal play.
+export const spendEnemyBuildingPoints = (scene:MapScene) => {
+    const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
+    if(!enemyBase) return
+
+    let guard = 0
+    while(useAppStore.getState().buildingPoints[Faction.Enemy] > 0 && guard < 100){
+        guard++
+        const kind = BONUS_BUILDING_KINDS[Math.floor(Math.random()*BONUS_BUILDING_KINDS.length)]
+        const cost = BuildingData[kind].buildingPoints
+        if(useAppStore.getState().buildingPoints[Faction.Enemy] < cost) continue
+
+        const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(kind, x, y, Faction.Enemy))
+        if(!best) break
+
+        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind, faction:Faction.Enemy, hp:BuildingData[kind].maxHp }
+        useAppStore.getState().addFactory(factory)
+        scene.createBuildingSprite(factory)
+        useAppStore.getState().spendBuildingPoints(Faction.Enemy, cost)
     }
 }
 

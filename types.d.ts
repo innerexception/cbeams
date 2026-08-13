@@ -46,6 +46,7 @@ interface BuildingMetaData {
     damage:number
     rangePx:number
     logisticsCost:number
+    buildingPoints:number
 }
 
 interface BuildingData {

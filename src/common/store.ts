@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, BuildingType, VehicleType } from '../../enum';
-import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld } from './Constants';
+import { Modal, BuildingType, VehicleType, Faction } from '../../enum';
+import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld, BUILDING_POINTS_BUDGET } from './Constants';
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
 // the ship already is without ever sending it back to a waypoint it has already passed.
@@ -17,7 +17,7 @@ const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x
   return bestIndex;
 };
 
-export type GamePhase = 'placement' | 'combat';
+export type GamePhase = 'placement' | 'building' | 'combat';
 
 export interface AppState {
   activeModal: Modal | null;
@@ -31,8 +31,14 @@ export interface AppState {
   selectedFactoryId: string | null;
   // 'placement': the player is placing their 3 starting LogisticsCenters before the match goes live —
   // the opposing faction's buildings/ships stay hidden and the AI holds off attacking until this ends.
-  // 'combat': the real-time match — see MapScene's startCombatPhase for the placement->combat handoff.
+  // 'building': every other building kind unlocks, spendable against buildingPoints (see
+  // BUILDING_POINTS_BUDGET) until it hits zero.
+  // 'combat': the real-time match — see MapScene's startCombatPhase for the building->combat handoff.
   phase: GamePhase;
+  // Each faction's remaining 'building' phase budget — see BUILDING_POINTS_BUDGET/BuildingData's
+  // per-kind buildingPoints cost. Spent by the player through handleBonusBuildingPlacementClick and by
+  // the AI (all at once) through AIPlayers' spendEnemyBuildingPoints.
+  buildingPoints: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
   setSave: (save: SaveFile | null) => void;
@@ -50,6 +56,7 @@ export interface AppState {
   addShip: (ship: VehicleData) => void;
   setShips: (ships: Array<VehicleData>) => void;
   setPhase: (phase: GamePhase) => void;
+  spendBuildingPoints: (faction: Faction, amount: number) => void;
 }
 
 const initialState = {
@@ -63,6 +70,7 @@ const initialState = {
   placingFactory: null as BuildingType | null,
   selectedFactoryId: null as string | null,
   phase: 'placement' as GamePhase,
+  buildingPoints: { [Faction.Player]: BUILDING_POINTS_BUDGET, [Faction.Enemy]: BUILDING_POINTS_BUDGET } as Record<Faction, number>,
 };
 
 export const useAppStore = create<AppState>((set) => ({
@@ -150,4 +158,7 @@ export const useAppStore = create<AppState>((set) => ({
   addShip: (ship) => set((state) => ({ vehicles: [...state.vehicles, ship] })),
   setShips: (ships) => set({ vehicles: ships }),
   setPhase: (phase) => set({ phase }),
+  spendBuildingPoints: (faction, amount) => set((state) => ({
+    buildingPoints: { ...state.buildingPoints, [faction]: Math.max(0, state.buildingPoints[faction] - amount) },
+  })),
 }));
