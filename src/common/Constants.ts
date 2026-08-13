@@ -101,6 +101,13 @@ export const THADD_SALVO_SIZE = 2
 // Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.
 export const SHATTER_LIFETIME_MS = 10000
 
+// --- Objectives ---
+// A capturable map feature (see MapGenerator's generateMap for where the 2 are placed, MapScene's
+// updateObjectives for the live capture check): a faction captures one the instant it has ARMOR within
+// this radius of it AND the other faction has no ship or building also within that same radius.
+export const OBJECTIVE_CAPTURE_RADIUS_PX = 200
+export const OBJECTIVE_ICON_SIZE = 40
+
 // --- Enemy AI ---
 // How many drones the enemy shipyard masses before launching them at the player, once, at the start of the match.
 export const ENEMY_RAID_SIZE = 3

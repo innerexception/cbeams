@@ -10,6 +10,7 @@ const hints = {
     [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
     [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
     [BuildingType.THADD]: 'Click empty ground near your base to build a THADD',
+    [BuildingType.AmmoDump]: 'Click empty ground near your base to build an AmmoDump — lines show which buildings would be in resupply range',
 }
 
 export default () => {
@@ -108,6 +109,7 @@ export default () => {
                 <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
                 <ToolButton active={placingFactory === BuildingType.THADD} onClick={()=>toggle(BuildingType.THADD)}>THADD</ToolButton>
+                <ToolButton active={placingFactory === BuildingType.AmmoDump} onClick={()=>toggle(BuildingType.AmmoDump)}>AmmoDump</ToolButton>
             </div>
             {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
         </div>

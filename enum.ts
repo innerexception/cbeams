@@ -30,8 +30,17 @@ export enum TargetType {
     Building='Building',AirUnit='AirUnit',Any='Any',GroundUnit='GroundUnit'
 }
 
+// A capturable map feature — see MapGenerator's generateMap (fixed position/sprite, picked once at
+// match start) and MapScene's updateObjectives (live capture logic). Purely a economic/strategic point
+// of interest, not a military unit or building, so it's kept entirely out of BuildingType/VehicleType
+// and doesn't go through the SIDC/milsymbol pipeline (see AppSix.ts) — it renders via its own simple
+// hand-drawn icon set instead (see MapScene's generateTextures).
+export enum ObjectiveSprite {
+    OilField='OilField', City='City', NuclearReactor='NuclearReactor'
+}
+
 export enum BuildingType {
-    LogisticsCenter='LogisticsCenter', CRAM='cram', Base='base', BLM='blm', THADD='thadd'
+    LogisticsCenter='LogisticsCenter', CRAM='cram', Base='base', BLM='blm', THADD='thadd', AmmoDump='ammodump'
 }
 
 export const BuildingData:Record<BuildingType,BuildingMetaData> = {
@@ -40,6 +49,11 @@ export const BuildingData:Record<BuildingType,BuildingMetaData> = {
     [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, logisticsCost:0, buildingPoints:0 },
     [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:5, rangePx:4000, logisticsCost:3, buildingPoints:3, ammo:10 },
     [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:600, logisticsCost:3, buildingPoints:4, ammo:10 },
+    // rangePx doubles as its replenishment radius (same convention as CRAM/BLM/THADD's weapon range) and
+    // cooldownMs as how often it checks nearby for anything empty (see updateAmmoDumps) — it doesn't
+    // attack, so damage stays 0. Its own `ammo` is the total stockpile it has to hand out, over its
+    // whole lifetime, before it's just a hull with nothing left to give.
+    [BuildingType.AmmoDump]: { maxHp:40, cooldownMs:2000, damage:0, rangePx:100, logisticsCost:2, buildingPoints:2, ammo:20 },
 }
 
 export enum VehicleType {

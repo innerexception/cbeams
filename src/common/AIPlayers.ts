@@ -7,7 +7,7 @@ import { ENEMY_RAID_SIZE, LOGISTICS_CENTER_COUNT } from "./Constants"
 // Every kind the placement phase's second stage unlocks — mirrors FactoryToolbar's own bonus-building
 // button row (LogisticsCenter/Base stay out of it: LogisticsCenter has its own dedicated opening-move
 // placement above, Base isn't placeable by either side).
-const BONUS_BUILDING_KINDS:Array<BuildingType> = [BuildingType.CRAM, BuildingType.BLM, BuildingType.THADD]
+const BONUS_BUILDING_KINDS:Array<BuildingType> = [BuildingType.CRAM, BuildingType.BLM, BuildingType.THADD, BuildingType.AmmoDump]
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reaches back into it only for the

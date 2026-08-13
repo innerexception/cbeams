@@ -7,7 +7,7 @@ import { generateMap } from "../../common/MapGenerator";
 import { spawnEnemyLogisticsCenters, spendEnemyBuildingPoints, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
 import { marchingSquaresSegments } from "../../common/Contours";
 import { BUILDING_SIDC_FUNCTION, VEHICLE_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
-import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType } from "../../../enum";
+import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType, ObjectiveSprite } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -17,6 +17,7 @@ import {
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
     THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS,
+    OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE,
     LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, BUILDING_MIN_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
@@ -197,6 +198,7 @@ export default class MapScene extends Scene {
     shatterG: GameObjects.Graphics
     trailG: GameObjects.Graphics
     ammoG: GameObjects.Graphics
+    objectiveRangeG: GameObjects.Graphics
 
     // Every ship, building and missile is a real Arcade Physics sprite so collision (a drone touching a
     // hostile unit/building, a missile hitting its target) is detected by Phaser's overlap system
@@ -210,6 +212,10 @@ export default class MapScene extends Scene {
     shipSprites: Map<string, Physics.Arcade.Sprite> = new Map()
     buildingSprites: Map<string, Physics.Arcade.Sprite> = new Map()
     shipLabels: Map<string, GameObjects.Text> = new Map()
+    // Objectives have no physics body at all (capture is a plain distance check, not a collision — see
+    // updateObjectives) — just a plain Image, tinted per current owner.
+    objectiveSprites: Map<string, GameObjects.Image> = new Map()
+    objectiveLabels: Map<string, GameObjects.Text> = new Map()
 
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
@@ -251,6 +257,7 @@ export default class MapScene extends Scene {
         this.shatterG = this.add.graphics()
         this.trailG = this.add.graphics()
         this.ammoG = this.add.graphics()
+        this.objectiveRangeG = this.add.graphics()
 
         this.generateTextures()
         this.shipsGroup = this.physics.add.group()
@@ -278,6 +285,7 @@ export default class MapScene extends Scene {
         this.centerCameraBounds()
 
         this.spawnBases()
+        this.spawnObjectives()
         spawnEnemyLogisticsCenters(this)
         spendEnemyBuildingPoints(this)
         this.drawMap()
@@ -322,6 +330,35 @@ export default class MapScene extends Scene {
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
 
+        // Objectives aren't military units/buildings, so they skip the SIDC/milsymbol pipeline entirely
+        // — a small hand-drawn pictograph each, baked once in plain white so setTint (see
+        // createObjectiveSprite/updateObjectives) can recolor by current owner without rebaking.
+        bake('objective_'+ObjectiveSprite.OilField, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
+            g.lineStyle(2, 0xFFFFFF, 1)
+            g.lineBetween(cx-16, cy+14, cx+16, cy+14)
+            g.strokeTriangle(cx, cy-16, cx-9, cy+14, cx+9, cy+14)
+            g.lineBetween(cx-4, cy-2, cx+4, cy-2)
+        })
+        bake('objective_'+ObjectiveSprite.City, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
+            g.lineStyle(2, 0xFFFFFF, 1)
+            const groundY = cy+14
+            g.lineBetween(cx-18, groundY, cx+18, groundY)
+            const bars = [{ dx:-14, w:6, h:12 }, { dx:-6, w:6, h:20 }, { dx:2, w:6, h:9 }, { dx:9, w:6, h:16 }]
+            bars.forEach(b => g.strokeRect(cx+b.dx, groundY-b.h, b.w, b.h))
+        })
+        bake('objective_'+ObjectiveSprite.NuclearReactor, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
+            g.lineStyle(2, 0xFFFFFF, 1)
+            g.fillStyle(0xFFFFFF, 1)
+            g.fillCircle(cx, cy, 3)
+            for(let i=0; i<3; i++){
+                const angle = -Math.PI/2 + i*(Math.PI*2/3)
+                const x1 = cx + Math.cos(angle)*7, y1 = cy + Math.sin(angle)*7
+                const x2 = cx + Math.cos(angle)*15, y2 = cy + Math.sin(angle)*15
+                g.lineBetween(x1, y1, x2, y2)
+                g.strokeCircle(x2, y2, 3)
+            }
+        })
+
         tmp.destroy()
     }
 
@@ -333,10 +370,13 @@ export default class MapScene extends Scene {
         this.updateArmor(time)
         this.updateBlm(time)
         this.updateThadd(time)
+        this.updateAmmoDumps(time)
+        this.updateObjectives()
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         this.updateFogOfWar()
         this.drawPlacementRanges()
+        this.drawObjectiveRanges()
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
@@ -513,6 +553,104 @@ export default class MapScene extends Scene {
             const factory:BuildingData = { id:v4(), x:base.x, y:base.y, kind:BuildingType.Base, faction:base.faction, hp:getBuildingMaxHp(BuildingType.Base) }
             useAppStore.getState().addFactory(factory)
             this.createBuildingSprite(factory)
+        })
+    }
+
+    // The 2 Objectives' fixed position/sprite come from mapData.objectives (decided once, at map
+    // generation — see MapGenerator); this just seeds their live (owner:null, i.e. uncaptured) half
+    // into the store and creates each one's sprite. Never hidden by fog of war — a capturable landmark
+    // both sides need to be able to see and path towards from the start, not something either side's
+    // sight range should gate.
+    spawnObjectives = () => {
+        this.mapData.objectives.forEach(spawn => {
+            const objective:ObjectiveData = { id: spawn.id, owner: null }
+            useAppStore.getState().addObjective(objective)
+            this.createObjectiveSprite(spawn)
+        })
+    }
+
+    // Neutral is a dim green, deliberately not GREY_DIM_HEX — that colour reads as "hostile" everywhere
+    // else in this game (ship_hostile_*, factory-preview-invalid, ...), and an unclaimed Objective
+    // shouldn't look like it's already the enemy's.
+    getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? GREY_DIM_HEX : GREEN_DIM_HEX
+
+    createObjectiveSprite = (spawn:ObjectiveSpawn) => {
+        const { x, y } = this.toWorld(spawn.x, spawn.y)
+        const sprite = this.add.image(x, y, 'objective_'+spawn.sprite).setDepth(2)
+        sprite.setTint(this.getObjectiveOwnerColor(null))
+        this.objectiveSprites.set(spawn.id, sprite)
+
+        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.lGreen }).setOrigin(0.5, 0).setDepth(2)
+        this.objectiveLabels.set(spawn.id, label)
+    }
+
+    // Every frame: for each Objective, does either faction currently have ARMOR within
+    // OBJECTIVE_CAPTURE_RADIUS_PX of it, AND does the *other* faction have no ship or building also
+    // within that same radius? If so it's (re)captured by that faction — checked for both, so a
+    // contested point can flip either way. Neither condition being met just leaves ownership exactly as
+    // it was: capturing isn't something you can lose by walking away, only by the other side taking it
+    // the same way you did.
+    updateObjectives = () => {
+        const { objectives, vehicles: ships, buildings: factories, setObjectives } = useAppStore.getState()
+        if(objectives.length === 0) return
+
+        let changed = false
+        const updated = objectives.map(objective => {
+            const spawn = this.mapData.objectives.find(o => o.id === objective.id)
+            if(!spawn) return objective
+            const { x, y } = this.toWorld(spawn.x, spawn.y)
+
+            const capturingFaction = [Faction.Player, Faction.Enemy].find(faction => {
+                const hasArmor = ships.some(s => s.faction === faction && s.type === VehicleType.ARMOR
+                    && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
+                if(!hasArmor) return false
+
+                const enemyShipPresent = ships.some(s => s.faction !== faction
+                    && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
+                const enemyBuildingPresent = factories.some(f => {
+                    if(f.faction === faction) return false
+                    const p = this.toWorld(f.x, f.y)
+                    return Phaser.Math.Distance.Between(x, y, p.x, p.y) <= OBJECTIVE_CAPTURE_RADIUS_PX
+                })
+                return !enemyShipPresent && !enemyBuildingPresent
+            })
+
+            if(!capturingFaction || capturingFaction === objective.owner) return objective
+
+            changed = true
+            this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(capturingFaction))
+            return { ...objective, owner: capturingFaction }
+        })
+
+        if(changed) setObjectives(updated)
+    }
+
+    // Phaser's Graphics has no native dashed-stroke option — this just walks the circumference in
+    // alternating dash/gap angular steps (sized from real pixel lengths, so the dash length stays
+    // consistent regardless of the circle's radius) and strokes each dash as its own short segment.
+    drawDashedCircle = (g:GameObjects.Graphics, cx:number, cy:number, radius:number, color:number, alpha:number, dashLenPx:number = 10, gapLenPx:number = 8) => {
+        const circumference = TWO_PI * radius
+        const dashAngle = (dashLenPx / circumference) * TWO_PI
+        const gapAngle = (gapLenPx / circumference) * TWO_PI
+        g.lineStyle(1, color, alpha)
+        for(let angle = 0; angle < TWO_PI; angle += dashAngle + gapAngle){
+            const endAngle = Math.min(angle + dashAngle, TWO_PI)
+            g.lineBetween(cx + Math.cos(angle)*radius, cy + Math.sin(angle)*radius, cx + Math.cos(endAngle)*radius, cy + Math.sin(endAngle)*radius)
+        }
+    }
+
+    // A dashed ring at OBJECTIVE_CAPTURE_RADIUS_PX around each Objective, tinted the same as its icon
+    // (see getObjectiveOwnerColor — neutral/player/enemy) so it's obvious both where the capture radius
+    // actually is and who currently holds it, at a glance.
+    drawObjectiveRanges = () => {
+        const g = this.objectiveRangeG
+        g.clear()
+
+        useAppStore.getState().objectives.forEach(objective => {
+            const spawn = this.mapData.objectives.find(o => o.id === objective.id)
+            if(!spawn) return
+            const { x, y } = this.toWorld(spawn.x, spawn.y)
+            this.drawDashedCircle(g, x, y, OBJECTIVE_CAPTURE_RADIUS_PX, this.getObjectiveOwnerColor(objective.owner), 0.5)
         })
     }
 
@@ -925,9 +1063,12 @@ export default class MapScene extends Scene {
     // Nearest hostile ship AND nearest hostile missile within radius of a point, found via a spatial
     // physics query (physics.overlapCirc) instead of sweeping every ship/missile in the game. Used by
     // the CRAM turret, which cares about both (a ship target always wins over a missile one below).
-    // Every candidate also has to fall within the player's own sight range (see updateFogOfWar) —
-    // weapon range alone isn't enough to fire on something neither side can actually see, whichever
-    // faction's turret/ship is doing the shooting.
+    // Every candidate also has to fall within the *shooter's own faction's* sight range (see
+    // updateFogOfWar) — weapon range alone isn't enough to fire on something that faction can't
+    // actually see, whichever faction's turret/ship is doing the shooting. This is what stops the AI
+    // sniping things it has no business knowing about; it never gets to peek at the player's own fog
+    // of war (which is all "faction" meant here before — always Faction.Player, regardless of who was
+    // actually shooting).
     findNearestHostileInRange = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let targetShip:Physics.Arcade.Sprite = null
@@ -938,7 +1079,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
             const kind:BodyKind = obj.getData('kind')
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
 
@@ -960,7 +1101,7 @@ export default class MapScene extends Scene {
 
     // Same shape as findNearestHostileInRange, but for buildings only (never a ship or a missile), so
     // the query only needs static bodies (buildingsGroup) — used by both BLM and MLRS, neither of which
-    // ever targets a ship. Same player-sight-range requirement as findNearestHostileInRange.
+    // ever targets a ship. Same shooter's-own-sight-range requirement as findNearestHostileInRange.
     findNearestHostileBuilding = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, false, true)
         let targetBuilding:Physics.Arcade.Sprite = null
@@ -969,7 +1110,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
             const building = this.getBuildingEntry(obj)
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(building && building.faction !== fromFaction && d < nearestBuildingDist){ nearestBuildingDist = d; targetBuilding = obj }
@@ -980,7 +1121,7 @@ export default class MapScene extends Scene {
 
     // Same shape again, but for THADD: it only ever targets a hostile missile (never a ship or
     // building), so the query only needs dynamic bodies and just checks kind === 'missile'. Same
-    // player-sight-range requirement as findNearestHostileInRange.
+    // shooter's-own-sight-range requirement as findNearestHostileInRange.
     findNearestHostileMissile = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let target:Physics.Arcade.Sprite = null
@@ -989,7 +1130,7 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active || obj.getData('kind') !== 'missile' || obj.getData('faction') === fromFaction) return
-            if(!this.isWithinFactionSightRange(obj.x, obj.y, Faction.Player)) return
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(d < nearestDist){ nearestDist = d; target = obj }
         })
@@ -1154,6 +1295,83 @@ export default class MapScene extends Scene {
             setFactories(factories.map(f => shooterIds.has(f.id)
                 ? { ...f, lastFiredAtMs:time, ammoRemaining:f.ammoRemaining-shotsFired.get(f.id) }
                 : f))
+        }
+    }
+
+    // Each AmmoDump checks every cooldownMs (2s — see BuildingData's cooldownMs) for anything of its own
+    // faction within rangePx (50px, its resupply radius — same reuse of rangePx every other turret's
+    // weapon range uses) that's completely out of ammo (ammoRemaining === 0, and actually has an ammo
+    // stat to begin with — see VehicleData/BuildingData's ammo), and tops each one back up to its own
+    // max, closest first, spending from the dump's own stockpile (BuildingData's ammo) until either
+    // nothing nearby needs it or that stockpile runs out — a dump that's already empty itself just stops
+    // helping, same as any other ammo-limited weapon here. Candidates include ships and other buildings,
+    // but never another AmmoDump — its own ammoRemaining is what it has left to hand out, not something
+    // it needs handed back, so dumps never resupply each other. Only reads factories/ships once at the
+    // top so two dumps that both cover the same empty target in one pass can't double-refill it
+    // (refilledIds catches that).
+    updateAmmoDumps = (time:number) => {
+        const { buildings: factories, vehicles: ships, setFactories, setShips } = useAppStore.getState()
+        const dumps = factories.filter(f => f.kind === BuildingType.AmmoDump)
+        if(dumps.length === 0) return
+
+        const range = BuildingData[BuildingType.AmmoDump].rangePx
+        const checkedIds = new Set<string>()
+        const dumpAmmoLeft = new Map<string, number>()
+        const buildingAmmoGiven = new Map<string, number>()
+        const shipAmmoGiven = new Map<string, number>()
+        const refilledIds = new Set<string>()
+
+        dumps.forEach(dump => {
+            if(dump.lastFiredAtMs && time - dump.lastFiredAtMs < BuildingData[BuildingType.AmmoDump].cooldownMs) return
+            checkedIds.add(dump.id)
+            if(!dump.ammoRemaining) return
+
+            const { x, y } = this.toWorld(dump.x, dump.y)
+
+            type Candidate = { kind:'ship'|'building', id:string, dist:number, maxAmmo:number }
+            const candidates:Array<Candidate> = []
+
+            ships.forEach(s => {
+                if(s.faction !== dump.faction || s.ammoRemaining === undefined || s.ammoRemaining > 0 || refilledIds.has(s.id)) return
+                const maxAmmo = VehicleData[s.type].ammo
+                if(!maxAmmo) return
+                const d = Phaser.Math.Distance.Between(x, y, s.x, s.y)
+                if(d <= range) candidates.push({ kind:'ship', id:s.id, dist:d, maxAmmo })
+            })
+            factories.forEach(f => {
+                if(f.kind === BuildingType.AmmoDump || f.faction !== dump.faction || f.ammoRemaining === undefined || f.ammoRemaining > 0 || refilledIds.has(f.id)) return
+                const maxAmmo = BuildingData[f.kind].ammo
+                if(!maxAmmo) return
+                const p = this.toWorld(f.x, f.y)
+                const d = Phaser.Math.Distance.Between(x, y, p.x, p.y)
+                if(d <= range) candidates.push({ kind:'building', id:f.id, dist:d, maxAmmo })
+            })
+
+            candidates.sort((a, b) => a.dist - b.dist)
+
+            let remaining = dump.ammoRemaining
+            candidates.forEach(c => {
+                if(remaining <= 0) return
+                const give = Math.min(remaining, c.maxAmmo)
+                remaining -= give
+                refilledIds.add(c.id)
+                if(c.kind === 'ship') shipAmmoGiven.set(c.id, give)
+                else buildingAmmoGiven.set(c.id, give)
+            })
+
+            dumpAmmoLeft.set(dump.id, remaining)
+        })
+
+        if(checkedIds.size > 0 || buildingAmmoGiven.size > 0){
+            setFactories(factories.map(f => {
+                if(buildingAmmoGiven.has(f.id)) return { ...f, ammoRemaining:buildingAmmoGiven.get(f.id) }
+                if(dumpAmmoLeft.has(f.id)) return { ...f, ammoRemaining:dumpAmmoLeft.get(f.id), lastFiredAtMs:time }
+                if(checkedIds.has(f.id)) return { ...f, lastFiredAtMs:time }
+                return f
+            }))
+        }
+        if(shipAmmoGiven.size > 0){
+            setShips(ships.map(s => shipAmmoGiven.has(s.id) ? { ...s, ammoRemaining:shipAmmoGiven.get(s.id) } : s))
         }
     }
 
@@ -1796,6 +2014,40 @@ export default class MapScene extends Scene {
 
         const valid = this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
         this.drawFactoryShape(this.previewG, placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
+        this.drawAmmoDumpPreviewLines(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
+    }
+
+    // Resupply-range preview lines for the placement ghost — two directions, both drawn from whichever
+    // point is actually being placed right now:
+    //  - Placing an AmmoDump itself: a line out to every one of the player's own buildings — never
+    //    another AmmoDump, they don't resupply each other (see updateAmmoDumps) — that would fall within
+    //    ITS resupply radius (rangePx) from this spot, i.e. what it would go on to cover.
+    //  - Placing anything else that actually carries an ammo stat (BLM/THADD — no point showing this for
+    //    a kind that never runs out to begin with): a line back to every existing AmmoDump whose range
+    //    already reaches this spot, i.e. what would already be covering it the moment it's built.
+    // Either way this is purely informational — drawn regardless of whether the placement itself is
+    // currently valid, same as the placement ghost shape it's layered alongside.
+    drawAmmoDumpPreviewLines = (placingFactory:BuildingType, gridX:number, gridY:number) => {
+        const { x, y } = this.toWorld(gridX, gridY)
+        const ownBuildings = useAppStore.getState().buildings.filter(f => f.faction === Faction.Player)
+        this.previewG.lineStyle(1, GREEN_HEX, 0.6)
+
+        if(placingFactory === BuildingType.AmmoDump){
+            const range = BuildingData[BuildingType.AmmoDump].rangePx
+            ownBuildings.forEach(f => {
+                if(f.kind === BuildingType.AmmoDump) return
+                const p = this.toWorld(f.x, f.y)
+                if(Phaser.Math.Distance.Between(x, y, p.x, p.y) <= range) this.previewG.lineBetween(x, y, p.x, p.y)
+            })
+            return
+        }
+
+        if(!BuildingData[placingFactory].ammo) return
+        ownBuildings.forEach(f => {
+            if(f.kind !== BuildingType.AmmoDump) return
+            const p = this.toWorld(f.x, f.y)
+            if(Phaser.Math.Distance.Between(x, y, p.x, p.y) <= BuildingData[BuildingType.AmmoDump].rangePx) this.previewG.lineBetween(x, y, p.x, p.y)
+        })
     }
 
     enablePlacementControls = () => {

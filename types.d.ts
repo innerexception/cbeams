@@ -27,11 +27,33 @@ interface TerrainData {
     elevations: Array<Array<number>>
 }
 
+// A capturable map feature's fixed identity — where it sits and which of the 3 possible sprites it
+// renders as, decided once at map generation (see MapGenerator) and never changed after. Its live,
+// mutable half (who currently owns it) lives on ObjectiveData instead, in the store, the same split
+// BaseData/BuildingData use for a faction's Base.
+interface ObjectiveSpawn {
+    id: string
+    x: number
+    y: number
+    sprite: import('./enum').ObjectiveSprite
+}
+
 interface MapData {
     width: number
     height: number
     bases: Array<BaseData>
+    objectives: Array<ObjectiveSpawn>
     terrain: TerrainData
+}
+
+// The live half of a capturable Objective — see ObjectiveSpawn for its fixed id/position/sprite (never
+// duplicated here). owner is null until some faction actually captures it (see MapScene's
+// updateObjectives): ARMOR of that faction within OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile
+// ship or building also within that radius. It never reverts to null on its own once captured — only a
+// contesting capture by the other faction (same conditions, satisfied for them instead) changes it.
+interface ObjectiveData {
+    id: string
+    owner: import('./enum').Faction | null
 }
 
 interface ProductionQueueItem {

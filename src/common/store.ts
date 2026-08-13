@@ -27,6 +27,9 @@ export interface AppState {
   activeMap: MapData | null;
   buildings: Array<BuildingData>;
   vehicles: Array<VehicleData>;
+  // The live (owner) half of every Objective on the map — see ObjectiveSpawn (in mapData/activeMap)
+  // for each one's fixed id/position/sprite, decided once at generation and never duplicated here.
+  objectives: Array<ObjectiveData>;
   placingFactory: BuildingType | null;
   selectedFactoryId: string | null;
   // 'placement': the player is placing their 3 starting LogisticsCenters before the match goes live —
@@ -57,6 +60,8 @@ export interface AppState {
   setShips: (ships: Array<VehicleData>) => void;
   setPhase: (phase: GamePhase) => void;
   spendBuildingPoints: (faction: Faction, amount: number) => void;
+  addObjective: (objective: ObjectiveData) => void;
+  setObjectives: (objectives: Array<ObjectiveData>) => void;
 }
 
 const initialState = {
@@ -67,6 +72,7 @@ const initialState = {
   activeMap: null as MapData | null,
   buildings: [] as Array<BuildingData>,
   vehicles: [] as Array<VehicleData>,
+  objectives: [] as Array<ObjectiveData>,
   placingFactory: null as BuildingType | null,
   selectedFactoryId: null as string | null,
   phase: 'placement' as GamePhase,
@@ -161,4 +167,6 @@ export const useAppStore = create<AppState>((set) => ({
   spendBuildingPoints: (faction, amount) => set((state) => ({
     buildingPoints: { ...state.buildingPoints, [faction]: Math.max(0, state.buildingPoints[faction] - amount) },
   })),
+  addObjective: (objective) => set((state) => ({ objectives: [...state.objectives, objective] })),
+  setObjectives: (objectives) => set({ objectives }),
 }));

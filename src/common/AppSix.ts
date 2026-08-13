@@ -20,6 +20,9 @@ export const BUILDING_SIDC_FUNCTION:Record<BuildingType, SidcFunction> = {
     [BuildingType.CRAM]: { dimension:'G', functionId:'UCD---' },
     [BuildingType.BLM]: { dimension:'G', functionId:'UCFRM-' },
     [BuildingType.THADD]: { dimension:'G', functionId:'UCDM--' },
+    // Supply unit function with the Class V (Ammunition) modifier — same base icon as LogisticsCenter's
+    // generic Supply ('USS---'), just specialized to ammunition specifically.
+    [BuildingType.AmmoDump]: { dimension:'G', functionId:'USS5--' },
 }
 
 export const VEHICLE_SIDC_FUNCTION:Record<VehicleType, SidcFunction> = {

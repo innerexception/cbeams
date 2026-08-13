@@ -1,6 +1,8 @@
-import { Faction } from '../../enum'
+import { v4 } from 'uuid'
+import { Faction, ObjectiveSprite } from '../../enum'
 
 const BASE_MARGIN = 4
+const OBJECTIVE_MARGIN = 4
 
 const randomInRange = (min:number, max:number) => min + Math.random()*(max-min)
 const clamp01 = (n:number) => Math.max(0, Math.min(1, n))
@@ -128,7 +130,16 @@ export const generateMap = (size:number = 50):MapData => {
         { faction: Faction.Enemy, x: size-1-BASE_MARGIN, y: midY },
     ]
 
+    // One top-middle, one bottom-middle — each pass in a shuffled pair off the 3 possible sprites so
+    // the 2 objectives read as distinct at a glance instead of risking a repeat.
+    const midX = Math.floor(size/2)
+    const [spriteA, spriteB] = [...Object.values(ObjectiveSprite)].sort(() => Math.random()-0.5)
+    const objectives:Array<ObjectiveSpawn> = [
+        { id: v4(), x: midX, y: OBJECTIVE_MARGIN, sprite: spriteA },
+        { id: v4(), x: midX, y: size-1-OBJECTIVE_MARGIN, sprite: spriteB },
+    ]
+
     const terrain = buildTerrain(size)
 
-    return { width: size, height: size, bases, terrain }
+    return { width: size, height: size, bases, objectives, terrain }
 }
