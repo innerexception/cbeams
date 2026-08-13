@@ -75,7 +75,7 @@ export const spendEnemyBuildingPoints = (scene:MapScene) => {
         const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(kind, x, y, Faction.Enemy))
         if(!best) break
 
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind, faction:Faction.Enemy, hp:BuildingData[kind].maxHp }
+        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind, faction:Faction.Enemy, hp:BuildingData[kind].maxHp, ammoRemaining:BuildingData[kind].ammo }
         useAppStore.getState().addFactory(factory)
         scene.createBuildingSprite(factory)
         useAppStore.getState().spendBuildingPoints(Faction.Enemy, cost)
@@ -149,7 +149,7 @@ export const buildEnemyThadd = (scene:MapScene) => {
     const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(BuildingType.THADD, x, y, Faction.Enemy))
     if(!best) return
 
-    const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.THADD, faction:Faction.Enemy, hp:BuildingData[BuildingType.THADD].maxHp }
+    const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.THADD, faction:Faction.Enemy, hp:BuildingData[BuildingType.THADD].maxHp, ammoRemaining:BuildingData[BuildingType.THADD].ammo }
     useAppStore.getState().addFactory(factory)
     scene.createBuildingSprite(factory)
 }

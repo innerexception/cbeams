@@ -47,6 +47,10 @@ interface BuildingMetaData {
     rangePx:number
     logisticsCost:number
     buildingPoints:number
+    // Missiles a BLM/THADD can ever launch, total, over its whole lifetime — undefined for kinds that
+    // don't fire missiles at all (CRAM's cannon and ARMOR's cannon shot are instant-hit, not a missile).
+    // See BuildingData's ammoRemaining for the live per-instance count this is the starting value for.
+    ammo?:number
 }
 
 interface BuildingData {
@@ -59,6 +63,10 @@ interface BuildingData {
     waypoints?: Array<{ x:number, y:number }>
     hp: number
     lastFiredAtMs?: number
+    // Only present for a kind whose BuildingMetaData sets `ammo` (BLM/THADD) — set to that value when
+    // the building's spawned, decremented per missile actually launched. Once it hits 0 the building
+    // can't fire again, ever (missiles are a spendable stockpile, not a cooldown-gated resource).
+    ammoRemaining?: number
 }
 
 interface VehicleStats {
@@ -74,6 +82,9 @@ interface VehicleStats {
     productionTimeMs: number
     targetType: import('./enum').TargetType
     logisticsCost: number
+    // Missiles an MLRS can ever launch, total, over its whole lifetime — undefined for every other
+    // vehicle (none of them fire missiles). See VehicleData's ammoRemaining for the live count.
+    ammo?:number
 }
 
 interface VehicleData {
@@ -87,6 +98,9 @@ interface VehicleData {
     orbitAnchor?: { x:number, y:number }
     lastFiredAtMs?: number
     hp: number
+    // Only present for a vehicle whose VehicleStats sets `ammo` (MLRS) — set to that value when the
+    // ship's spawned, decremented per missile actually launched. Once it hits 0 it can't fire again.
+    ammoRemaining?: number
 }
 
 interface RState {

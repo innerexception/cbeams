@@ -196,6 +196,7 @@ export default class MapScene extends Scene {
     combatG: GameObjects.Graphics
     shatterG: GameObjects.Graphics
     trailG: GameObjects.Graphics
+    ammoG: GameObjects.Graphics
 
     // Every ship, building and missile is a real Arcade Physics sprite so collision (a drone touching a
     // hostile unit/building, a missile hitting its target) is detected by Phaser's overlap system
@@ -249,6 +250,7 @@ export default class MapScene extends Scene {
         this.combatG = this.add.graphics()
         this.shatterG = this.add.graphics()
         this.trailG = this.add.graphics()
+        this.ammoG = this.add.graphics()
 
         this.generateTextures()
         this.shipsGroup = this.physics.add.group()
@@ -338,6 +340,7 @@ export default class MapScene extends Scene {
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
+        this.drawAmmoGauges()
         this.drawOrders()
         this.drawCombat(time)
         this.drawShatters(time)
@@ -409,6 +412,46 @@ export default class MapScene extends Scene {
         })
     }
 
+    // Vertical ammo gauge beside anything that actually carries an ammo stock — a unit (only MLRS today,
+    // via VehicleData's ammo/updateMlrs) or a building (BLM/THADD, via BuildingData's ammo/updateBlm/
+    // updateThadd) alike — filled bottom-up, like a fuel gauge, by the fraction of its starting ammo
+    // still remaining. Stays visible even once fully empty (an empty gauge is exactly the "you're out"
+    // signal this is for), but — same as every other overlay — hidden while the sprite itself is out of
+    // the player's sight range.
+    drawAmmoGauges = () => {
+        const g = this.ammoG
+        g.clear()
+
+        useAppStore.getState().vehicles.forEach(ship => {
+            const maxAmmo = VehicleData[ship.type].ammo
+            if(!maxAmmo || ship.ammoRemaining === undefined) return
+            const sprite = this.shipSprites.get(ship.id)
+            if(!sprite || sprite.visible === false) return
+            this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, ship.ammoRemaining/maxAmmo)
+        })
+
+        useAppStore.getState().buildings.forEach(f => {
+            const maxAmmo = BuildingData[f.kind].ammo
+            if(!maxAmmo || f.ammoRemaining === undefined) return
+            const sprite = this.buildingSprites.get(f.id)
+            if(!sprite || sprite.visible === false) return
+            this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, f.ammoRemaining/maxAmmo)
+        })
+    }
+
+    drawAmmoGauge = (g:GameObjects.Graphics, x:number, y:number, spriteWidth:number, spriteHeight:number, ratio:number) => {
+        const percent = PhaserMath.Clamp(ratio, 0, 1)
+        const w = 4, h = spriteHeight * 0.8
+        const barX = x + spriteWidth/2 + 6
+        const barY = y - h/2
+
+        g.lineStyle(1, GREEN_HEX, 1)
+        g.strokeRect(barX, barY, w, h)
+        g.fillStyle(GREEN_HEX, 0.9)
+        const filledH = h * percent
+        g.fillRect(barX, barY + (h-filledH), w, filledH)
+    }
+
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
         const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
@@ -456,7 +499,7 @@ export default class MapScene extends Scene {
             if(!overlapsShip && !this.buildingOverlapsPoint(candidate.x, candidate.y, size/2 + SHIP_BUILDING_CLEARANCE_PX)){ pos = candidate; break }
         }
 
-        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:VehicleData[type].hp }
+        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:VehicleData[type].hp, ammoRemaining:VehicleData[type].ammo }
         useAppStore.getState().addShip(ship)
         this.createShipSprite(ship)
     }
@@ -703,8 +746,9 @@ export default class MapScene extends Scene {
         if(a === b) return false
         const missileA = a as Physics.Arcade.Sprite
         const missileB = b as Physics.Arcade.Sprite
-        if(!missileA.active || !missileB.active || missileA.getData('faction') === missileB.getData('faction')) return false
-        return missileA.getData('targetKind') === 'missile' || missileB.getData('targetKind') === 'missile'
+        
+        return (missileA.getData('targetKind') === 'missile' && missileA.getData('targetId') === missileB.getData('id'))
+            || (missileB.getData('targetKind') === 'missile' && missileB.getData('targetId') === missileA.getData('id'))
     }
 
     // A drone touching a hostile ship detonates immediately, right here — no queueing. If both sides of
@@ -971,14 +1015,19 @@ export default class MapScene extends Scene {
     // buildings, never a ship — the opposite targeting scope from CRAM (ships and missiles only). Only
     // the salvo's first shot needs a live target (to justify firing at all); every shot after that
     // fires regardless of whether that target is still around by the time its delay elapses — if it's
-    // gone, the missile just retargets or fizzles onward (see updateMissiles), it isn't skipped.
+    // gone, the missile just retargets or fizzles onward (see updateMissiles), it isn't skipped. Each
+    // MLRS starts with a fixed ammoRemaining (see VehicleData's ammo) that's spent 1-per-missile and
+    // never refills — once it's at 0 it can no longer fire at all, cooldown or not; a salvo that would
+    // otherwise fire more shots than remain just fires however many it can still afford instead.
     updateMlrs = (time:number) => {
         const { vehicles: ships, setShips } = useAppStore.getState()
         const shooterIds = new Set<string>()
+        const shotsFired = new Map<string, number>()
 
         ships.forEach(ship => {
             if(ship.type !== VehicleType.MLRS) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < VehicleData[VehicleType.MLRS].cooldownMs) return
+            if(!ship.ammoRemaining) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
@@ -986,10 +1035,12 @@ export default class MapScene extends Scene {
             const targetBuilding = this.findNearestHostileBuilding(ship.faction, sprite.x, sprite.y, VehicleData[VehicleType.MLRS].rangePx)
             if(!targetBuilding) return
 
+            const shots = Math.min(MISSILE_SALVO_SIZE, ship.ammoRemaining)
             shooterIds.add(ship.id)
+            shotsFired.set(ship.id, shots)
             const targetId = targetBuilding.getData('id')
             const aimX = targetBuilding.x, aimY = targetBuilding.y
-            for(let i=0; i<MISSILE_SALVO_SIZE; i++){
+            for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!sprite.active) return
                     this.spawnMissile(ship.faction, sprite.x, sprite.y, 'building', targetId, VehicleData[VehicleType.MLRS].damage, aimX, aimY)
@@ -997,7 +1048,11 @@ export default class MapScene extends Scene {
             }
         })
 
-        if(shooterIds.size > 0) setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
+        if(shooterIds.size > 0){
+            setShips(ships.map(ship => shooterIds.has(ship.id)
+                ? { ...ship, lastFiredAtMs:time, ammoRemaining:ship.ammoRemaining-shotsFired.get(ship.id) }
+                : ship))
+        }
     }
 
     // Each ARMOR unit, on cooldown, fires a single instant shot — like CRAM's cannon, not a homing
@@ -1038,6 +1093,8 @@ export default class MapScene extends Scene {
     // Each BLM turret, on its long cooldown, fires a single missile at whichever hostile building (never
     // a vehicle) is nearest in range — a stationary building, so its own world position (not a sprite) is
     // the launch point, and only its cooldown lives in the store (see updateCramTurrets for the pattern).
+    // Each BLM starts with a fixed ammoRemaining (see BuildingData's ammo) that's spent 1-per-missile and
+    // never refills — once it's at 0 it can no longer fire at all, cooldown or not.
     updateBlm = (time:number) => {
         const { buildings: factories, setFactories } = useAppStore.getState()
         const shooterIds = new Set<string>()
@@ -1045,6 +1102,7 @@ export default class MapScene extends Scene {
         factories.forEach(turret => {
             if(turret.kind !== BuildingType.BLM) return
             if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.BLM].cooldownMs) return
+            if(!turret.ammoRemaining) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
             const targetBuilding = this.findNearestHostileBuilding(turret.faction, x, y, BuildingData[BuildingType.BLM].rangePx)
@@ -1054,7 +1112,9 @@ export default class MapScene extends Scene {
             this.spawnMissile(turret.faction, x, y, 'building', targetBuilding.getData('id'), BuildingData[BuildingType.BLM].damage, targetBuilding.x, targetBuilding.y)
         })
 
-        if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
+        if(shooterIds.size > 0){
+            setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time, ammoRemaining:f.ammoRemaining-1 } : f))
+        }
     }
 
     // Each THADD turret, on cooldown, fires a THADD_SALVO_SIZE-missile interceptor salvo (SALVO_STAGGER_MS
@@ -1062,28 +1122,39 @@ export default class MapScene extends Scene {
     // (see onMissileMissileContact), this just launches interceptors that home towards it. Only the
     // salvo's first shot needs a live target (to justify firing at all); every shot after that fires
     // regardless of whether that same target is still around by the time its delay elapses — if it's
-    // gone, the interceptor just fizzles onward (see updateMissiles), it isn't skipped.
+    // gone, the interceptor just fizzles onward (see updateMissiles), it isn't skipped. Each THADD
+    // starts with a fixed ammoRemaining (see BuildingData's ammo) that's spent 1-per-interceptor and
+    // never refills — once it's at 0 it can no longer fire at all, cooldown or not; a salvo that would
+    // otherwise fire more shots than remain just fires however many it can still afford instead.
     updateThadd = (time:number) => {
         const { buildings: factories, setFactories } = useAppStore.getState()
         const shooterIds = new Set<string>()
+        const shotsFired = new Map<string, number>()
 
         factories.forEach(turret => {
             if(turret.kind !== BuildingType.THADD) return
             if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.THADD].cooldownMs) return
+            if(!turret.ammoRemaining) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
             const targetMissile = this.findNearestHostileMissile(turret.faction, x, y, BuildingData[BuildingType.THADD].rangePx)
             if(!targetMissile) return
 
+            const shots = Math.min(THADD_SALVO_SIZE, turret.ammoRemaining)
             shooterIds.add(turret.id)
+            shotsFired.set(turret.id, shots)
             const targetId = targetMissile.getData('id')
             const aimX = targetMissile.x, aimY = targetMissile.y
-            for(let i=0; i<THADD_SALVO_SIZE; i++){
+            for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => this.spawnMissile(turret.faction, x, y, 'missile', targetId, 0, aimX, aimY))
             }
         })
 
-        if(shooterIds.size > 0) setFactories(factories.map(f => shooterIds.has(f.id) ? { ...f, lastFiredAtMs:time } : f))
+        if(shooterIds.size > 0){
+            setFactories(factories.map(f => shooterIds.has(f.id)
+                ? { ...f, lastFiredAtMs:time, ammoRemaining:f.ammoRemaining-shotsFired.get(f.id) }
+                : f))
+        }
     }
 
     // Shared by spawnMissile (initial heading) and updateMissiles (live homing/retarget) so the two
@@ -1163,10 +1234,10 @@ export default class MapScene extends Scene {
     // used for collision is exactly the position drawn on screen, always. If the original target died,
     // it retargets by starting a brand new leg from its current (already-arced) position to whatever
     // hostile target of the same kind is now nearest (searched over the whole map — a missile mid-flight
-    // has no "range" of its own the way a stationary turret does); if nothing's available, once its
-    // original leg finishes it just keeps flying straight ahead at ground level (no more arc) rather
-    // than fizzling outright, and keeps trying to retarget every frame in case something comes into
-    // range before it runs out of flight time.
+    // has no "range" of its own the way a stationary turret does), and keeps trying every frame right up
+    // until its leg completes in case something comes into range before then. If nothing's ever found,
+    // it's destroyed (with a shatter effect, same as an actual impact) the instant its leg's arc
+    // finishes, rather than flying on forever with nothing to hit.
     updateMissiles = (time:number, deltaMs:number) => {
         this.missilesGroup.children.each((child:Physics.Arcade.Sprite) => {
             if(!child.active) return true
@@ -1186,12 +1257,16 @@ export default class MapScene extends Scene {
             }
 
             // Offensive missile: retarget (a fresh leg) if the current target's gone and something else
-            // hostile is in range; otherwise this leg's origin/target stay exactly as they were.
+            // hostile is in range; otherwise this leg's origin/target stay exactly as they were. Always
+            // findNearestHostileBuilding, never findNearestHostileInRange — every offensive missile
+            // (MLRS/BLM) is spawned with targetKind 'building' (a THADD interceptor is 'missile' and
+            // returns above, before this code even runs), so a building is the only kind of target this
+            // ever legitimately retargets onto; findNearestHostileInRange's ship/missile candidates have
+            // no business here at all.
             if(!this.getMissileTargetSprite(targetKind, targetId)){
                 const faction:Faction = child.getData('faction')
                 const searchRadius = this.mapData.width * CELL_SIZE
-                const retargeted = targetKind === 'building' ? this.findNearestHostileBuilding(faction, child.x, child.y, searchRadius)
-                    : this.findNearestHostileInRange(faction, child.x, child.y, searchRadius).targetShip
+                const retargeted = this.findNearestHostileBuilding(faction, child.x, child.y, searchRadius)
 
                 if(retargeted){
                     child.setData('targetId', retargeted.getData('id'))
@@ -1204,24 +1279,20 @@ export default class MapScene extends Scene {
             const legStartAt = child.getData('legStartAt'), legDurationMs:number = child.getData('legDurationMs')
             const rawProgress = legDurationMs > 0 ? (time-legStartAt) / legDurationMs : 1
 
-            let x:number, y:number
-            if(rawProgress <= 1){
-                const progress = Phaser.Math.Clamp(rawProgress, 0, 1)
-                x = Phaser.Math.Linear(legOriginX, legTargetX, progress)
-                y = Phaser.Math.Linear(legOriginY, legTargetY, progress) - Math.sin(progress*Math.PI) * MISSILE_ARC_HEIGHT_PX
-            }
-            else{
-                // The leg's run its full course with nothing to retarget onto — its arc is spent, so it
-                // just keeps flying straight ahead at ground level past where it was aimed, instead of
-                // sitting there or arcing forever.
-                const legDist = Phaser.Math.Distance.Between(legOriginX, legOriginY, legTargetX, legTargetY) || 1
-                const dirX = (legTargetX-legOriginX)/legDist, dirY = (legTargetY-legOriginY)/legDist
-                const overshootS = (time - (legStartAt+legDurationMs)) / 1000
-                x = legTargetX + dirX*MISSILE_SPEED_PX_S*overshootS
-                y = legTargetY + dirY*MISSILE_SPEED_PX_S*overshootS
+            // The leg's run its full course (rawProgress could only still exceed 1 here if nothing was
+            // found to retarget onto above) with nothing to show for it — fizzle right where the arc
+            // came back down instead of flying on forever in a straight line.
+            if(rawProgress > 1){
+                child.destroy()
+                this.shatters.push({ x:legTargetX, y:legTargetY, createdAt:time, seed:child.getData('id') })
+                return true
             }
 
-            (child.body as Physics.Arcade.Body).reset(x, y)
+            const progress = Phaser.Math.Clamp(rawProgress, 0, 1)
+            const x = Phaser.Math.Linear(legOriginX, legTargetX, progress)
+            const y = Phaser.Math.Linear(legOriginY, legTargetY, progress) - Math.sin(progress*Math.PI) * MISSILE_ARC_HEIGHT_PX
+
+            ;(child.body as Physics.Arcade.Body).reset(x, y)
 
             const lastContrailAt = child.getData('lastContrailAt') || 0
             if(time - lastContrailAt >= CONTRAIL_INTERVAL_MS){
@@ -1699,6 +1770,7 @@ export default class MapScene extends Scene {
             kind: placingFactory,
             faction: Faction.Player,
             hp: getBuildingMaxHp(placingFactory),
+            ammoRemaining: BuildingData[placingFactory].ammo,
         }
         addFactory(factory)
         this.createBuildingSprite(factory)
@@ -1769,7 +1841,8 @@ export default class MapScene extends Scene {
                 y: this.hoveredCell.y,
                 kind: placingFactory,
                 faction: Faction.Player,
-                hp: getBuildingMaxHp(placingFactory)
+                hp: getBuildingMaxHp(placingFactory),
+                ammoRemaining: BuildingData[placingFactory].ammo,
             }
             addFactory(factory)
             this.createBuildingSprite(factory)
