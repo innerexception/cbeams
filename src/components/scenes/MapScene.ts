@@ -148,6 +148,7 @@ export default class MapScene extends Scene {
     trailG: GameObjects.Graphics
     ammoG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
+    uplinkSweepG: GameObjects.Graphics
     // Shift+left-drag rectangle for selecting a group of the player's own ships (see enablePlacementControls'
     // pointerdown/enableCameraControls' pointermove) — plain left-drag is still reserved for panning.
     dragSelectG: GameObjects.Graphics
@@ -223,6 +224,7 @@ export default class MapScene extends Scene {
         this.trailG = this.add.graphics()
         this.ammoG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
+        this.uplinkSweepG = this.add.graphics()
         this.dragSelectG = this.add.graphics()
 
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
@@ -289,6 +291,11 @@ export default class MapScene extends Scene {
         const tmp = this.add.graphics()
         const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
             tmp.clear()
+            // Solid black behind every hand-drawn icon too, same as renderAppSixIcon does for the
+            // milsymbol ones — so it reads as an opaque tile rather than letting the grid/terrain under
+            // it show through the gaps in its own linework.
+            tmp.fillStyle(0x000000, 1)
+            tmp.fillRect(0, 0, size, size)
             draw(tmp, size/2, size/2)
             tmp.generateTexture(key, size, size)
         }
@@ -355,10 +362,11 @@ export default class MapScene extends Scene {
         this.updateFogOfWar()
         this.drawPlacementRanges()
         this.drawObjectiveRanges(time)
+        this.drawUplinkSweep(time)
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
-        this.drawAmmoGauges()
+        this.drawAmmoGauges(time)
         this.drawOrders()
         this.drawCombat(time)
         this.drawShatters(time)
@@ -442,13 +450,7 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Vertical ammo gauge beside anything that actually carries an ammo stock — a unit (only MLRS today,
-    // via VehicleData's ammo/updateMlrs) or a building (BLM/THADD, via BuildingData's ammo/updateBlm/
-    // updateThadd) alike — filled bottom-up, like a fuel gauge, by the fraction of its starting ammo
-    // still remaining. Stays visible even once fully empty (an empty gauge is exactly the "you're out"
-    // signal this is for), but — same as every other overlay — hidden while the sprite itself is out of
-    // the player's sight range.
-    drawAmmoGauges = () => {
+    drawAmmoGauges = (time:number) => {
         const g = this.ammoG
         g.clear()
 
@@ -461,11 +463,20 @@ export default class MapScene extends Scene {
         })
 
         useAppStore.getState().buildings.forEach(f => {
-            const maxAmmo = BuildingData[f.kind].ammo
-            if(!maxAmmo || f.ammoRemaining === undefined) return
             const sprite = this.buildingSprites.get(f.id)
             if(!sprite || sprite.visible === false) return
-            this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, f.ammoRemaining/maxAmmo)
+
+            const maxAmmo = BuildingData[f.kind].ammo
+            if(maxAmmo && f.ammoRemaining !== undefined){
+                this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, f.ammoRemaining/maxAmmo)
+                return
+            }
+
+            if(f.kind === BuildingType.Uplink && f.lastFiredAtMs){
+                const cooldownMs = BuildingData[BuildingType.Uplink].cooldownMs
+                const elapsed = time - f.lastFiredAtMs
+                if(elapsed < cooldownMs) this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, elapsed/cooldownMs)
+            }
         })
     }
 
@@ -740,6 +751,33 @@ export default class MapScene extends Scene {
         const { buildings, setFactories } = useAppStore.getState()
         setFactories(buildings.map(f => f.id === building.id ? { ...f, lastFiredAtMs:now } : f))
         this.mapRevealedUntil = now + UPLINK_REVEAL_DURATION_MS
+    }
+
+    // A vertical scan-beam that sweeps right to left across the whole map over the exact span of a
+    // reveal (mapRevealedUntil - UPLINK_REVEAL_DURATION_MS through mapRevealedUntil), so it visually
+    // reads as *what's actually doing the revealing* rather than a decoration bolted on separately.
+    // Phaser Graphics has no real gradient fill this codebase can rely on across renderers, so the
+    // "gradient" is approximated by hand: a stack of thin vertical strips, each faded by how far it
+    // sits from the beam's own center, brightest in the middle and fully transparent at both edges.
+    drawUplinkSweep = (time:number) => {
+        const g = this.uplinkSweepG
+        g.clear()
+        if(time >= this.mapRevealedUntil) return
+
+        const startedAt = this.mapRevealedUntil - UPLINK_REVEAL_DURATION_MS
+        const progress = PhaserMath.Clamp((time-startedAt) / UPLINK_REVEAL_DURATION_MS, 0, 1)
+        const mapHeight = this.mapData.height * CELL_SIZE
+        const sweepX = (1-progress) * (this.mapData.width * CELL_SIZE)
+
+        const beamWidth = CELL_SIZE * 6
+        const strips = 16
+        for(let i=0; i<strips; i++){
+            const t = i / (strips-1) // 0 at the beam's left edge, 1 at its right edge
+            const falloff = 1 - Math.abs(t-0.5)*2 // 0 at both edges, 1 dead center
+            const stripW = beamWidth/strips + 1
+            g.fillStyle(GREEN_HEX, falloff * 0.35)
+            g.fillRect(sweepX + (t-0.5)*beamWidth - stripW/2, 0, stripW, mapHeight)
+        }
     }
 
     // --- Physics sprite lifecycle -------------------------------------------------------------------

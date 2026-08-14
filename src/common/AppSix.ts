@@ -52,5 +52,18 @@ export const renderAppSixIcon = (sidc:string, size:number, colorHex:number):HTML
         fillOpacity: 0.15,
         strokeWidth: 1.5,
     })
-    return symbol.asCanvas()
+    const iconCanvas = symbol.asCanvas()
+
+    // milsymbol's own canvas has a transparent background — paint a black rectangle first, then the
+    // icon on top of that, so the placed sprite obscures whatever's behind it (grid lines, terrain,
+    // another unit) instead of letting it show through the gaps in the icon's own linework.
+    const canvas = document.createElement('canvas')
+    canvas.width = iconCanvas.width
+    canvas.height = iconCanvas.height
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(iconCanvas, 0, 0)
+
+    return canvas
 }

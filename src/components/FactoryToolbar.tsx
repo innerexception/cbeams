@@ -63,7 +63,7 @@ export default () => {
                 )}
                 <div style={{ display:'flex' }}>
                     {Object.keys(BuildingType).filter((t:BuildingType)=>BuildingData[t].buildingPoints).map((b:BuildingType)=>
-                        <ToolButton active={placingFactory === b} onClick={()=>toggle(b)}>{b} ({BuildingData[b].buildingPoints})</ToolButton>
+                        <ToolButton key={b} active={placingFactory === b} disabled={buildingPoints[Faction.Player] < BuildingData[b].buildingPoints} onClick={()=>toggle(b)}>{b} ({BuildingData[b].buildingPoints})</ToolButton>
                     )}
                 </div>
                 {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
