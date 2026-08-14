@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { BuildingType, VehicleType, VehicleData, Faction } from '../../enum'
+import { BuildingType, VehicleType, VehicleData, Faction, BuildingData } from '../../enum'
 import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT, BUILDING_POINTS_BUDGET } from '../common/Constants'
 import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
@@ -44,6 +44,23 @@ export default () => {
                 <div style={{ marginTop:6, fontSize:12 }}>
                     Click anywhere on your side of the map. Each one must be at least 500px from any other.
                 </div>
+            </div>
+        )
+    }
+    if(phase === 'building'){
+        return (
+            <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
+                {phase === 'building' && (
+                    <div style={{ color:colors.lGreen, marginBottom:6, fontFamily:'Body', fontSize:14 }}>
+                        Building points remaining: {buildingPoints[Faction.Player]} / {BUILDING_POINTS_BUDGET}
+                    </div>
+                )}
+                <div style={{ display:'flex' }}>
+                    {Object.keys(BuildingType).filter((t:BuildingType)=>BuildingData[t].buildingPoints).map((b:BuildingType)=>
+                        <ToolButton active={placingFactory === b} onClick={()=>toggle(b)}>{b} ({BuildingData[b].buildingPoints})</ToolButton>
+                    )}
+                </div>
+                {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
             </div>
         )
     }
@@ -98,20 +115,6 @@ export default () => {
         )
     }
 
-    return (
-        <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
-            {phase === 'building' && (
-                <div style={{ color:colors.lGreen, marginBottom:6, fontFamily:'Body', fontSize:14 }}>
-                    Building points remaining: {buildingPoints[Faction.Player]} / {BUILDING_POINTS_BUDGET}
-                </div>
-            )}
-            <div style={{ display:'flex' }}>
-                <ToolButton active={placingFactory === BuildingType.CRAM} onClick={()=>toggle(BuildingType.CRAM)}>CRAM Turret</ToolButton>
-                <ToolButton active={placingFactory === BuildingType.BLM} onClick={()=>toggle(BuildingType.BLM)}>BLM</ToolButton>
-                <ToolButton active={placingFactory === BuildingType.THADD} onClick={()=>toggle(BuildingType.THADD)}>THADD</ToolButton>
-                <ToolButton active={placingFactory === BuildingType.AmmoDump} onClick={()=>toggle(BuildingType.AmmoDump)}>AmmoDump</ToolButton>
-            </div>
-            {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
-        </div>
-    )
+    return <div>Select a logistics center to deploy units</div>
+
 }

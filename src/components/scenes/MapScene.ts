@@ -2,7 +2,7 @@ import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
-import { getLogisticsStatus, getFactoryLogisticsCost, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
+import { getLogisticsStatus, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { spawnEnemyLogisticsCenters, spendEnemyBuildingPoints, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
 import { marchingSquaresSegments } from "../../common/Contours";
@@ -17,7 +17,7 @@ import {
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
     THADD_SALVO_SIZE,
     SHATTER_LIFETIME_MS,
-    OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE,
+    OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, BUILDING_MIN_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
@@ -371,12 +371,12 @@ export default class MapScene extends Scene {
         this.updateBlm(time)
         this.updateThadd(time)
         this.updateAmmoDumps(time)
-        this.updateObjectives()
+        this.updateObjectives(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         this.updateFogOfWar()
         this.drawPlacementRanges()
-        this.drawObjectiveRanges()
+        this.drawObjectiveRanges(time)
 
         this.drawProductionProgress()
         this.drawBuildingHealth()
@@ -563,7 +563,7 @@ export default class MapScene extends Scene {
     // sight range should gate.
     spawnObjectives = () => {
         this.mapData.objectives.forEach(spawn => {
-            const objective:ObjectiveData = { id: spawn.id, owner: null }
+            const objective:ObjectiveData = { id: spawn.id, owner: null, capturingFaction: null, captureStartedAtMs: null }
             useAppStore.getState().addObjective(objective)
             this.createObjectiveSprite(spawn)
         })
@@ -586,11 +586,15 @@ export default class MapScene extends Scene {
 
     // Every frame: for each Objective, does either faction currently have ARMOR within
     // OBJECTIVE_CAPTURE_RADIUS_PX of it, AND does the *other* faction have no ship or building also
-    // within that same radius? If so it's (re)captured by that faction — checked for both, so a
-    // contested point can flip either way. Neither condition being met just leaves ownership exactly as
-    // it was: capturing isn't something you can lose by walking away, only by the other side taking it
-    // the same way you did.
-    updateObjectives = () => {
+    // within that same radius? That faction is "contesting" it — checked for both, so contest can be
+    // held by either side. The instant contest starts (or switches sides), capturingFaction/
+    // captureStartedAtMs are (re)set to track that hold; the instant it breaks (no one contesting, or
+    // ARMOR simply leaving/dying resolves the same way — hasArmor just goes false), they reset to null,
+    // discarding whatever progress had built up. Only once a single faction has held it uncontested for
+    // a full OBJECTIVE_CAPTURE_TIME_MS does owner actually flip — see ObjectiveData for the full model.
+    // Also checks the win condition every pass: one faction holding every Objective on the map at once
+    // ends the match immediately (handleAllObjectivesCaptured).
+    updateObjectives = (time:number) => {
         const { objectives, vehicles: ships, buildings: factories, setObjectives } = useAppStore.getState()
         if(objectives.length === 0) return
 
@@ -600,7 +604,7 @@ export default class MapScene extends Scene {
             if(!spawn) return objective
             const { x, y } = this.toWorld(spawn.x, spawn.y)
 
-            const capturingFaction = [Faction.Player, Faction.Enemy].find(faction => {
+            const contestingFaction = [Faction.Player, Faction.Enemy].find(faction => {
                 const hasArmor = ships.some(s => s.faction === faction && s.type === VehicleType.ARMOR
                     && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
                 if(!hasArmor) return false
@@ -613,16 +617,36 @@ export default class MapScene extends Scene {
                     return Phaser.Math.Distance.Between(x, y, p.x, p.y) <= OBJECTIVE_CAPTURE_RADIUS_PX
                 })
                 return !enemyShipPresent && !enemyBuildingPresent
-            })
+            }) ?? null
 
-            if(!capturingFaction || capturingFaction === objective.owner) return objective
+            if(contestingFaction !== objective.capturingFaction){
+                changed = true
+                objective = { ...objective, capturingFaction: contestingFaction, captureStartedAtMs: contestingFaction ? time : null }
+            }
+
+            if(!contestingFaction || objective.owner === contestingFaction || objective.captureStartedAtMs === null) return objective
+            if(time - objective.captureStartedAtMs < OBJECTIVE_CAPTURE_TIME_MS) return objective
 
             changed = true
-            this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(capturingFaction))
-            return { ...objective, owner: capturingFaction }
+            this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(contestingFaction))
+            return { ...objective, owner: contestingFaction }
         })
 
         if(changed) setObjectives(updated)
+
+        const owners = updated.map(o => o.owner)
+        if(owners.length > 0 && owners[0] && owners.every(owner => owner === owners[0])) this.handleAllObjectivesCaptured(owners[0])
+    }
+
+    // The match also ends the moment one faction holds every Objective on the map at once — same
+    // pause+modal path as a destroyed Base (handleBaseDestroyed), just triggered by the other win
+    // condition. `faction` here is the *winner* (whoever holds them all), the opposite sense from
+    // handleBaseDestroyed's `faction` (whoever's Base just died) — hence the flipped Victory/Defeat.
+    handleAllObjectivesCaptured = (faction:Faction) => {
+        if(this.gameOver) return
+        this.gameOver = true
+        this.scene.pause()
+        onShowModal(faction === Faction.Player ? Modal.Victory : Modal.Defeat)
     }
 
     // Phaser's Graphics has no native dashed-stroke option — this just walks the circumference in
@@ -641,8 +665,11 @@ export default class MapScene extends Scene {
 
     // A dashed ring at OBJECTIVE_CAPTURE_RADIUS_PX around each Objective, tinted the same as its icon
     // (see getObjectiveOwnerColor — neutral/player/enemy) so it's obvious both where the capture radius
-    // actually is and who currently holds it, at a glance.
-    drawObjectiveRanges = () => {
+    // actually is and who currently holds it, at a glance. While a hold is actually in progress (see
+    // updateObjectives' capturingFaction/captureStartedAtMs) it also gets a small progress bar under its
+    // label, tinted to whoever's currently contesting it, so the 30s hold itself is visible ticking up —
+    // not just the range circle it has to happen inside of.
+    drawObjectiveRanges = (time:number) => {
         const g = this.objectiveRangeG
         g.clear()
 
@@ -651,6 +678,17 @@ export default class MapScene extends Scene {
             if(!spawn) return
             const { x, y } = this.toWorld(spawn.x, spawn.y)
             this.drawDashedCircle(g, x, y, OBJECTIVE_CAPTURE_RADIUS_PX, this.getObjectiveOwnerColor(objective.owner), 0.5)
+
+            if(objective.capturingFaction === null || objective.captureStartedAtMs === null) return
+            const percent = PhaserMath.Clamp((time-objective.captureStartedAtMs) / OBJECTIVE_CAPTURE_TIME_MS, 0, 1)
+            const color = this.getObjectiveOwnerColor(objective.capturingFaction)
+            const w = OBJECTIVE_ICON_SIZE, h = 4
+            const barX = x - w/2, barY = y + OBJECTIVE_ICON_SIZE*0.5 + 20
+
+            g.lineStyle(1, color, 1)
+            g.strokeRect(barX, barY, w, h)
+            g.fillStyle(color, 0.9)
+            g.fillRect(barX, barY, w*percent, h)
         })
     }
 
@@ -1911,7 +1949,7 @@ export default class MapScene extends Scene {
         if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
         // A base occupies a factory slot too now, so this alone also blocks placing on top of one.
         if(this.findFactoryAt(gridX, gridY)) return false
-        if(getLogisticsStatus(faction).logisticsRemaining - getFactoryLogisticsCost(kind) < 0) return false
+        if(getLogisticsStatus(faction).logisticsRemaining < 0) return false
 
         const worldPos = this.toWorld(gridX, gridY)
         const overlapsShip = useAppStore.getState().vehicles.some(s => {

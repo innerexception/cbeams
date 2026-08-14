@@ -47,13 +47,19 @@ interface MapData {
 }
 
 // The live half of a capturable Objective — see ObjectiveSpawn for its fixed id/position/sprite (never
-// duplicated here). owner is null until some faction actually captures it (see MapScene's
-// updateObjectives): ARMOR of that faction within OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile
-// ship or building also within that radius. It never reverts to null on its own once captured — only a
-// contesting capture by the other faction (same conditions, satisfied for them instead) changes it.
+// duplicated here). owner is null until some faction actually captures it, which takes a full
+// OBJECTIVE_CAPTURE_TIME_MS of that faction holding it uncontested (ARMOR of that faction within
+// OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile ship or building also within that radius) — see
+// MapScene's updateObjectives for the live tracking of that hold via capturingFaction/
+// captureStartedAtMs. owner never reverts to null on its own once captured — only the other faction
+// completing that same hold changes it. capturingFaction/captureStartedAtMs reset to null the instant
+// the hold breaks (ARMOR leaves/dies, or an enemy shows up), even mid-count — no partial credit carries
+// over to a later attempt.
 interface ObjectiveData {
     id: string
     owner: import('./enum').Faction | null
+    capturingFaction: import('./enum').Faction | null
+    captureStartedAtMs: number | null
 }
 
 interface ProductionQueueItem {
@@ -67,7 +73,6 @@ interface BuildingMetaData {
     cooldownMs:number
     damage:number
     rangePx:number
-    logisticsCost:number
     buildingPoints:number
     // Missiles a BLM/THADD can ever launch, total, over its whole lifetime — undefined for kinds that
     // don't fire missiles at all (CRAM's cannon and ARMOR's cannon shot are instant-hit, not a missile).

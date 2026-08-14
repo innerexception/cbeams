@@ -25,9 +25,6 @@ export const tryLoadFile = async () => {
     //}
 }
 
-// Each factory kind's own logistics upkeep.
-export const getFactoryLogisticsCost = (kind:BuildingType) => BuildingData[kind].logisticsCost
-
 // Each vehicle kind's own logistics upkeep.
 export const getVehicleLogisticsCost = (type:VehicleType) => VehicleData[type].logisticsCost
 
@@ -38,8 +35,7 @@ export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
     const ownFactories = buildings.filter(f => f.faction === faction)
     const ownVehicles = vehicles.filter(v => v.faction === faction)
     const maxLogistics = ownFactories.filter(b=>b.kind === BuildingType.LogisticsCenter).length*10
-    const logisticsUsed = ownFactories.reduce((sum, f) => sum + getFactoryLogisticsCost(f.kind), 0)
-        + ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
+    const logisticsUsed = ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }
 }

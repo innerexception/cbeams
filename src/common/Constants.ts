@@ -107,6 +107,10 @@ export const SHATTER_LIFETIME_MS = 10000
 // this radius of it AND the other faction has no ship or building also within that same radius.
 export const OBJECTIVE_CAPTURE_RADIUS_PX = 200
 export const OBJECTIVE_ICON_SIZE = 40
+// How long a faction's ARMOR has to hold an Objective uncontested (see updateObjectives) before
+// ownership actually flips — a momentary drive-through doesn't capture anything, and stepping out (or
+// dying, or an enemy showing up) before this elapses resets the clock to 0, not just pauses it.
+export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 
 // --- Enemy AI ---
 // How many drones the enemy shipyard masses before launching them at the player, once, at the start of the match.
