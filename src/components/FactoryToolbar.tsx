@@ -14,15 +14,19 @@ const hints = {
 }
 
 export default () => {
-    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, factories, queueShip, clearWaypoints, buildingPoints } = useAppStore((state) => ({
+    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, selectedShipIds, setSelectedShipIds, factories, vehicles, queueShip, clearWaypoints, clearShipWaypoints, buildingPoints } = useAppStore((state) => ({
         phase: state.phase,
         placingFactory: state.placingFactory,
         setPlacingFactory: state.setPlacingBuilding,
         selectedFactoryId: state.selectedFactoryId,
         setSelectedFactoryId: state.setSelectedBuildingId,
+        selectedShipIds: state.selectedShipIds,
+        setSelectedShipIds: state.setSelectedShipIds,
         factories: state.buildings,
+        vehicles: state.vehicles,
         queueShip: state.queueShip,
         clearWaypoints: state.clearWaypoints,
+        clearShipWaypoints: state.clearShipWaypoints,
         buildingPoints: state.buildingPoints,
     }))
 
@@ -65,6 +69,25 @@ export default () => {
         )
     }
 
+    // A drag-selected group of ships (see MapScene's shift-drag box) takes orders the same way a
+    // selected shipyard's route does — every map click adds a waypoint to each one's own route (see
+    // addShipWaypoints) — this panel is just the selection readout + bulk Clear Orders/Cancel, mirroring
+    // the shipyard orders UI below.
+    if(selectedShipIds.length > 0){
+        const selectedShips = vehicles.filter(s => selectedShipIds.includes(s.id))
+        return (
+            <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
+                <div style={{ color:colors.lGreen, fontFamily:'Body', fontSize:14 }}>
+                    {selectedShips.length} unit{selectedShips.length === 1 ? '' : 's'} selected — click the map to give orders
+                </div>
+                <div style={{ marginTop:8, display:'flex' }}>
+                    <ToolButton onClick={()=>clearShipWaypoints(selectedShipIds)}>Clear Orders</ToolButton>
+                    <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
+                </div>
+            </div>
+        )
+    }
+
     const selectedFactory = factories.find(f => f.id === selectedFactoryId)
 
     if(selectedFactory && selectedFactory.kind === BuildingType.LogisticsCenter){
@@ -90,7 +113,6 @@ export default () => {
                     <ToolButton active>
                         Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
                     </ToolButton>
-                    {waypoints.length > 0 && <ToolButton onClick={()=>clearWaypoints(selectedFactory.id)}>Clear Orders</ToolButton>}
                 </div>
                 <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>
                     {waypoints.length >= MAX_WAYPOINTS

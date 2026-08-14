@@ -141,6 +141,9 @@ export default class MapScene extends Scene {
     trailG: GameObjects.Graphics
     ammoG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
+    // Shift+left-drag rectangle for selecting a group of the player's own ships (see enablePlacementControls'
+    // pointerdown/enableCameraControls' pointermove) — plain left-drag is still reserved for panning.
+    dragSelectG: GameObjects.Graphics
 
     // Every ship, building and missile is a real Arcade Physics sprite so collision (a drone touching a
     // hostile unit/building, a missile hitting its target) is detected by Phaser's overlap system
@@ -161,6 +164,12 @@ export default class MapScene extends Scene {
 
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
+    // Shift-drag box-select state (world coordinates) — set on pointerdown while Shift is held, updated
+    // on every pointermove, resolved into a selectedShipIds set on pointerup. null whenever no drag is
+    // in progress, which is also what tells enableCameraControls' pointermove to skip the normal pan.
+    shiftDown: boolean = false
+    dragSelectStart: { x:number, y:number } | null = null
+    dragSelectCurrent: { x:number, y:number } | null = null
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
     // Decaying vapor-trail points left behind an offensive missile's actual (arced) flight path — see
@@ -202,6 +211,10 @@ export default class MapScene extends Scene {
         this.trailG = this.add.graphics()
         this.ammoG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
+        this.dragSelectG = this.add.graphics()
+
+        this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
+        this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
 
         this.generateTextures()
         this.previewIcon = this.add.image(0, 0, 'factory_'+BuildingType.LogisticsCenter).setVisible(false)
@@ -242,6 +255,14 @@ export default class MapScene extends Scene {
         this.unsubscribe = useAppStore.subscribe((state, prevState) => {
             if(state.placingFactory !== prevState.placingFactory) this.updatePreview()
             checkEnemyBlmDefense(this, state)
+
+            // A drag-selected ship that dies stays a dangling id in selectedShipIds forever otherwise
+            // (nothing else ever prunes it) — drop it the moment the vehicle list actually shrinks, and
+            // close the selection panel entirely (empty array) once none of the selected ships survive.
+            if(state.selectedShipIds.length > 0 && state.vehicles.length !== prevState.vehicles.length){
+                const stillAlive = state.selectedShipIds.filter(id => state.vehicles.some(v => v.id === id))
+                if(stillAlive.length !== state.selectedShipIds.length) useAppStore.getState().setSelectedShipIds(stillAlive)
+            }
         })
         this.events.once('shutdown', () => this.unsubscribe())
 
@@ -332,13 +353,25 @@ export default class MapScene extends Scene {
         this.drawMissileTrails(time)
 
         this.selectionG.clear()
-        const { selectedFactoryId, buildings: factories } = useAppStore.getState()
+        const { selectedFactoryId, selectedShipIds, buildings: factories, vehicles } = useAppStore.getState()
         const selectedFactory = factories.find(f => f.id === selectedFactoryId)
-        if(!selectedFactory) return
+        if(selectedFactory){
+            const { x, y } = this.toWorld(selectedFactory.x, selectedFactory.y)
+            this.drawSelectionRing(x, y, CELL_SIZE * 1.3, time)
+        }
+        // Every drag-selected ship gets the exact same pulsating-octagon treatment as a selected
+        // building, just at a smaller base radius scaled to that ship's own icon size.
+        selectedShipIds.forEach(id => {
+            const ship = vehicles.find(s => s.id === id)
+            if(!ship) return
+            this.drawSelectionRing(ship.x, ship.y, VehicleData[ship.type].sizeHex * CELL_SIZE * 0.7, time)
+        })
+    }
 
-        const { x, y } = this.toWorld(selectedFactory.x, selectedFactory.y)
+    // Pulsating octagon selection ring, shared by a selected building and every drag-selected ship.
+    drawSelectionRing = (x:number, y:number, baseRadius:number, time:number) => {
         const pulse = 0.85 + Math.sin(time*0.006)*0.15
-        const r = CELL_SIZE * 1.3 * pulse
+        const r = baseRadius * pulse
         const points = []
         for(let i=0; i<8; i++){
             const angle = (i/8)*Math.PI*2 + Math.PI/8
@@ -484,7 +517,7 @@ export default class MapScene extends Scene {
             if(!overlapsShip && !this.buildingOverlapsPoint(candidate.x, candidate.y, size/2 + SHIP_BUILDING_CLEARANCE_PX)){ pos = candidate; break }
         }
 
-        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, pathIndex:0, hp:VehicleData[type].hp, ammoRemaining:VehicleData[type].ammo }
+        const ship:VehicleData = { id:v4(), faction:shipyard.faction, type, shipyardId:shipyard.id, x:pos.x, y:pos.y, waypoints:[...(shipyard.waypoints||[])], pathIndex:0, hp:VehicleData[type].hp, ammoRemaining:VehicleData[type].ammo }
         useAppStore.getState().addShip(ship)
         this.createShipSprite(ship)
     }
@@ -753,15 +786,17 @@ export default class MapScene extends Scene {
         body.setCircle(radius, sprite.width/2 - radius, sprite.height/2 - radius)
     }
 
-    // Advances every ship one step towards its shipyard's current route, read live off the shipyard each
-    // frame (rather than a copy taken at spawn) so edited orders steer ships that are already underway.
-    // Once a ship has worked through every waypoint it loiters in a slow orbit around the last one; a
-    // ship whose orders were cleared instead orbits wherever it was when that happened. The actual
-    // stepping — and the collision detection that comes from it — is Arcade Physics' job now
-    // (physics.moveTo sets velocity towards the target, the physics step integrates position); this
-    // just decides *where* that target is and detects arrival to advance the route.
+    // Advances every ship one step towards its own route (waypoints — a copy taken from its shipyard at
+    // spawn time, see spawnShip, independently editable afterwards either through that shipyard
+    // (addWaypoint) or by drag-selecting the ship directly (addShipWaypoints) — both write straight onto
+    // the ship's own waypoints, so there's nothing left to read live off the shipyard here). Once a ship
+    // has worked through every waypoint it loiters in a slow orbit around the last one; a ship whose
+    // orders were cleared instead orbits wherever it was when that happened. The actual stepping — and
+    // the collision detection that comes from it — is Arcade Physics' job now (physics.moveTo sets
+    // velocity towards the target, the physics step integrates position); this just decides *where*
+    // that target is and detects arrival to advance the route.
     moveShips = (time:number, deltaMs:number) => {
-        const { vehicles: ships, buildings: factories, setShips } = useAppStore.getState()
+        const { vehicles: ships, setShips } = useAppStore.getState()
         // ATDs that reach the end of their route detonate — but not mid-map (that would clobber this
         // very setShips call below with a store snapshot that still has them in it), so they're
         // collected here and only actually detonated once this pass's positions have been committed.
@@ -771,11 +806,10 @@ export default class MapScene extends Scene {
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return ship
 
-            const shipyard = factories.find(f => f.id === ship.shipyardId)
-            const shipyardWaypoints = shipyard?.waypoints || []
-            // An ATD is a guided munition, not a patrol ship — it only ever follows its shipyard's
-            // route to the first waypoint (its detonation target), never any further ones.
-            const waypoints = ship.type === VehicleType.ATD ? shipyardWaypoints.slice(0, 1) : shipyardWaypoints
+            const ownWaypoints = ship.waypoints || []
+            // An ATD is a guided munition, not a patrol ship — it only ever follows its route to the
+            // first waypoint (its detonation target), never any further ones.
+            const waypoints = ship.type === VehicleType.ATD ? ownWaypoints.slice(0, 1) : ownWaypoints
             const pathIndex = ship.pathIndex ?? 0
             const speed = VehicleData[ship.type].speed
             const step = speed * (deltaMs/1000)
@@ -1092,6 +1126,10 @@ export default class MapScene extends Scene {
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active || obj.getData('kind') !== 'missile' || obj.getData('faction') === fromFaction) return
+            // Only an offensive missile (MLRS/BLM, always targetKind 'building') is a valid THADD
+            // target — a hostile THADD's own interceptors (targetKind 'missile') don't threaten
+            // anything of ours worth shooting down, so they shouldn't trigger (or draw) a launch here.
+            if(obj.getData('targetKind') !== 'building') return
             if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
             if(d < nearestDist){ nearestDist = d; target = obj }
@@ -1644,10 +1682,27 @@ export default class MapScene extends Scene {
         SUNK_LEVELS.forEach(level => drawLevel(negated, level, GREEN_DIM_HEX))
     }
 
-    // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected.
-    // Rebuilt only when the selected shipyard or its waypoint count changes, not every frame.
+    // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected,
+    // or — for a drag-selected group of ships — each of their own routes. Rebuilt only when the
+    // selected shipyard or its waypoint count changes, not every frame; a ship selection always redraws
+    // (ships move, so nothing about that case can be cached the same way).
     drawOrders = () => {
-        const { selectedFactoryId, buildings: factories } = useAppStore.getState()
+        const { selectedFactoryId, selectedShipIds, buildings: factories, vehicles } = useAppStore.getState()
+
+        if(selectedShipIds.length > 0){
+            this.lastOrdersKey = ''
+            const g = this.ordersG
+            g.clear()
+            this.orderLabels.forEach(label => label.destroy())
+            this.orderLabels = []
+            selectedShipIds.forEach(id => {
+                const ship = vehicles.find(s => s.id === id)
+                if(!ship || !ship.waypoints || ship.waypoints.length === 0) return
+                this.drawRouteAndMarkers(g, { x:ship.x, y:ship.y }, ship.waypoints)
+            })
+            return
+        }
+
         const factory = factories.find(f => f.id === selectedFactoryId)
         const waypoints = (factory && factory.kind === BuildingType.LogisticsCenter) ? (factory.waypoints || []) : []
 
@@ -1661,7 +1716,16 @@ export default class MapScene extends Scene {
         this.orderLabels = []
         if(!factory || waypoints.length === 0) return
 
-        const points = [this.toWorld(factory.x, factory.y), ...waypoints.map(w => this.toWorld(w.x, w.y))]
+        this.drawRouteAndMarkers(g, this.toWorld(factory.x, factory.y), waypoints)
+    }
+
+    // Shared by drawOrders' two cases (a selected shipyard's route, or each selected ship's own route):
+    // a line from originWorld through every waypoint (grid coordinates, converted here), each waypoint
+    // marked with the same numbered circle so a ship's own orders read identically to a shipyard's —
+    // including being individually cancellable by clicking the marker (see the drag-selected-ships click
+    // handler and removeShipWaypoints/removeWaypoint).
+    drawRouteAndMarkers = (g:GameObjects.Graphics, originWorld:{x:number,y:number}, waypoints:Array<{x:number,y:number}>) => {
+        const points = [originWorld, ...waypoints.map(w => this.toWorld(w.x, w.y))]
         g.lineStyle(1.5, GREEN_HEX, 0.5)
         for(let i=0; i<points.length-1; i++) g.lineBetween(points[i].x, points[i].y, points[i+1].x, points[i+1].y)
 
@@ -1974,6 +2038,16 @@ export default class MapScene extends Scene {
         this.input.on('pointerdown', () => {
             if(!this.hoveredCell) return
 
+            // Shift+left-drag starts a unit-selection box instead of any of the click handling below —
+            // resolved into selectedShipIds on pointerup (see enableCameraControls). Plain left-drag is
+            // still reserved for panning the camera.
+            if(this.shiftDown && useAppStore.getState().phase === 'combat'){
+                const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
+                this.dragSelectStart = { x:worldPoint.x, y:worldPoint.y }
+                this.dragSelectCurrent = this.dragSelectStart
+                return
+            }
+
             if(useAppStore.getState().phase === 'placement'){
                 this.handleLogisticsPlacementClick()
                 return
@@ -1983,7 +2057,22 @@ export default class MapScene extends Scene {
                 return
             }
 
-            const { placingFactory, setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, addFactory, buildings: factories, selectedFactoryId, addWaypoint, removeWaypoint } = useAppStore.getState()
+            const { placingFactory, setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, addFactory, buildings: factories, vehicles, selectedFactoryId, selectedShipIds, addWaypoint, removeWaypoint, addShipWaypoints, removeShipWaypoints } = useAppStore.getState()
+
+            // A drag-selected group of ships takes orders the same way a selected shipyard's route does
+            // below — every click adds one more waypoint onto each selected ship's own route. Clicking a
+            // cell that's already a waypoint for any of the selected ships removes it from every selected
+            // ship that has one there instead (removeShipWaypoints), same click-to-remove gesture as a
+            // selected shipyard's route, just applied across the whole selection at once.
+            if(selectedShipIds.length > 0){
+                const { x, y } = this.hoveredCell
+                if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
+                const selectedShips = vehicles.filter(s => selectedShipIds.includes(s.id))
+                const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
+                if(clickedExisting) removeShipWaypoints(selectedShipIds, x, y)
+                else addShipWaypoints(selectedShipIds, x, y)
+                return
+            }
 
             // Selecting one of the player's own shipyards puts the map straight into orders-editing mode —
             // the Orders button in FactoryToolbar is just a label now, not a prerequisite for this.
@@ -2023,9 +2112,10 @@ export default class MapScene extends Scene {
         })
 
         this.input.keyboard.on('keydown-ESC', () => {
-            const { setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId } = useAppStore.getState()
+            const { setPlacingBuilding: setPlacingFactory, setSelectedBuildingId: setSelectedFactoryId, setSelectedShipIds } = useAppStore.getState()
             setPlacingFactory(null)
             setSelectedFactoryId(null)
+            setSelectedShipIds([])
             this.previewG.clear()
         })
     }
@@ -2047,6 +2137,15 @@ export default class MapScene extends Scene {
         this.input.on('pointermove', () => {
             const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
             this.hoveredCell = this.toGrid(worldPoint.x, worldPoint.y)
+
+            // A shift-drag box-select in progress (see enablePlacementControls' pointerdown) owns the
+            // drag entirely — no camera panning and no placement-ghost preview while it's live.
+            if(this.dragSelectStart){
+                this.dragSelectCurrent = { x:worldPoint.x, y:worldPoint.y }
+                this.drawDragSelectBox()
+                return
+            }
+
             this.updatePreview()
 
             if(this.input.activePointer.isDown){
@@ -2061,10 +2160,43 @@ export default class MapScene extends Scene {
             }
         })
 
+        this.input.on('pointerup', () => {
+            if(!this.dragSelectStart) return
+            const start = this.dragSelectStart
+            const end = this.dragSelectCurrent || start
+            this.dragSelectStart = null
+            this.dragSelectCurrent = null
+            this.dragSelectG.clear()
+
+            const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x)
+            const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y)
+
+            const { vehicles, setSelectedShipIds } = useAppStore.getState()
+            const hitIds = vehicles
+                .filter(s => s.faction === Faction.Player && s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY)
+                .map(s => s.id)
+            setSelectedShipIds(hitIds)
+        })
+
         this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
             const zoom = PhaserMath.Clamp(this.cameras.main.zoom - dy*0.001, 0.25, 3)
             this.cameras.main.setZoom(zoom)
         })
+    }
+
+    // Draws the live shift-drag selection rectangle in world space (see dragSelectStart/Current).
+    drawDragSelectBox = () => {
+        const g = this.dragSelectG
+        g.clear()
+        if(!this.dragSelectStart || !this.dragSelectCurrent) return
+        const { x:sx, y:sy } = this.dragSelectStart
+        const { x:ex, y:ey } = this.dragSelectCurrent
+        const x = Math.min(sx, ex), y = Math.min(sy, ey)
+        const w = Math.abs(ex-sx), h = Math.abs(ey-sy)
+        g.fillStyle(GREEN_HEX, 0.08)
+        g.fillRect(x, y, w, h)
+        g.lineStyle(1, GREEN_HEX, 0.8)
+        g.strokeRect(x, y, w, h)
     }
 
     onTransitionIn = () => {

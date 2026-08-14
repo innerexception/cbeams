@@ -121,6 +121,12 @@ interface VehicleData {
     shipyardId: string
     x: number
     y: number
+    // A vehicle's own route, followed in order (see MapScene's moveShips) then orbited at the last
+    // point — copied from its shipyard's route at spawn time (see spawnShip) and independently
+    // editable afterwards, either by editing that shipyard's route (addWaypoint, which also pushes the
+    // update onto every ship already spawned from it) or by drag-selecting the ship directly and giving
+    // it orders (addShipWaypoints).
+    waypoints?: Array<{ x:number, y:number }>
     pathIndex?: number
     orbitAnchor?: { x:number, y:number }
     lastFiredAtMs?: number
