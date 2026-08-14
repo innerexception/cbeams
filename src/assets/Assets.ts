@@ -1,4 +1,4 @@
-import { SoundEffects } from "../../enum"
+import { Maps, SoundEffects } from "../../enum"
 
 export const FONT_DEFAULT = {
     fontFamily: 'Body', 
@@ -10,13 +10,13 @@ export const defaultCursor = require('./img/default.png')
 export const pointerCursor = require('./img/pointer.png')
 export const invalidCursor = require('./img/invalid.png')
 export const atkCursor = require('./img/atk.png')
-export const iconSheet = require('./img/icons.png')
+export const iconSheet = require('./img/tiles.png')
 
 export const resources:Array<PhaserResource> = [
     { key: 'logo', resource: require('./logo.png'), type: 'image' },
-    // { key: 'items', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 16, frameHeight: 16 } },
+    { key: 'tiles', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 32, frameHeight: 32 } },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
-    // { key: Maps.intro, resource: require('./maps/intro.json'), type: 'tilemapTiledJSON'},
+    { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
 ]
 
 export const UIElements = {

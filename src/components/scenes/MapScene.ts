@@ -3,10 +3,9 @@ import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
-import { generateMap } from "../../common/MapGenerator";
-import { spawnEnemyLogisticsCenters, spendEnemyBuildingPoints, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
+import { spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
 import { BUILDING_SIDC_FUNCTION, VEHICLE_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
-import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType, ObjectiveSprite } from "../../../enum";
+import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType, ObjectiveSprite, ObjectiveSpriteIndex, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
@@ -18,7 +17,7 @@ import {
     UPLINK_REVEAL_DURATION_MS,
     SHATTER_LIFETIME_MS,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
-    LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
+    LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_PLACEMENT_RANGE_PX, LOGISTICS_CENTER_MIN_SPACING_PX,
     NATO_ICON_SIZE, BASE_FOOTPRINT_RADIUS, FACTORY_FOOTPRINT_RADIUS, SHIP_BUILDING_CLEARANCE_PX, BUILDING_MIN_CLEARANCE_PX, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
@@ -30,7 +29,6 @@ const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
 
 // How far above a ship's own position its type label floats — clear of the (now unframed) icon
-// itself, which is roughly NATO_ICON_SIZE*0.6 tall, so the text never sits on top of it.
 const SHIP_LABEL_OFFSET_PX = NATO_ICON_SIZE * 0.7
 
 // Stable per-ship angular offset so multiple ships orbiting the same point spread out instead of stacking.
@@ -43,7 +41,7 @@ const shipOrbitPhase = (id:string) => {
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
 // This same per-structure radius is also each faction's sight range (see updateFogOfWar) — the
 // territory border drawn by drawPlacementRanges doubles as "how far that faction can currently see".
-const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD, BuildingType.Radar])
+const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.PlayerBase, BuildingType.BLM, BuildingType.THADD, BuildingType.Radar])
 // A kind whose BuildingMetaData sets its own sightRadius (currently just Radar) uses that directly,
 // overriding the FULL_RADIUS_KINDS binary choice entirely.
 const getStructureRadius = (structure:BuildingData) => {
@@ -56,8 +54,13 @@ const getStructureRadius = (structure:BuildingData) => {
 // non-placeable Base has its own, higher, value there).
 const getBuildingMaxHp = (kind:BuildingType) => BuildingData[kind].maxHp
 
+// A faction's headquarters — Base is the enemy's, PlayerBase the player's, otherwise identical (see
+// enum.ts's BuildingData) and treated the same everywhere: bigger physical footprint
+// (getBuildingFootprintRadius) and, destroyed, ends the match (handleBaseDestroyed's 3 call sites).
+const isBaseKind = (kind:BuildingType) => kind === BuildingType.Base || kind === BuildingType.PlayerBase
+
 // Bases have a bigger physical footprint than an ordinary building.
-const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
+const getBuildingFootprintRadius = (kind:BuildingType) => isBaseKind(kind) ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
 
 // Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
 // contact target — TargetType.Any covers both. Replaces the old hardcoded KK/ATD type checks that
@@ -238,7 +241,17 @@ export default class MapScene extends Scene {
         // it's the specific missile that interceptor was actually launched at.
         this.physics.add.overlap(this.missilesGroup, this.missilesGroup, this.onMissileMissileContact, this.isHostileMissilePair, this)
 
-        this.mapData = useAppStore.getState().activeMap || generateMap(MAP_SIZE)
+        this.mapData = useAppStore.getState().activeMap || { width:MAP_SIZE, height:MAP_SIZE, bases:[], objectives:[], terrain:null }
+        // Grid dimensions now come from the actual loaded map file, not the MAP_SIZE default — camera
+        // bounds (centerCameraBounds, right below), placement bounds-checking (isValidPlacement/
+        // isValidLogisticsPlacement) and everything else that reads mapData.width/height all need this
+        // to line up with where the entities layer's own tiles actually are (see spawnEntitiesFromMap).
+        const tiledMap = this.make.tilemap({ key: Maps.Sandbox })
+        if(tiledMap.width && tiledMap.height){
+            this.mapData.width = tiledMap.width
+            this.mapData.height = tiledMap.height
+        }
+
         // Every match starts in the placement phase — the enemy's own building/ships (spawned below)
         // stay hidden and the AI holds its raid until the player finishes placing their 3
         // LogisticsCenters (see startCombatPhase).
@@ -247,10 +260,7 @@ export default class MapScene extends Scene {
         this.cameras.main.setZoom(1)
         this.centerCameraBounds()
 
-        this.spawnBases()
-        this.spawnObjectives()
-        spawnEnemyLogisticsCenters(this)
-        spendEnemyBuildingPoints(this)
+        this.spawnEntitiesFromMap()
         this.drawMap()
         this.enableCameraControls()
         this.enablePlacementControls()
@@ -291,8 +301,11 @@ export default class MapScene extends Scene {
             tmp.generateTexture(key, size, size)
         }
 
+        // Both match CELL_SIZE now (32px) so an APP-6 icon's own height lines up with one grid square,
+        // same as everything else on the grid — NATO_ICON_SIZE already tracks CELL_SIZE for ships;
+        // buildings used to render at 2 full cells (CELL_SIZE*2) before the grid itself was 32px.
         const shipSize = Math.ceil(NATO_ICON_SIZE)
-        const buildingSize = Math.ceil(CELL_SIZE*2)
+        const buildingSize = Math.ceil(CELL_SIZE)
 
         Object.values(VehicleType).forEach(type => {
             const fn = VEHICLE_SIDC_FUNCTION[type]
@@ -536,29 +549,44 @@ export default class MapScene extends Scene {
         this.createShipSprite(ship)
     }
 
-    // Each faction's starting headquarters (from map generation) is promoted into a real building —
-    // added to the store as a BuildingData with its own hp, physics body and sprite — so it's a valid
-    // drone-contact target (KK/ATD exploding on it) and CRAM-cannon/hp-bar target the same as any
-    // other building, rather than the inert Graphics-only shape it used to be.
-    spawnBases = () => {
-        this.mapData.bases.forEach(base => {
-            const factory:BuildingData = { id:v4(), x:base.x, y:base.y, kind:BuildingType.Base, faction:base.faction, hp:getBuildingMaxHp(BuildingType.Base) }
-            useAppStore.getState().addFactory(factory)
-            this.createBuildingSprite(factory)
-        })
-    }
+    spawnEntitiesFromMap = () => {
+        const map = this.make.tilemap({ key: Maps.Sandbox })
+        const layer = map.getLayer('entities')
+        if(!layer) return
 
-    // The 2 Objectives' fixed position/sprite come from mapData.objectives (decided once, at map
-    // generation — see MapGenerator); this just seeds their live (owner:null, i.e. uncaptured) half
-    // into the store and creates each one's sprite. Never hidden by fog of war — a capturable landmark
-    // both sides need to be able to see and path towards from the start, not something either side's
-    // sight range should gate.
-    spawnObjectives = () => {
-        this.mapData.objectives.forEach(spawn => {
-            const objective:ObjectiveData = { id: spawn.id, owner: null, capturingFaction: null, captureStartedAtMs: null }
-            useAppStore.getState().addObjective(objective)
-            this.createObjectiveSprite(spawn)
-        })
+        const firstgid = map.tilesets[0]?.firstgid ?? 1
+
+        for(let ty=0; ty<layer.height; ty++){
+            for(let tx=0; tx<layer.width; tx++){
+                const tile = layer.data[ty][tx]
+                if(!tile || tile.index <= 0) continue
+                const localIndex = tile.index - firstgid
+
+                const kind = Object.values(BuildingType).find(k => BuildingData[k].spriteIndex === localIndex)
+                if(kind){
+                    const faction = kind === BuildingType.PlayerBase ? Faction.Player : Faction.Enemy
+                    const factory:BuildingData = { id:v4(), x:tx, y:ty, kind, faction, hp:getBuildingMaxHp(kind), ammoRemaining:BuildingData[kind].ammo }
+                    useAppStore.getState().addFactory(factory)
+                    this.createBuildingSprite(factory)
+                    continue
+                }
+
+                // ObjectiveSpriteIndex is a numeric enum, so this reverse lookup (value -> key) is just
+                // indexing it — TS generates that mapping automatically. The resulting key string is
+                // exactly one of ObjectiveSprite's own values (they're named identically on purpose).
+                const spriteName = ObjectiveSpriteIndex[localIndex] as ObjectiveSprite | undefined
+                if(!spriteName) continue
+
+                const spawn:ObjectiveSpawn = { id:v4(), x:tx, y:ty, sprite:spriteName }
+                // updateObjectives looks its fixed position back up via mapData.objectives (ObjectiveData
+                // in the store only carries the live owner/capture state, not x/y/sprite) — mapGenerator
+                // no longer seeds this array at all, so it's built up here instead, as each one spawns.
+                this.mapData.objectives.push(spawn)
+                const objective:ObjectiveData = { id:spawn.id, owner:null, capturingFaction:null, captureStartedAtMs:null }
+                useAppStore.getState().addObjective(objective)
+                this.createObjectiveSprite(spawn)
+            }
+        }
     }
 
     // Neutral is a dim green, deliberately not GREY_DIM_HEX — that colour reads as "hostile" everywhere
@@ -1032,7 +1060,7 @@ export default class MapScene extends Scene {
                 this.destroyBuildingSprite(dead.id)
                 const p = this.toWorld(dead.x, dead.y)
                 this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
-                if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
+                if(isBaseKind(dead.kind)) this.handleBaseDestroyed(dead.faction)
             }))
         }
     }
@@ -1074,7 +1102,7 @@ export default class MapScene extends Scene {
             this.destroyBuildingSprite(dead.id)
             const p = this.toWorld(dead.x, dead.y)
             this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
-            if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
+            if(isBaseKind(dead.kind)) this.handleBaseDestroyed(dead.faction)
         }))
     }
 
@@ -1285,7 +1313,7 @@ export default class MapScene extends Scene {
             this.destroyBuildingSprite(dead.id)
             const p = this.toWorld(dead.x, dead.y)
             this.shatters.push({ x:p.x, y:p.y, createdAt:time, seed:dead.id })
-            if(dead.kind === BuildingType.Base) this.handleBaseDestroyed(dead.faction)
+            if(isBaseKind(dead.kind)) this.handleBaseDestroyed(dead.faction)
         }))
     }
 
@@ -1697,25 +1725,13 @@ export default class MapScene extends Scene {
             g.lineBetween(0, i*CELL_SIZE, worldSize, i*CELL_SIZE)
         }
 
-        // dividing line through each base, marking the boundary of that faction's territory
-        g.lineStyle(1, GREEN_HEX, 0.35)
-        this.mapData.bases.forEach(base => {
-            const lineX = base.x * CELL_SIZE + CELL_SIZE/2
-            g.lineBetween(lineX, 0, lineX, worldSize)
-        })
-
         this.drawTerrain()
-        // Territory/sight-range bubbles are drawn every frame from update() instead (see rangeG) —
-        // not here, since a building add/remove is far from the only thing that should refresh them.
     }
 
-    // Terrain is no longer procedurally generated — it's drawn from an externally-authored Tiled
-    // (mapeditor.org) JSON export instead (see MapGenerator's parseTiledMap). mapData.terrain is null by
-    // default (an empty map, until a real file's been authored and passed to generateMap), in which
-    // case this draws nothing at all. Once one's loaded, every occupied cell (any layer, any non-zero
-    // GID — which specific tile it is doesn't matter here) gets a plain wireframe outline scaled from
-    // the Tiled file's own tile size onto this game's CELL_SIZE grid — there's no tileset image asset
-    // to draw real artwork from, only vector Graphics, same as everything else in this game.
+    // mapData.terrain is always null now — nothing populates it anymore (buildings/objectives are read
+    // directly off Phaser's own tilemap loader instead, see spawnEntitiesFromMap) — so this is
+    // currently a permanent no-op, left in place in case terrain annotation via a separate Tiled layer
+    // comes back later.
     drawTerrain = () => {
         const g = this.g
         const terrain = this.mapData.terrain
@@ -1971,14 +1987,15 @@ export default class MapScene extends Scene {
     // through isValidPlacement, since that requires being near an already-owned structure (impossible
     // for a faction's very first one) and checks the logistics budget (these 3 are a free, mandatory
     // starting commitment, not a normal build either side could get priced out of). Just: on the map,
-    // on that faction's own side of it (player: left half, enemy: right half — matching where their
-    // Base sits), not on top of anything else, and far enough from every LogisticsCenter that faction
-    // has already placed this phase. The AI uses this exact same rule via Faction.Enemy — same
-    // separation, just mirrored to the other half of the map.
+    // within LOGISTICS_CENTER_PLACEMENT_RANGE_PX of that faction's own Base or an already-placed
+    // LogisticsCenter (so the first of the 3 has to start near the Base, and later ones can chain
+    // outward from one already down), not on top of anything else, and at least
+    // LOGISTICS_CENTER_MIN_SPACING_PX from every LogisticsCenter that faction's already placed this
+    // phase. Only ever called for Faction.Player now — the enemy's LogisticsCenters come entirely from
+    // the map file's entities layer instead (see spawnEntitiesFromMap), not through this at all — but
+    // the faction param stays general rather than assuming Player outright.
     isValidLogisticsPlacement = (gridX:number, gridY:number, faction:Faction = Faction.Player) => {
         if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return false
-        const onOwnHalf = faction === Faction.Player ? gridX < this.mapData.width/2 : gridX >= this.mapData.width/2
-        if(!onOwnHalf) return false
         if(this.findFactoryAt(gridX, gridY)) return false
 
         const worldPos = this.toWorld(gridX, gridY)
@@ -1986,6 +2003,13 @@ export default class MapScene extends Scene {
         // spacing rule below never checked against), then the much larger deliberate spread rule that
         // governs LogisticsCenters specifically.
         if(this.isTooCloseToAnyBuilding(BuildingType.LogisticsCenter, worldPos.x, worldPos.y)) return false
+
+        const nearOwnAnchor = useAppStore.getState().buildings.some(f => {
+            if(f.faction !== faction || !(isBaseKind(f.kind) || f.kind === BuildingType.LogisticsCenter)) return false
+            const p = this.toWorld(f.x, f.y)
+            return Phaser.Math.Distance.Between(worldPos.x, worldPos.y, p.x, p.y) <= LOGISTICS_CENTER_PLACEMENT_RANGE_PX
+        })
+        if(!nearOwnAnchor) return false
 
         const tooClose = useAppStore.getState().buildings.some(f => {
             if(f.faction !== faction || f.kind !== BuildingType.LogisticsCenter) return false

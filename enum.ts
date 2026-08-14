@@ -14,6 +14,10 @@ export enum SoundEffects {
     Click='Click'
 }
 
+export enum Maps {
+    Sandbox='Sandbox'
+}
+
 export enum BuildingSpriteIndex {
 
 }
@@ -39,19 +43,26 @@ export enum ObjectiveSprite {
     OilField='OilField', City='City', NuclearReactor='NuclearReactor'
 }
 
+export enum ObjectiveSpriteIndex {
+    OilField=26,City=27,NuclearReactor=28
+}
+
 export enum BuildingType {
-    LogisticsCenter='LogisticsCenter', CRAM='CRAM', Base='Base', BLM='BLM', THADD='THADD', AmmoDump='AmmoDump', Radar='Radar', Uplink='Uplink'
+    LogisticsCenter='LogisticsCenter', CRAM='CRAM', Base='Base', PlayerBase='PlayerBase', BLM='BLM', THADD='THADD', AmmoDump='AmmoDump', Radar='Radar', Uplink='Uplink'
 }
 
 export const BuildingData:Record<BuildingType,BuildingMetaData> = {
-    [BuildingType.LogisticsCenter]: { maxHp:40, cooldownMs:0, damage:0, rangePx:0,  buildingPoints:0 },
-    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, rangePx:220, buildingPoints:1 },
-    [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, buildingPoints:0 },
-    [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:5, rangePx:4000, buildingPoints:3, ammo:10 },
-    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:600, buildingPoints:4, ammo:10 },
-    [BuildingType.AmmoDump]: { maxHp:40, cooldownMs:2000, damage:0, rangePx:100, buildingPoints:2, ammo:20 },
-    [BuildingType.Radar]: { maxHp:10, cooldownMs:0, damage:0, rangePx:0, buildingPoints:2, sightRadius:500 },
-    [BuildingType.Uplink]: { maxHp:20, cooldownMs:60000, damage:0, rangePx:0, buildingPoints:3 },
+    [BuildingType.LogisticsCenter]: { maxHp:40, cooldownMs:0, damage:0, rangePx:0,  buildingPoints:0, spriteIndex:14 },
+    [BuildingType.CRAM]: { maxHp:40, cooldownMs:350, damage:1, rangePx:220, buildingPoints:1, spriteIndex: 15 },
+    [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, buildingPoints:0, spriteIndex: 13 },
+    // Identical to Base in every way except which entities-layer tile spawns it — this is the player's
+    // own headquarters, Base is the enemy's (see MapScene's spawnEnemyBuildingsFromMap/getFactionForKind).
+    [BuildingType.PlayerBase]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, buildingPoints:0, spriteIndex:0 },
+    [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:5, rangePx:4000, buildingPoints:3, ammo:10, spriteIndex: 16 },
+    [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:600, buildingPoints:4, ammo:10, spriteIndex: 17 },
+    [BuildingType.AmmoDump]: { maxHp:40, cooldownMs:2000, damage:0, rangePx:100, buildingPoints:2, ammo:20, spriteIndex: 18 },
+    [BuildingType.Radar]: { maxHp:10, cooldownMs:0, damage:0, rangePx:0, buildingPoints:2, sightRadius:500, spriteIndex: 19 },
+    [BuildingType.Uplink]: { maxHp:20, cooldownMs:60000, damage:0, rangePx:0, buildingPoints:3, spriteIndex: 20 },
 }
 
 export enum VehicleType {

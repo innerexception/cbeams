@@ -4,7 +4,10 @@
 
 // --- World / grid ---
 export const MAP_SIZE = 100
-export const CELL_SIZE = 20
+// Matches the Tiled map's own tile size (src/assets/maps/sandbox.json, 32x32) so a grid cell here lines
+// up exactly with a tile there — a building spawned at the entities layer's tile (x,y) (see MapScene's
+// spawnEnemyBuildingsFromMap) sits at that same (x,y) in this game's own grid, no rescaling needed.
+export const CELL_SIZE = 32
 
 // Grid<->world conversions — the one place this math is defined, so MapScene's rendering and the
 // store's own ship/waypoint distance math are guaranteed to agree on where a grid cell sits in world space.
@@ -24,11 +27,14 @@ export const PLACEMENT_RADIUS_PX = 200
 export const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX / 2
 
 // --- Placement phase ---
-// Before a match goes live, the player plants exactly this many LogisticsCenters on their own side of
-// the map, each at least LOGISTICS_CENTER_MIN_SPACING_PX from every other one they've already placed —
+// Before a match goes live, the player plants exactly this many LogisticsCenters — each within
+// LOGISTICS_CENTER_PLACEMENT_RANGE_PX of one of their own Base/LogisticsCenters (so the first of the 3
+// has to go near the Base, and later ones can chain off an already-placed LogisticsCenter to extend
+// outward) and at least LOGISTICS_CENTER_MIN_SPACING_PX from every other one they've already placed —
 // see MapScene's isValidLogisticsPlacement/handleLogisticsPlacementClick.
 export const LOGISTICS_CENTER_COUNT = 3
-export const LOGISTICS_CENTER_MIN_SPACING_PX = 500
+export const LOGISTICS_CENTER_PLACEMENT_RANGE_PX = 300
+export const LOGISTICS_CENTER_MIN_SPACING_PX = 250
 // Once a faction's 3 LogisticsCenters are down, placement moves into its second stage: every other
 // building kind unlocks, spendable against this flat points budget (see BuildingData's buildingPoints
 // per-kind cost) — the match goes live for that faction's side the instant it hits zero. See
@@ -42,14 +48,14 @@ export const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 export const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
 
 // --- Physical footprints, so ships/buildings/icons don't overlap ---
-export const NATO_ICON_SIZE = 40
+export const NATO_ICON_SIZE = 32
 export const BASE_FOOTPRINT_RADIUS = CELL_SIZE * 1.5
 export const FACTORY_FOOTPRINT_RADIUS = CELL_SIZE * 0.75
 export const SHIP_BUILDING_CLEARANCE_PX = 20
 // Minimum gap enforced between any two buildings' icon frames (see MapScene's
 // getBuildingIconRadius/isValidPlacement) — actual footprint is each building's real rendered icon
 // size, this is just the flat clearance added on top so frames never touch edge-to-edge.
-export const BUILDING_MIN_CLEARANCE_PX = 30
+export const BUILDING_MIN_CLEARANCE_PX = 48
 
 // --- CRAM turret (a placeable building, not a ship) ---
 // Its cooldown, damage and range now live on its BuildingMetaData entry in enum.ts. It only ever
@@ -107,7 +113,7 @@ export const UPLINK_REVEAL_DURATION_MS = 10000
 export const SHATTER_LIFETIME_MS = 10000
 
 // --- Objectives ---
-// A capturable map feature (see MapGenerator's generateMap for where the 2 are placed, MapScene's
+// A capturable map feature (see MapScene's spawnEntitiesFromMap for where they're placed, and
 // updateObjectives for the live capture check): a faction captures one the instant it has ARMOR within
 // this radius of it AND the other faction has no ship or building also within that same radius.
 export const OBJECTIVE_CAPTURE_RADIUS_PX = 200

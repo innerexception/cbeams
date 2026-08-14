@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { BuildingType, VehicleType, VehicleData, Faction, BuildingData } from '../../enum'
-import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT, BUILDING_POINTS_BUDGET } from '../common/Constants'
+import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_PLACEMENT_RANGE_PX, LOGISTICS_CENTER_MIN_SPACING_PX, BUILDING_POINTS_BUDGET } from '../common/Constants'
 import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
@@ -48,7 +48,7 @@ export default () => {
             <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%, -50%)', zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14, textAlign:'center' }}>
                 <div>Place your LogisticsCenters: {placed} / {LOGISTICS_CENTER_COUNT}</div>
                 <div style={{ marginTop:6, fontSize:12 }}>
-                    Click anywhere on your side of the map. Each one must be at least 500px from any other.
+                    Click within {LOGISTICS_CENTER_PLACEMENT_RANGE_PX}px of your Base or an existing LogisticsCenter. Each one must be at least {LOGISTICS_CENTER_MIN_SPACING_PX}px from any other.
                 </div>
             </div>
         )

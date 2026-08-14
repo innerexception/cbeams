@@ -49,9 +49,51 @@ function renderIcon(sidc, colorHex){
   return canvas;
 }
 
+// Objectives aren't rendered via milsymbol/SIDC at all (see MapScene's generateTextures) — they're
+// plain hand-drawn Canvas2D pictographs, ported here 1:1 from the same draw calls. There's no
+// Player/Enemy split for these (an Objective's owner is runtime state, not part of its map placement),
+// so they get their own row instead of the Friend/Hostile pair every unit/building icon above gets.
+function renderObjectiveIcon(kind, colorHex){
+  const size = 40;
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = hexToCss(colorHex);
+  ctx.fillStyle = hexToCss(colorHex);
+  ctx.lineWidth = 2;
+  const cx = size/2, cy = size/2;
+
+  if(kind === 'OilField'){
+    ctx.beginPath(); ctx.moveTo(cx-16, cy+14); ctx.lineTo(cx+16, cy+14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy-16); ctx.lineTo(cx-9, cy+14); ctx.lineTo(cx+9, cy+14); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-4, cy-2); ctx.lineTo(cx+4, cy-2); ctx.stroke();
+  }
+  else if(kind === 'City'){
+    const groundY = cy+14;
+    ctx.beginPath(); ctx.moveTo(cx-18, groundY); ctx.lineTo(cx+18, groundY); ctx.stroke();
+    const bars = [{ dx:-14, w:6, h:12 }, { dx:-6, w:6, h:20 }, { dx:2, w:6, h:9 }, { dx:9, w:6, h:16 }];
+    bars.forEach(b => ctx.strokeRect(cx+b.dx, groundY-b.h, b.w, b.h));
+  }
+  else if(kind === 'NuclearReactor'){
+    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI*2); ctx.fill();
+    for(let i=0; i<3; i++){
+      const angle = -Math.PI/2 + i*(Math.PI*2/3);
+      const x1 = cx + Math.cos(angle)*7, y1 = cy + Math.sin(angle)*7;
+      const x2 = cx + Math.cos(angle)*15, y2 = cy + Math.sin(angle)*15;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x2, y2, 3, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+  return canvas;
+}
+const OBJECTIVE_KINDS = ['OilField', 'City', 'NuclearReactor'];
+
 const TILE = 32;
 const cols = ORDER.length;
-const rows = 2;
+const rows = 3;
+const OBJECTIVE_ROW = 2;
 const grid = document.createElement('canvas');
 grid.width = cols*TILE;
 grid.height = rows*TILE;
@@ -59,20 +101,27 @@ const gctx = grid.getContext('2d');
 gctx.fillStyle = '#000000';
 gctx.fillRect(0,0,grid.width,grid.height);
 
+const drawIntoCell = (icon, col, row) => {
+  const scale = Math.min((TILE-2)/icon.width, (TILE-2)/icon.height, 1);
+  const w = icon.width*scale, h = icon.height*scale;
+  const x = col*TILE + (TILE-w)/2;
+  const y = row*TILE + (TILE-h)/2;
+  gctx.drawImage(icon, x, y, w, h);
+};
+
 const legend = [];
 ORDER.forEach(([type, kind], col) => {
   const fn = type === 'building' ? BUILDING_SIDC_FUNCTION[kind] : VEHICLE_SIDC_FUNCTION[kind];
   ['Player','Enemy'].forEach((faction, row) => {
     const color = faction === 'Player' ? GREEN_HEX : GREY_DIM_HEX;
     const sidc = buildSidc(faction, fn);
-    const icon = renderIcon(sidc, color);
-    const scale = Math.min((TILE-2)/icon.width, (TILE-2)/icon.height, 1);
-    const w = icon.width*scale, h = icon.height*scale;
-    const x = col*TILE + (TILE-w)/2;
-    const y = row*TILE + (TILE-h)/2;
-    gctx.drawImage(icon, x, y, w, h);
+    drawIntoCell(renderIcon(sidc, color), col, row);
     legend.push({ index: row*cols+col, col, row, type, kind, faction });
   });
+});
+OBJECTIVE_KINDS.forEach((kind, col) => {
+  drawIntoCell(renderObjectiveIcon(kind, GREEN_HEX), col, OBJECTIVE_ROW);
+  legend.push({ index: OBJECTIVE_ROW*cols+col, col, row: OBJECTIVE_ROW, type:'objective', kind, faction: null });
 });
 
 window.__tilesetDataUrl = grid.toDataURL('image/png');

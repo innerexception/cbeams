@@ -2,23 +2,20 @@ import { v4 } from "uuid"
 import type MapScene from "../components/scenes/MapScene"
 import { useAppStore, AppState } from "./store"
 import { Faction, BuildingType, VehicleType, BuildingData } from "../../enum"
-import { ENEMY_RAID_SIZE, LOGISTICS_CENTER_COUNT } from "./Constants"
-
-// Every kind the placement phase's second stage unlocks — mirrors FactoryToolbar's own bonus-building
-// button row (LogisticsCenter/Base stay out of it: LogisticsCenter has its own dedicated opening-move
-// placement above, Base isn't placeable by either side).
-const BONUS_BUILDING_KINDS:Array<BuildingType> = [BuildingType.CRAM, BuildingType.BLM, BuildingType.THADD, BuildingType.AmmoDump]
+import { ENEMY_RAID_SIZE } from "./Constants"
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reaches back into it only for the
 // handful of things a decision actually needs — placement validation, coordinate conversion, sprite
 // creation, and the small bit of AI state that lives on the scene itself (enemyShipyardId,
 // enemyRaidLaunched, reactedBlmIds) — the same primitives the player's own actions go through, so the
-// AI can never place/build anything the player couldn't.
+// AI can never place/build anything the player couldn't. Its *opening* buildings are no longer placed
+// here at all, though — every building (both factions' headquarters included) now comes entirely from
+// the loaded map file's own entities layer (see MapScene's spawnEntitiesFromMap); this file is left
+// with only its *reactive* behavior (the raid, and building a THADD in response to a player BLM).
 
 // Finds whichever cell passing `isValid` sits closest to `origin` — shared by every AI placement
-// decision that just wants "as close to home as possible" (this file's own opening LogisticsCenter
-// placement, and buildEnemyThadd's reactive one).
+// decision that just wants "as close to home as possible" (currently just buildEnemyThadd's reactive one).
 const findClosestValidCell = (scene:MapScene, origin:{x:number, y:number}, isValid:(x:number, y:number) => boolean) => {
     let best:{x:number, y:number} = null
     let bestDistSq = Infinity
@@ -33,58 +30,19 @@ const findClosestValidCell = (scene:MapScene, origin:{x:number, y:number}, isVal
     return best
 }
 
-// One-time opening move, mirroring the player's own placement phase: the enemy plants its
-// LOGISTICS_CENTER_COUNT starting LogisticsCenters, each on whichever valid, empty cell sits closest
-// to its base — placed one at a time so each later one already sees the earlier ones in
-// isValidLogisticsPlacement's spacing check, the same rule (and minimum separation) the player's own
-// placements go through, just mirrored onto the enemy's own half of the map. The first one placed
-// becomes "the" shipyard: the one spawnEnemyRaid queues drones at and checkEnemyRaid launches from.
-export const spawnEnemyLogisticsCenters = (scene:MapScene) => {
-    const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
-    if(!enemyBase) return
-
-    for(let i=0; i<LOGISTICS_CENTER_COUNT; i++){
-        const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidLogisticsPlacement(x, y, Faction.Enemy))
-        if(!best) return
-
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.LogisticsCenter, faction:Faction.Enemy, hp:BuildingData[BuildingType.LogisticsCenter].maxHp }
-        useAppStore.getState().addFactory(factory)
-        scene.createBuildingSprite(factory)
-        if(i === 0) scene.enemyShipyardId = factory.id
-    }
-}
-
-// One-time opening move, mirroring the player's own placement-phase second stage: the enemy spends
-// its entire buildingPoints budget on a random mix of the same kinds the player's toolbar unlocks
-// there, each placed on whichever valid, empty cell sits closest to its base (findClosestValidCell,
-// the same heuristic spawnEnemyLogisticsCenters uses). Runs all at once, right after
-// spawnEnemyLogisticsCenters — the enemy has no interactive phase to spread this over. The guard just
-// caps the loop so a map with no room left (or a run of unlucky picks it can't afford) can't spin
-// forever; it isn't expected to matter in normal play.
-export const spendEnemyBuildingPoints = (scene:MapScene) => {
-    const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
-    if(!enemyBase) return
-
-    let guard = 0
-    while(useAppStore.getState().buildingPoints[Faction.Enemy] > 0 && guard < 100){
-        guard++
-        const kind = BONUS_BUILDING_KINDS[Math.floor(Math.random()*BONUS_BUILDING_KINDS.length)]
-        const cost = BuildingData[kind].buildingPoints
-        if(useAppStore.getState().buildingPoints[Faction.Enemy] < cost) continue
-
-        const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(kind, x, y, Faction.Enemy))
-        if(!best) break
-
-        const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind, faction:Faction.Enemy, hp:BuildingData[kind].maxHp, ammoRemaining:BuildingData[kind].ammo }
-        useAppStore.getState().addFactory(factory)
-        scene.createBuildingSprite(factory)
-        useAppStore.getState().spendBuildingPoints(Faction.Enemy, cost)
-    }
-}
+// Each faction's actual headquarters building — Base for the enemy, PlayerBase for the player,
+// wherever the map file's entities layer actually placed it — used as a "close to home" anchor point
+// by the AI's reactive placement, and as checkEnemyRaid's defensive fallback destination. Looked up
+// from the store rather than mapData.bases, which no longer has anything to do with where a Base
+// actually ends up (that array is the old procedural generator's own opening positions, unused now
+// that spawnEntitiesFromMap is what actually places every building — see MapScene's spawnEntitiesFromMap).
+const findBase = (faction:Faction) => useAppStore.getState().buildings.find(f => f.faction === faction && (f.kind === BuildingType.Base || f.kind === BuildingType.PlayerBase))
 
 // One-time opening move: the enemy shipyard queues up a handful of kamikaze drones — going through
 // the same build queue/production timer as any player-built ship, rather than spawning them for
 // free — and then just sits on them once built. checkEnemyRaid is what actually sends them at the player.
+// A no-op if the map didn't actually place an enemy LogisticsCenter (enemyShipyardId, set by
+// spawnEntitiesFromMap onto the first one it finds, stays unset).
 export const spawnEnemyRaid = (scene:MapScene) => {
     const { queueShip } = useAppStore.getState()
     if(!scene.enemyShipyardId) return
@@ -118,7 +76,7 @@ export const checkEnemyRaid = (scene:MapScene) => {
 
     // Falls back to the player's Base only if, somehow, none of their LogisticsCenters exist anymore —
     // not expected in normal play, just a defensive floor so the raid still has somewhere to go.
-    const dest = nearestLogisticsCenter ? nearestLogisticsCenter.f : scene.mapData.bases.find(b => b.faction === Faction.Player)
+    const dest = nearestLogisticsCenter ? nearestLogisticsCenter.f : findBase(Faction.Player)
     if(!dest) return
 
     addWaypoint(scene.enemyShipyardId, dest.x, dest.y)
@@ -140,10 +98,10 @@ export const checkEnemyBlmDefense = (scene:MapScene, state:AppState) => {
 
 // Places a THADD as close to the enemy's own base as any currently-valid cell allows — the same
 // isValidPlacement gate everything else builds through (territory, logistics budget, no overlap),
-// and the same "closest valid cell to home" heuristic spawnEnemyLogisticsCenters uses. A no-op if
-// nowhere valid is found (map fully claimed, or the logistics budget has no room left).
+// and the same "closest valid cell to home" heuristic. A no-op if there's no enemy Base to anchor off
+// of, or nowhere valid is found (map fully claimed, or the logistics budget has no room left).
 export const buildEnemyThadd = (scene:MapScene) => {
-    const enemyBase = scene.mapData.bases.find(b => b.faction === Faction.Enemy)
+    const enemyBase = findBase(Faction.Enemy)
     if(!enemyBase) return
 
     const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(BuildingType.THADD, x, y, Faction.Enemy))

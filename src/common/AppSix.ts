@@ -16,6 +16,7 @@ interface SidcFunction { dimension:'G'|'A', functionId:string }
 
 export const BUILDING_SIDC_FUNCTION:Record<BuildingType, SidcFunction> = {
     [BuildingType.Base]: { dimension:'G', functionId:'UH1---' },
+    [BuildingType.PlayerBase]: { dimension:'G', functionId:'UH1---' },
     [BuildingType.LogisticsCenter]: { dimension:'G', functionId:'USS---' },
     [BuildingType.CRAM]: { dimension:'G', functionId:'UCD---' },
     [BuildingType.BLM]: { dimension:'G', functionId:'UCFRM-' },
@@ -50,7 +51,7 @@ export const renderAppSixIcon = (sidc:string, size:number, colorHex:number):HTML
         monoColor: hexToCss(colorHex),
         fill: true,
         fillOpacity: 0.15,
-        strokeWidth: 1.5,
+        strokeWidth: 2,
     })
     const iconCanvas = symbol.asCanvas()
 
