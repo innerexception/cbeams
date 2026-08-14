@@ -61,68 +61,6 @@ const lerpHexColor = (colorA:number, colorB:number, t:number) => {
     return (r<<16)|(g<<8)|b
 }
 
-// --- NATO APP-6 main icons (placement-preview use only) -------------------------------------------
-// Built sprites now render real APP-6 symbols via milsymbol (see generateTextures/src/common/AppSix.ts).
-// These hand-drawn glyphs remain only for drawFactoryShapeAt's placement-preview ghost — each draws
-// just the icon glyph, the small symbol inside a building's frame that identifies what it actually is,
-// centered at (x,y) at roughly `r` in size.
-
-// "Headquarters": a circle at the top of a short staff line, above the main symbol — command
-// authority over whatever's below it.
-const drawHqGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
-    g.lineStyle(1.5, color, alpha)
-    g.lineBetween(x, y-r*0.3, x, y-r*1.5)
-    g.strokeCircle(x, y-r*1.8, r*0.3)
-}
-
-
-// "Multiple Rocket Launcher": a row of launch tubes — shared by BLM (building) and MLRS (vehicle),
-// the same weapon system either fixed-emplaced or vehicle-mounted.
-const drawMlrsGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
-    g.lineStyle(1.5, color, alpha)
-    for(let i=-1; i<=1; i++){
-        const rx = x + i*r*0.5
-        g.strokeRect(rx-r*0.15, y-r*0.6, r*0.3, r*1.2)
-    }
-}
-
-// "Air Defense": a dome over a baseline, symbolizing overhead defensive coverage against aerial threats.
-const drawAirDefenseGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
-    g.lineStyle(1.5, color, alpha)
-    g.beginPath()
-    g.arc(x, y, r*0.7, Math.PI, 0, false)
-    g.strokePath()
-    g.lineBetween(x-r*0.7, y, x+r*0.7, y)
-}
-
-// "Missile/Rocket Unit": an upward rocket profile — pointed nose cone over a shaft, with tail fins.
-const drawMissileGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
-    g.lineStyle(1.5, color, alpha)
-    g.lineBetween(x, y+r*0.7, x, y-r*0.5)
-    const nose = [
-        new Phaser.Math.Vector2(x, y-r*1.1),
-        new Phaser.Math.Vector2(x+r*0.25, y-r*0.5),
-        new Phaser.Math.Vector2(x-r*0.25, y-r*0.5),
-    ]
-    g.fillStyle(color, alpha*0.5)
-    g.fillPoints(nose, true)
-    g.strokePoints(nose, true, true)
-    g.lineBetween(x-r*0.3, y+r*0.7, x, y+r*0.4)
-    g.lineBetween(x+r*0.3, y+r*0.7, x, y+r*0.4)
-}
-
-// "Supply/Sustainment": a simplified funnel/hopper — distribution of materiel.
-const drawSupplyGlyph = (g:GameObjects.Graphics, x:number, y:number, r:number, color:number, alpha:number) => {
-    g.lineStyle(1.5, color, alpha)
-    const points = [
-        new Phaser.Math.Vector2(x-r*0.6, y-r*0.5),
-        new Phaser.Math.Vector2(x+r*0.6, y-r*0.5),
-        new Phaser.Math.Vector2(x+r*0.15, y+r*0.5),
-        new Phaser.Math.Vector2(x-r*0.15, y+r*0.5),
-    ]
-    g.strokePoints(points, true, true)
-}
-
 // Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
 // contact target — TargetType.Any covers both. Replaces the old hardcoded KK/ATD type checks that
 // decided which drones could detonate against a ship vs. a building.
@@ -190,6 +128,10 @@ export default class MapScene extends Scene {
     // ever needs to be touched when a building is added or removed.
     rangeG: GameObjects.Graphics
     previewG: GameObjects.Graphics
+    // The placement ghost's icon — a real APP-6 'factory_'+kind texture (baked by generateTextures),
+    // tinted/faded per showPreviewIcon rather than hand-drawn into previewG. Reassigned per-call, so its
+    // initial texture key here is arbitrary.
+    previewIcon: GameObjects.Image
     selectionG: GameObjects.Graphics
     progressG: GameObjects.Graphics
     healthG: GameObjects.Graphics
@@ -260,6 +202,7 @@ export default class MapScene extends Scene {
         this.objectiveRangeG = this.add.graphics()
 
         this.generateTextures()
+        this.previewIcon = this.add.image(0, 0, 'factory_'+BuildingType.LogisticsCenter).setVisible(false)
         this.shipsGroup = this.physics.add.group()
         this.buildingsGroup = this.physics.add.staticGroup()
         this.missilesGroup = this.physics.add.group()
@@ -930,7 +873,7 @@ export default class MapScene extends Scene {
     // A drone touching a hostile ship detonates immediately, right here — no queueing. If both sides of
     // the pair are hostile drones, shipA goes off first; shipB is only then re-checked (its detonation
     // may have already killed it, e.g. caught in shipA's ATD blast) before it gets to detonate too.
-    onDroneShipContact = (a:Phaser.Types.Physics.Arcade.GameObjectWithBody, b:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+    onDroneShipContact = (a:Physics.Arcade.Sprite, b:Physics.Arcade.Sprite) => {
         const spriteA = a as Physics.Arcade.Sprite
         const spriteB = b as Physics.Arcade.Sprite
         const shipA = this.getShipEntry(a)
@@ -944,7 +887,7 @@ export default class MapScene extends Scene {
     }
 
     // A drone touching a hostile building detonates immediately, right here — no queueing.
-    onDroneBuildingContact = (shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, buildingObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+    onDroneBuildingContact = (shipObj:Physics.Arcade.Sprite, buildingObj:Physics.Arcade.Sprite) => {
         const ship = this.getShipEntry(shipObj)
         const building = this.getBuildingEntry(buildingObj)
         if(!ship || !building) return
@@ -1842,72 +1785,16 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Placement-preview-only shape renderer: the built building's actual sprite is a real APP-6 symbol
-    // now, generated at runtime by milsymbol (see generateTextures/src/common/AppSix.ts), but the live
-    // ghost that follows the cursor while placing is still this hand-drawn approximation — cheap to
-    // redraw every frame with a variable alpha/color, which a cached canvas texture doesn't lend itself
-    // to. Each kind draws its own footprint "pad" plus a rough version of that building's icon: CRAM is
-    // Air Defense, BLM draws the same MLRS launcher glyph the MLRS vehicle's real icon uses, THADD is a
-    // Missile/Rocket unit, LogisticsCenter is Supply/Sustainment, and Base gets an HQ glyph on top of
-    // its distinct oversized diamond. `rotation` (radians) only affects the Solar Mill's rays.
-    drawFactoryShapeAt = (g:GameObjects.Graphics, kind:BuildingType, x:number, y:number, color:number, alpha:number, rotation:number = 0) => {
-        if(kind === BuildingType.CRAM){
-            const r = CELL_SIZE * 0.5
-            g.lineStyle(2, color, alpha)
-            g.strokeCircle(x, y, r)
-            drawAirDefenseGlyph(g, x, y, r, color, alpha)
-        }
-        else if(kind === BuildingType.Base){
-            // The faction headquarters: a larger filled diamond, distinct from every other building,
-            // topped with the standard HQ staff-and-circle glyph.
-            const r = CELL_SIZE * 1.5
-            const points = [
-                new Phaser.Math.Vector2(x, y-r),
-                new Phaser.Math.Vector2(x+r, y),
-                new Phaser.Math.Vector2(x, y+r),
-                new Phaser.Math.Vector2(x-r, y),
-            ]
-            g.fillStyle(color, alpha*0.25)
-            g.fillPoints(points, true)
-            g.lineStyle(2, color, alpha)
-            g.strokePoints(points, true, true)
-            drawHqGlyph(g, x, y-r*0.3, r*0.7, color, alpha)
-        }
-        else if(kind === BuildingType.BLM){
-            const r = CELL_SIZE * 0.55
-            g.lineStyle(2, color, alpha)
-            g.strokeRect(x-r, y-r*0.5, r*2, r)
-            drawMlrsGlyph(g, x, y-r*0.1, r, color, alpha)
-        }
-        else if(kind === BuildingType.THADD){
-            const r = CELL_SIZE * 0.55
-            g.lineStyle(2, color, alpha)
-            g.strokeRect(x-r, y-r*0.5, r*2, r)
-            drawMissileGlyph(g, x, y-r*0.1, r, color, alpha)
-        }
-        else {
-            // LogisticsCenter: a hexagonal pad (its distinct footprint shape) with the standard
-            // Supply/Sustainment funnel glyph inside.
-            const r = CELL_SIZE * 0.7
-            const points = []
-            for(let i=0; i<6; i++){
-                const angle = (i/6) * Math.PI*2
-                points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*r, y + Math.sin(angle)*r))
-            }
-            g.fillStyle(color, alpha*0.2)
-            g.fillPoints(points, true)
-            g.lineStyle(2, color, alpha)
-            g.strokePoints(points, true, true)
-            drawSupplyGlyph(g, x, y, r, color, alpha)
-        }
-    }
-
-    // Grid-coordinate wrapper around drawFactoryShapeAt, for the two Graphics-based (non-sprite) uses
-    // that still deal in grid cells: the placement ghost preview, and... nothing else now that built
-    // factories render as sprites — kept as its own method so updatePreview reads naturally.
-    drawFactoryShape = (g:GameObjects.Graphics, kind:BuildingType, gridX:number, gridY:number, color:number, alpha:number, rotation:number = 0) => {
+    // The placement ghost that follows the cursor is the exact same real APP-6 icon texture the built
+    // building will actually use (baked once by generateTextures — see 'factory_'+kind there), not a
+    // hand-drawn approximation — just tinted/faded to distinguish a valid spot from an invalid one.
+    showPreviewIcon = (kind:BuildingType, gridX:number, gridY:number, valid:boolean) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        this.drawFactoryShapeAt(g, kind, x, y, color, alpha, rotation)
+        this.previewIcon.setTexture('factory_'+kind)
+        this.previewIcon.setPosition(x, y)
+        this.previewIcon.setTint(valid ? GREEN_HEX : GREY_DIM_HEX)
+        this.previewIcon.setAlpha(valid ? 0.9 : 0.5)
+        this.previewIcon.setVisible(true)
     }
 
     findFactoryAt = (gridX:number, gridY:number) => useAppStore.getState().buildings.find(f => f.x === gridX && f.y === gridY)
@@ -2002,6 +1889,7 @@ export default class MapScene extends Scene {
         useAppStore.getState().addFactory(factory)
         this.createBuildingSprite(factory)
         this.previewG.clear()
+        this.previewIcon.setVisible(false)
 
         const placedCount = useAppStore.getState().buildings.filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter).length
         if(placedCount >= LOGISTICS_CENTER_COUNT) useAppStore.getState().setPhase('building')
@@ -2032,6 +1920,7 @@ export default class MapScene extends Scene {
         this.createBuildingSprite(factory)
         setPlacingFactory(null)
         this.previewG.clear()
+        this.previewIcon.setVisible(false)
 
         spendBuildingPoints(Faction.Player, cost)
         if(useAppStore.getState().buildingPoints[Faction.Player] <= 0) this.startCombatPhase()
@@ -2039,19 +1928,19 @@ export default class MapScene extends Scene {
 
     updatePreview = () => {
         this.previewG.clear()
-        if(!this.hoveredCell) return
+        if(!this.hoveredCell){ this.previewIcon.setVisible(false); return }
 
         if(useAppStore.getState().phase === 'placement'){
             const valid = this.isValidLogisticsPlacement(this.hoveredCell.x, this.hoveredCell.y)
-            this.drawFactoryShape(this.previewG, BuildingType.LogisticsCenter, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
+            this.showPreviewIcon(BuildingType.LogisticsCenter, this.hoveredCell.x, this.hoveredCell.y, valid)
             return
         }
 
         const { placingFactory } = useAppStore.getState()
-        if(!placingFactory) return
+        if(!placingFactory){ this.previewIcon.setVisible(false); return }
 
         const valid = this.isValidPlacement(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
-        this.drawFactoryShape(this.previewG, placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid ? GREEN_HEX : GREY_DIM_HEX, valid ? 0.9 : 0.5)
+        this.showPreviewIcon(placingFactory, this.hoveredCell.x, this.hoveredCell.y, valid)
         this.drawAmmoDumpPreviewLines(placingFactory, this.hoveredCell.x, this.hoveredCell.y)
     }
 
