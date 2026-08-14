@@ -96,6 +96,12 @@ export const CONTRAIL_LIFETIME_MS = 5000
 // range now live on its BuildingMetaData entry in enum.ts.
 export const THADD_SALVO_SIZE = 2
 
+// --- Uplink (a placeable building, not a ship) ---
+// Clicking it (see MapScene's activateUplink) reveals the entire map — every hostile building/ship
+// renders regardless of actual sight range — for this long. Its cooldown lives on its BuildingMetaData
+// entry in enum.ts, alongside every other building's.
+export const UPLINK_REVEAL_DURATION_MS = 10000
+
 // --- Wreckage ---
 // Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.
 export const SHATTER_LIFETIME_MS = 10000

@@ -11,6 +11,8 @@ const hints = {
     [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
     [BuildingType.THADD]: 'Click empty ground near your base to build a THADD',
     [BuildingType.AmmoDump]: 'Click empty ground near your base to build an AmmoDump — lines show which buildings would be in resupply range',
+    [BuildingType.Radar]: 'Click empty ground near your base to build a Radar — reveals a much wider ring of fog of war around it',
+    [BuildingType.Uplink]: 'Click empty ground near your base to build an Uplink — then click the building itself to reveal the whole map for 10s (1 minute cooldown)',
 }
 
 export default () => {

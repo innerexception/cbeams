@@ -40,7 +40,7 @@ export enum ObjectiveSprite {
 }
 
 export enum BuildingType {
-    LogisticsCenter='LogisticsCenter', CRAM='CRAM', Base='Base', BLM='BLM', THADD='THADD', AmmoDump='AmmoDump'
+    LogisticsCenter='LogisticsCenter', CRAM='CRAM', Base='Base', BLM='BLM', THADD='THADD', AmmoDump='AmmoDump', Radar='Radar', Uplink='Uplink'
 }
 
 export const BuildingData:Record<BuildingType,BuildingMetaData> = {
@@ -49,11 +49,15 @@ export const BuildingData:Record<BuildingType,BuildingMetaData> = {
     [BuildingType.Base]: { maxHp:20, cooldownMs:0, damage:0, rangePx:0, buildingPoints:0 },
     [BuildingType.BLM]: { maxHp:40, cooldownMs:10000, damage:5, rangePx:4000, buildingPoints:3, ammo:10 },
     [BuildingType.THADD]: { maxHp:40, cooldownMs:10000, damage:0, rangePx:600, buildingPoints:4, ammo:10 },
-    // rangePx doubles as its replenishment radius (same convention as CRAM/BLM/THADD's weapon range) and
-    // cooldownMs as how often it checks nearby for anything empty (see updateAmmoDumps) — it doesn't
-    // attack, so damage stays 0. Its own `ammo` is the total stockpile it has to hand out, over its
-    // whole lifetime, before it's just a hull with nothing left to give.
     [BuildingType.AmmoDump]: { maxHp:40, cooldownMs:2000, damage:0, rangePx:100, buildingPoints:2, ammo:20 },
+    // Purely passive — no weapon, no cooldown, no ammo. Its whole purpose is the oversized sightRadius
+    // override below (see getStructureRadius in MapScene), which is what actually reveals a much wider
+    // ring of fog of war around it than any other building projects.
+    [BuildingType.Radar]: { maxHp:10, cooldownMs:0, damage:0, rangePx:0, buildingPoints:2, sightRadius:500 },
+    // Not an auto-firing weapon like CRAM/BLM/THADD — clicking it directly (see MapScene's
+    // activateUplink) reveals the whole map for UPLINK_REVEAL_DURATION_MS, gated by this same
+    // cooldownMs/lastFiredAtMs pair every other building's weapon cooldown uses.
+    [BuildingType.Uplink]: { maxHp:20, cooldownMs:60000, damage:0, rangePx:0, buildingPoints:3 },
 }
 
 export enum VehicleType {

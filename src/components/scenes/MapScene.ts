@@ -16,6 +16,7 @@ import {
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
     THADD_SALVO_SIZE,
+    UPLINK_REVEAL_DURATION_MS,
     SHATTER_LIFETIME_MS,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_MIN_SPACING_PX,
@@ -43,8 +44,14 @@ const shipOrbitPhase = (id:string) => {
 // Mining stations and solar mills project a smaller placement radius than bases/shipyards/CRAM turrets.
 // This same per-structure radius is also each faction's sight range (see updateFogOfWar) — the
 // territory border drawn by drawPlacementRanges doubles as "how far that faction can currently see".
-const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD])
-const getStructureRadius = (structure:BuildingData) => !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
+const FULL_RADIUS_KINDS = new Set([BuildingType.LogisticsCenter, BuildingType.CRAM, BuildingType.Base, BuildingType.BLM, BuildingType.THADD, BuildingType.Radar])
+// A kind whose BuildingMetaData sets its own sightRadius (currently just Radar) uses that directly,
+// overriding the FULL_RADIUS_KINDS binary choice entirely.
+const getStructureRadius = (structure:BuildingData) => {
+    const override = BuildingData[structure.kind].sightRadius
+    if(override !== undefined) return override
+    return !FULL_RADIUS_KINDS.has(structure.kind) ? EXTRACTOR_RADIUS_PX : PLACEMENT_RADIUS_PX
+}
 
 // Each building kind's max HP now lives on its BuildingMetaData entry in enum.ts (the tougher,
 // non-placeable Base has its own, higher, value there).
@@ -170,6 +177,11 @@ export default class MapScene extends Scene {
     shiftDown: boolean = false
     dragSelectStart: { x:number, y:number } | null = null
     dragSelectCurrent: { x:number, y:number } | null = null
+    // Set by activateUplink to this.time.now+UPLINK_REVEAL_DURATION_MS — while this.time.now is still
+    // under it, isWithinFactionSightRange treats the player's sight range as unlimited, which in turn
+    // reveals every hostile building/ship (updateFogOfWar) AND lets every one of the player's own
+    // weapons (findNearestHostile*) acquire targets anywhere on the map, not just fog-of-war rendering.
+    mapRevealedUntil: number = 0
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
     // Decaying vapor-trail points left behind an offensive missile's actual (arced) flight path — see
@@ -700,6 +712,9 @@ export default class MapScene extends Scene {
     updateFogOfWar = () => {
         const { phase, buildings, vehicles } = useAppStore.getState()
 
+        // While Uplink's reveal is active, isWithinFactionSightRange itself returns true everywhere for
+        // Faction.Player — this isn't just fog rendering, every one of the player's own weapon-targeting
+        // queries (findNearestHostile*) sees the same expanded sight range.
         buildings.filter(f => f.faction === Faction.Enemy).forEach(f => {
             const { x, y } = this.toWorld(f.x, f.y)
             const visible = phase === 'combat' && this.isWithinFactionSightRange(x, y, Faction.Player)
@@ -711,6 +726,20 @@ export default class MapScene extends Scene {
             this.shipSprites.get(s.id)?.setVisible(visible)
             this.shipLabels.get(s.id)?.setVisible(visible)
         })
+    }
+
+    // Uplink's ability, triggered by clicking the building directly (see enablePlacementControls'
+    // pointerdown) rather than firing automatically like CRAM/BLM/THADD do — a one-time click gated by
+    // the same lastFiredAtMs/cooldownMs pair every other building's weapon cooldown uses. Sets
+    // mapRevealedUntil, which is all isWithinFactionSightRange actually checks to expand the player's
+    // sight range early — both fog-of-war rendering and every weapon-targeting query read off it.
+    activateUplink = (building:BuildingData) => {
+        const now = this.time.now
+        if(building.lastFiredAtMs && now - building.lastFiredAtMs < BuildingData[BuildingType.Uplink].cooldownMs) return
+
+        const { buildings, setFactories } = useAppStore.getState()
+        setFactories(buildings.map(f => f.id === building.id ? { ...f, lastFiredAtMs:now } : f))
+        this.mapRevealedUntil = now + UPLINK_REVEAL_DURATION_MS
     }
 
     // --- Physics sprite lifecycle -------------------------------------------------------------------
@@ -1875,6 +1904,12 @@ export default class MapScene extends Scene {
     // (placement territory stays building-only — parking a ship somewhere shouldn't open up new
     // building placement there).
     isWithinFactionSightRange = (worldX:number, worldY:number, faction:Faction) => {
+        // Uplink's ability is a genuine (temporary) sight-radius expansion for the player specifically —
+        // every one of the player's own weapons (findNearestHostile*), not just fog-of-war rendering,
+        // sees the whole map through this same check while it's active. Deliberately keyed to
+        // Faction.Player, not `faction` — this never extends the *enemy's* own sight range, even if the
+        // enemy somehow built an Uplink of its own (it has no way to click one anyway).
+        if(faction === Faction.Player && this.time.now < this.mapRevealedUntil) return true
         if(this.isWithinFactionStructureRadius(worldX, worldY, faction)) return true
         const ownVehicles = useAppStore.getState().vehicles.filter(s => s.faction === faction)
         return ownVehicles.some(s => Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= VehicleData[s.type].sightRadius)
@@ -2090,6 +2125,12 @@ export default class MapScene extends Scene {
 
             if(!placingFactory){
                 const clicked = this.findFactoryAt(this.hoveredCell.x, this.hoveredCell.y)
+                // Uplink isn't selected for orders like a shipyard — clicking it directly fires its
+                // ability (subject to its own cooldown) instead.
+                if(clicked && clicked.faction === Faction.Player && clicked.kind === BuildingType.Uplink){
+                    this.activateUplink(clicked)
+                    return
+                }
                 setSelectedFactoryId(clicked && clicked.faction === Faction.Player && clicked.kind === BuildingType.LogisticsCenter ? clicked.id : null)
                 return
             }

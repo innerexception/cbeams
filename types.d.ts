@@ -78,6 +78,10 @@ interface BuildingMetaData {
     // don't fire missiles at all (CRAM's cannon and ARMOR's cannon shot are instant-hit, not a missile).
     // See BuildingData's ammoRemaining for the live per-instance count this is the starting value for.
     ammo?:number
+    // Overrides the placement/fog-of-war territory bubble MapScene's getStructureRadius otherwise
+    // derives from FULL_RADIUS_KINDS membership (EXTRACTOR_RADIUS_PX or PLACEMENT_RADIUS_PX) — undefined
+    // for every kind except Radar, whose whole purpose is this oversized radius.
+    sightRadius?:number
 }
 
 interface BuildingData {
