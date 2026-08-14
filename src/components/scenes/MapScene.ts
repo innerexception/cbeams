@@ -11,7 +11,7 @@ import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, T
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     PLACEMENT_RADIUS_PX, EXTRACTOR_RADIUS_PX,
-    TRACER_LIFETIME_MS, MISSILE_INTERCEPT_CHANCE,
+    TRACER_LIFETIME_MS,
     ATD_BLAST_RADIUS_PX,
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
@@ -165,7 +165,9 @@ export default class MapScene extends Scene {
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
     // Decaying vapor-trail points left behind an offensive missile's actual (arced) flight path — see
     // startMissileLeg/updateMissiles for how the arc itself is computed, drawMissileTrails for the draw.
-    contrails: Array<{ x:number, y:number, createdAt:number }> = []
+    // Tagged per-missile (missileId) so drawMissileTrails can connect each missile's own points into its
+    // own polyline instead of drawing every missile's dots into one shared cloud.
+    contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
 
     // Enemy AI state — read/written by the helper functions in src/common/AIPlayers.ts, which take
     // this scene as their first argument rather than owning the state themselves.
@@ -998,10 +1000,10 @@ export default class MapScene extends Scene {
         missileB.destroy()
     }
 
-    // Each CRAM turret, on cooldown, fires at whichever hostile ship OR incoming MLRS missile is
-    // nearest within its (doubled, relative to the old mobile CRV's) range — from a fixed building
-    // position instead of a mobile ship. A shot at a ship always lands; a shot at a missile only has a
-    // chance to bring it down. Range acquisition is a physics.overlapCirc query, not a full ship sweep.
+    // Each CRAM turret, on cooldown, fires at whichever hostile ship is nearest within its (doubled,
+    // relative to the old mobile CRV's) range — from a fixed building position instead of a mobile
+    // ship. CRAM only ever targets ships; incoming missiles are THADD's job (see updateThadd), not
+    // CRAM's. Range acquisition is a physics.overlapCirc query, not a full ship sweep.
     updateCramTurrets = (time:number) => {
         const { buildings: factories, setShips, setFactories } = useAppStore.getState()
         const turrets = factories.filter(f => f.kind === BuildingType.CRAM)
@@ -1014,22 +1016,13 @@ export default class MapScene extends Scene {
             if(turret.lastFiredAtMs && time - turret.lastFiredAtMs < BuildingData[BuildingType.CRAM].cooldownMs) return
 
             const { x, y } = this.toWorld(turret.x, turret.y)
-            const { targetShip, targetMissile } = this.findNearestHostileInRange(turret.faction, x, y, BuildingData[BuildingType.CRAM].rangePx)
-            if(!targetShip && !targetMissile) return
+            const targetShip = this.findNearestHostileShip(turret.faction, x, y, BuildingData[BuildingType.CRAM].rangePx)
+            if(!targetShip) return
 
             shooterIds.add(turret.id)
-            if(targetShip){
-                this.tracers.push({ x1:x, y1:y, x2:targetShip.x, y2:targetShip.y, createdAt:time })
-                const targetShipId = targetShip.getData('id')
-                damageByTarget.set(targetShipId, (damageByTarget.get(targetShipId) || 0) + BuildingData[BuildingType.CRAM].damage)
-            }
-            else {
-                this.tracers.push({ x1:x, y1:y, x2:targetMissile.x, y2:targetMissile.y, createdAt:time })
-                if(Math.random() < MISSILE_INTERCEPT_CHANCE){
-                    this.shatters.push({ x:targetMissile.x, y:targetMissile.y, createdAt:time, seed:targetMissile.getData('id') })
-                    targetMissile.destroy()
-                }
-            }
+            this.tracers.push({ x1:x, y1:y, x2:targetShip.x, y2:targetShip.y, createdAt:time })
+            const targetShipId = targetShip.getData('id')
+            damageByTarget.set(targetShipId, (damageByTarget.get(targetShipId) || 0) + BuildingData[BuildingType.CRAM].damage)
         })
 
         if(shooterIds.size === 0) return
@@ -1041,48 +1034,36 @@ export default class MapScene extends Scene {
         }))
     }
 
-    // Nearest hostile ship AND nearest hostile missile within radius of a point, found via a spatial
-    // physics query (physics.overlapCirc) instead of sweeping every ship/missile in the game. Used by
-    // the CRAM turret, which cares about both (a ship target always wins over a missile one below).
+    // Nearest hostile ship within radius of a point, found via a spatial physics query
+    // (physics.overlapCirc) instead of sweeping every ship in the game. Used by the CRAM turret, which
+    // only ever targets ships (never a missile — that's THADD's job, see findNearestHostileMissile).
     // Every candidate also has to fall within the *shooter's own faction's* sight range (see
     // updateFogOfWar) — weapon range alone isn't enough to fire on something that faction can't
     // actually see, whichever faction's turret/ship is doing the shooting. This is what stops the AI
     // sniping things it has no business knowing about; it never gets to peek at the player's own fog
     // of war (which is all "faction" meant here before — always Faction.Player, regardless of who was
     // actually shooting).
-    findNearestHostileInRange = (fromFaction:Faction, x:number, y:number, range:number) => {
+    findNearestHostileShip = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let targetShip:Physics.Arcade.Sprite = null
-        let targetMissile:Physics.Arcade.Sprite = null
         let nearestShipDist = Infinity
-        let nearestMissileDist = Infinity
 
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
+            if(obj.getData('kind') !== 'ship') return
             if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
-            const kind:BodyKind = obj.getData('kind')
+            const ship = this.getShipEntry(obj)
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
-
-            if(kind === 'ship'){
-                const ship = this.getShipEntry(obj)
-                if(ship && ship.faction !== fromFaction && d < nearestShipDist){ nearestShipDist = d; targetShip = obj }
-            }
-            else if(kind === 'missile' && obj.getData('faction') !== fromFaction && d < nearestMissileDist){
-                nearestMissileDist = d; targetMissile = obj
-            }
+            if(ship && ship.faction !== fromFaction && d < nearestShipDist){ nearestShipDist = d; targetShip = obj }
         })
 
-        // A ship target always wins over a missile target if one's in range — mirrors "prefer the ship,
-        // shoot the missile only when it's genuinely the closer/only threat" from the old logic by just
-        // comparing the two distances directly.
-        if(targetShip && targetMissile) return nearestShipDist <= nearestMissileDist ? { targetShip, targetMissile:null } : { targetShip:null, targetMissile }
-        return { targetShip, targetMissile }
+        return targetShip
     }
 
-    // Same shape as findNearestHostileInRange, but for buildings only (never a ship or a missile), so
+    // Same shape as findNearestHostileShip, but for buildings only (never a ship or a missile), so
     // the query only needs static bodies (buildingsGroup) — used by both BLM and MLRS, neither of which
-    // ever targets a ship. Same shooter's-own-sight-range requirement as findNearestHostileInRange.
+    // ever targets a ship. Same shooter's-own-sight-range requirement as findNearestHostileShip.
     findNearestHostileBuilding = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, false, true)
         let targetBuilding:Physics.Arcade.Sprite = null
@@ -1102,7 +1083,7 @@ export default class MapScene extends Scene {
 
     // Same shape again, but for THADD: it only ever targets a hostile missile (never a ship or
     // building), so the query only needs dynamic bodies and just checks kind === 'missile'. Same
-    // shooter's-own-sight-range requirement as findNearestHostileInRange.
+    // shooter's-own-sight-range requirement as findNearestHostileShip.
     findNearestHostileMissile = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let target:Physics.Arcade.Sprite = null
@@ -1457,11 +1438,9 @@ export default class MapScene extends Scene {
 
             // Offensive missile: retarget (a fresh leg) if the current target's gone and something else
             // hostile is in range; otherwise this leg's origin/target stay exactly as they were. Always
-            // findNearestHostileBuilding, never findNearestHostileInRange — every offensive missile
-            // (MLRS/BLM) is spawned with targetKind 'building' (a THADD interceptor is 'missile' and
-            // returns above, before this code even runs), so a building is the only kind of target this
-            // ever legitimately retargets onto; findNearestHostileInRange's ship/missile candidates have
-            // no business here at all.
+            // findNearestHostileBuilding — every offensive missile (MLRS/BLM) is spawned with targetKind
+            // 'building' (a THADD interceptor is 'missile' and returns above, before this code even
+            // runs), so a building is the only kind of target this ever legitimately retargets onto.
             if(!this.getMissileTargetSprite(targetKind, targetId)){
                 const faction:Faction = child.getData('faction')
                 const searchRadius = this.mapData.width * CELL_SIZE
@@ -1495,7 +1474,7 @@ export default class MapScene extends Scene {
 
             const lastContrailAt = child.getData('lastContrailAt') || 0
             if(time - lastContrailAt >= CONTRAIL_INTERVAL_MS){
-                this.contrails.push({ x, y, createdAt:time })
+                this.contrails.push({ x, y, createdAt:time, missileId:child.getData('id') })
                 child.setData('lastContrailAt', time)
             }
 
@@ -1548,16 +1527,30 @@ export default class MapScene extends Scene {
     }
 
     // Every offensive missile renders itself now (its sprite's real position *is* its physics/collision
-    // position — see updateMissiles) — this only draws the decaying vapor trail of points left behind it.
+    // position — see updateMissiles) — this only draws the decaying vapor trail left behind it, as a
+    // single polyline per missile (each segment's alpha fading with its own age) rather than a cloud of
+    // independent dots, so a trail actually reads as one continuous contrail curving through the arc.
     drawMissileTrails = (time:number) => {
         const g = this.trailG
         g.clear()
 
         this.contrails = this.contrails.filter(c => time - c.createdAt < CONTRAIL_LIFETIME_MS)
+
+        const byMissile = new Map<string, Array<{ x:number, y:number, createdAt:number }>>()
         this.contrails.forEach(c => {
-            const alpha = (1 - (time-c.createdAt)/CONTRAIL_LIFETIME_MS) * 0.5
-            g.fillStyle(GREEN_HEX, alpha)
-            g.fillCircle(c.x, c.y, 1.5)
+            const points = byMissile.get(c.missileId) || []
+            points.push(c)
+            byMissile.set(c.missileId, points)
+        })
+
+        byMissile.forEach(points => {
+            points.sort((a, b) => a.createdAt - b.createdAt)
+            for(let i=1; i<points.length; i++){
+                const prev = points[i-1], cur = points[i]
+                const alpha = (1 - (time-cur.createdAt)/CONTRAIL_LIFETIME_MS) * 0.5
+                g.lineStyle(1.5, GREEN_HEX, alpha)
+                g.lineBetween(prev.x, prev.y, cur.x, cur.y)
+            }
         })
     }
 

@@ -52,11 +52,10 @@ export const SHIP_BUILDING_CLEARANCE_PX = 20
 export const BUILDING_MIN_CLEARANCE_PX = 30
 
 // --- CRAM turret (a placeable building, not a ship) ---
-// Its cooldown, damage and range now live on its BuildingMetaData entry in enum.ts. It can also
-// target an incoming MLRS missile instead of a ship, with a chance to shoot it down; how long a
-// burst's tracer dots stay on screen is still a plain constant.
+// Its cooldown, damage and range now live on its BuildingMetaData entry in enum.ts. It only ever
+// targets a hostile ship — never a missile, that's THADD's job. How long a burst's tracer dots stay on
+// screen is still a plain constant.
 export const TRACER_LIFETIME_MS = 220
-export const MISSILE_INTERCEPT_CHANCE = 0.4
 
 // --- Kamikaze drones (KK, ATD) ---
 // How close a drone has to get to a hostile unit/building to count as "contact". Their own damage now
@@ -83,7 +82,7 @@ export const SALVO_STAGGER_MS = 500
 // interceptor (targetKind 'missile') gets neither — it's a fast, straight anti-missile shot, not a lob.
 export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60
-export const CONTRAIL_LIFETIME_MS = 700
+export const CONTRAIL_LIFETIME_MS = 5000
 
 // --- ARMOR ground vehicle ---
 // On cooldown, fires a single instant shot (like CRAM's cannon, not a homing missile) at whichever
