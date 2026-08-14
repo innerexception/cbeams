@@ -15,16 +15,25 @@ interface BaseData {
     y: number
 }
 
-// A rectangular lattice of signed elevation samples (one per grid cell) covering the terrain's
-// bounding box — positive values are raised terrain (Hill, Spur), negative values are sunken terrain
-// (Valley), magnitude in [-1,1]. origin+cols/rows locate the lattice back in map-grid space. Rendered
-// as topographic contour lines (see MapScene's drawTerrain), not as shapes.
-interface TerrainData {
-    originX: number
-    originY: number
-    cols: number
-    rows: number
-    elevations: Array<Array<number>>
+// A minimal subset of a Tiled (mapeditor.org) JSON map export — just enough to read tile GIDs back out
+// of a hand-authored, annotated map file. Only the plain array/CSV `data` layer format is supported
+// (not Tiled's base64/compressed export options). See MapGenerator's parseTiledMap for how a raw
+// exported JSON object gets turned into this, and MapScene's drawTerrain for how it's actually drawn —
+// a plain wireframe outline per occupied tile, not real tileset artwork, since this game has no tile
+// image assets, only vector Graphics.
+interface TiledLayer {
+    name: string
+    width: number
+    height: number
+    data: Array<number>
+}
+
+interface TiledMap {
+    width: number
+    height: number
+    tilewidth: number
+    tileheight: number
+    layers: Array<TiledLayer>
 }
 
 // A capturable map feature's fixed identity — where it sits and which of the 3 possible sprites it
@@ -43,7 +52,9 @@ interface MapData {
     height: number
     bases: Array<BaseData>
     objectives: Array<ObjectiveSpawn>
-    terrain: TerrainData
+    // No procedurally-generated terrain anymore — this is either null (the default: an empty map,
+    // until a real Tiled file exists and is passed to generateMap) or a parsed Tiled JSON export.
+    terrain: TiledMap | null
 }
 
 // The live half of a capturable Objective — see ObjectiveSpawn for its fixed id/position/sprite (never

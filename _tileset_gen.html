@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>tileset gen</title></head>
+<body style="background:#222">
+<script src="node_modules/milsymbol/dist/milsymbol.js"></script>
+<script>
+window.ms.setStandard("APP6");
+
+const BUILDING_SIDC_FUNCTION = {
+  Base: { dimension:'G', functionId:'UH1---' },
+  LogisticsCenter: { dimension:'G', functionId:'USS---' },
+  CRAM: { dimension:'G', functionId:'UCD---' },
+  BLM: { dimension:'G', functionId:'UCFRM-' },
+  THADD: { dimension:'G', functionId:'UCDM--' },
+  AmmoDump: { dimension:'G', functionId:'USS5--' },
+  Radar: { dimension:'G', functionId:'USX---' },
+  Uplink: { dimension:'G', functionId:'UUS---' },
+};
+const VEHICLE_SIDC_FUNCTION = {
+  KK: { dimension:'A', functionId:'MFQ---' },
+  ATD: { dimension:'A', functionId:'MFQ---' },
+  AWACS: { dimension:'A', functionId:'MFQ---' },
+  MLRS: { dimension:'G', functionId:'UCFRM-' },
+  ARMOR: { dimension:'G', functionId:'UCA---' },
+};
+
+const ORDER = [
+  ['building','Base'], ['building','LogisticsCenter'], ['building','CRAM'], ['building','BLM'],
+  ['building','THADD'], ['building','AmmoDump'], ['building','Radar'], ['building','Uplink'],
+  ['vehicle','KK'], ['vehicle','ATD'], ['vehicle','AWACS'], ['vehicle','MLRS'], ['vehicle','ARMOR'],
+];
+
+const buildSidc = (faction, fn) => {
+  const affiliation = faction === 'Player' ? 'F' : 'H';
+  return `S${affiliation}${fn.dimension}P${fn.functionId}`;
+};
+const hexToCss = (hex) => '#' + hex.toString(16).padStart(6,'0');
+const GREEN_HEX = 0x55FF55, GREY_DIM_HEX = 0x666666;
+
+function renderIcon(sidc, colorHex){
+  const symbol = new window.ms.Symbol(sidc, { size: 24, monoColor: hexToCss(colorHex), fill:true, fillOpacity:0.15, strokeWidth:1.5 });
+  const iconCanvas = symbol.asCanvas();
+  const canvas = document.createElement('canvas');
+  canvas.width = iconCanvas.width;
+  canvas.height = iconCanvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(iconCanvas, 0, 0);
+  return canvas;
+}
+
+const TILE = 32;
+const cols = ORDER.length;
+const rows = 2;
+const grid = document.createElement('canvas');
+grid.width = cols*TILE;
+grid.height = rows*TILE;
+const gctx = grid.getContext('2d');
+gctx.fillStyle = '#000000';
+gctx.fillRect(0,0,grid.width,grid.height);
+
+const legend = [];
+ORDER.forEach(([type, kind], col) => {
+  const fn = type === 'building' ? BUILDING_SIDC_FUNCTION[kind] : VEHICLE_SIDC_FUNCTION[kind];
+  ['Player','Enemy'].forEach((faction, row) => {
+    const color = faction === 'Player' ? GREEN_HEX : GREY_DIM_HEX;
+    const sidc = buildSidc(faction, fn);
+    const icon = renderIcon(sidc, color);
+    const scale = Math.min((TILE-2)/icon.width, (TILE-2)/icon.height, 1);
+    const w = icon.width*scale, h = icon.height*scale;
+    const x = col*TILE + (TILE-w)/2;
+    const y = row*TILE + (TILE-h)/2;
+    gctx.drawImage(icon, x, y, w, h);
+    legend.push({ index: row*cols+col, col, row, type, kind, faction });
+  });
+});
+
+window.__tilesetDataUrl = grid.toDataURL('image/png');
+window.__legend = legend;
+document.body.appendChild(grid);
+document.title = 'READY';
+</script>
+</body></html>

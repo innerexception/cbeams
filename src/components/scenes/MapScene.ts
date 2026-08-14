@@ -5,7 +5,6 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getVehicleLogisticsCost, seededRandom } from "../../common/Utils";
 import { generateMap } from "../../common/MapGenerator";
 import { spawnEnemyLogisticsCenters, spendEnemyBuildingPoints, spawnEnemyRaid, checkEnemyRaid, checkEnemyBlmDefense } from "../../common/AIPlayers";
-import { marchingSquaresSegments } from "../../common/Contours";
 import { BUILDING_SIDC_FUNCTION, VEHICLE_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
 import { Faction, BuildingType, VehicleType, Modal, BuildingData, VehicleData, TargetType, ObjectiveSprite } from "../../../enum";
 import {
@@ -59,14 +58,6 @@ const getBuildingMaxHp = (kind:BuildingType) => BuildingData[kind].maxHp
 
 // Bases have a bigger physical footprint than an ordinary building.
 const getBuildingFootprintRadius = (kind:BuildingType) => kind === BuildingType.Base ? BASE_FOOTPRINT_RADIUS : FACTORY_FOOTPRINT_RADIUS
-
-// Blends two 0xRRGGBB colors — used to brighten a hill contour's green as its elevation level rises.
-const lerpHexColor = (colorA:number, colorB:number, t:number) => {
-    const ar=(colorA>>16)&0xff, ag=(colorA>>8)&0xff, ab=colorA&0xff
-    const br=(colorB>>16)&0xff, bg=(colorB>>8)&0xff, bb=colorB&0xff
-    const r = Math.round(ar+(br-ar)*t), g = Math.round(ag+(bg-ag)*t), b = Math.round(ab+(bb-ab)*t)
-    return (r<<16)|(g<<8)|b
-}
 
 // Whether a vehicle kind's declared TargetType (see VehicleData in enum.ts) covers a given kind of
 // contact target — TargetType.Any covers both. Replaces the old hardcoded KK/ATD type checks that
@@ -1718,35 +1709,32 @@ export default class MapScene extends Scene {
         // not here, since a building add/remove is far from the only thing that should refresh them.
     }
 
-    // Topographic contour lines over the map's terrain field (see MapGenerator's buildTerrain).
-    // Raised terrain (Hill, Spur) brightens toward green as elevation rises; sunk terrain (Valley)
-    // stays a flat dim tone — FM 3-25.26 never has low ground read as brighter than high ground.
-    // marchingSquaresSegments is run once per contour interval (not once per feature) since it works
-    // directly off the shared elevation lattice — every feature falls out of the same two threshold
-    // passes with no feature-specific drawing code.
+    // Terrain is no longer procedurally generated — it's drawn from an externally-authored Tiled
+    // (mapeditor.org) JSON export instead (see MapGenerator's parseTiledMap). mapData.terrain is null by
+    // default (an empty map, until a real file's been authored and passed to generateMap), in which
+    // case this draws nothing at all. Once one's loaded, every occupied cell (any layer, any non-zero
+    // GID — which specific tile it is doesn't matter here) gets a plain wireframe outline scaled from
+    // the Tiled file's own tile size onto this game's CELL_SIZE grid — there's no tileset image asset
+    // to draw real artwork from, only vector Graphics, same as everything else in this game.
     drawTerrain = () => {
         const g = this.g
-        const { originX, originY, cols, rows, elevations } = this.mapData.terrain
-        const toWorldFrac = (gx:number, gy:number) => this.toWorld(originX+gx, originY+gy)
+        const terrain = this.mapData.terrain
+        if(!terrain) return
 
-        const drawLevel = (grid:Array<Array<number>>, level:number, color:number) => {
-            g.lineStyle(1, color, 0.9)
-            marchingSquaresSegments(grid, cols, rows, level).forEach(seg => {
-                const a = toWorldFrac(seg.a.x, seg.a.y)
-                const b = toWorldFrac(seg.b.x, seg.b.y)
-                g.lineBetween(a.x, a.y, b.x, b.y)
-            })
-        }
+        const scaleX = CELL_SIZE / terrain.tilewidth
+        const scaleY = CELL_SIZE / terrain.tileheight
+        const tileW = terrain.tilewidth * scaleX
+        const tileH = terrain.tileheight * scaleY
 
-        const RAISED_LEVELS = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]
-        RAISED_LEVELS.forEach(level => drawLevel(elevations, level, lerpHexColor(GREEN_DIM_HEX, GREEN_HEX, level/0.9)))
-
-        // Sunk terrain: same marching-squares pass, but run against the negated field so
-        // "elevation <= -level" (a Valley's actual shape) reuses the same >=threshold case table a
-        // raised contour uses.
-        const negated = elevations.map(column => column.map(v => -v))
-        const SUNK_LEVELS = [0.15, 0.3, 0.45, 0.6]
-        SUNK_LEVELS.forEach(level => drawLevel(negated, level, GREEN_DIM_HEX))
+        g.lineStyle(1, GREEN_DIM_HEX, 0.6)
+        terrain.layers.forEach(layer => {
+            for(let ty=0; ty<layer.height; ty++){
+                for(let tx=0; tx<layer.width; tx++){
+                    // if(!layer.data[ty*layer.width + tx]) continue
+                    // g.strokeRect(tx*tileW, ty*tileH, tileW, tileH)
+                }
+            }
+        })
     }
 
     // Draws the route (line + numbered waypoint markers) for whichever shipyard is currently selected,

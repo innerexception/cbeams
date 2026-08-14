@@ -45,7 +45,7 @@ export default () => {
     if(phase === 'placement'){
         const placed = factories.filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter).length
         return (
-            <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14 }}>
+            <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%, -50%)', zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14, textAlign:'center' }}>
                 <div>Place your LogisticsCenters: {placed} / {LOGISTICS_CENTER_COUNT}</div>
                 <div style={{ marginTop:6, fontSize:12 }}>
                     Click anywhere on your side of the map. Each one must be at least 500px from any other.
