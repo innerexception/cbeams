@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { ShipType, ShipData } from '../../enum'
+import { Faction, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE } from '../common/Constants'
 import { getLogisticsStatus, getShipLogisticsCost, getShipMetalCost } from '../common/Utils'
 import ToolButton from './ToolButton'
@@ -23,65 +23,66 @@ export default () => {
         return () => clearInterval(interval)
     }, [])
 
-    // A single selected Base opens its production panel — the same role the old shipyard building's
-    // panel used to play, just keyed off "exactly one ship selected, and it's a Base" instead of a
-    // separate selected-building concept (see MapScene's click handler / store's selectedShipIds).
-    const selectedBase = selectedShipIds.length === 1 ? ships.find(s => s.id === selectedShipIds[0] && s.type === ShipType.CATH) : undefined
+    // The Base is unselectable (see MapScene's findOwnShipAt/box-select) — its build panel is always up
+    // instead of only appearing once it's been clicked, so it's found directly here rather than derived
+    // from selectedShipIds the way it used to be.
+    const playerBase = ships.find(s => s.faction === Faction.Player && s.type === ShipType.CATH)
+    const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
 
-    if(selectedBase){
-        const queue = selectedBase.queue || []
-        const queueFull = queue.length >= MAX_QUEUE
+    return (
+        <div style={{ position:'absolute', top:10, left:10, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+            {playerBase && (() => {
+                const queue = playerBase.queue || []
+                const queueFull = queue.length >= MAX_QUEUE
 
-        // Recomputed every render (this component already re-renders on its 200ms tick) so a button
-        // disables the instant the shared logistics budget can no longer fit that ship's cost.
-        const { logisticsRemaining } = getLogisticsStatus(selectedBase.faction)
+                // Recomputed every render (this component already re-renders on its 200ms tick) so a
+                // button disables the instant the shared logistics budget can no longer fit that ship's cost.
+                const { logisticsRemaining } = getLogisticsStatus(playerBase.faction)
 
-        return (
-            <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
-                <div style={{ display:'flex' }}>
-                    {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
-                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type) || metal[selectedBase.faction] < getShipMetalCost(type)} onClick={()=>queueShip(selectedBase.id, type)}>{ShipData[type].name}</ToolButton>
-                    ))}
-                    <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
-                </div>
-                <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>
-                    New ships wait by the Base until given their own orders.
-                </div>
-                <div style={{ marginTop:8, display:'flex', gap:8 }}>
-                    {Array.from({ length: MAX_QUEUE }).map((_, i) => {
-                        const item = queue[i]
-                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
-                        return (
-                            <div key={i} style={{ width:100, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
-                                <div>{item ? ShipData[item.type].name : '—'}</div>
-                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
-                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-            </div>
-        )
-    }
+                return (
+                    <div>
+                        <div style={{ display:'flex' }}>
+                            {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
+                                <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type) || metal[playerBase.faction] < getShipMetalCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name}</ToolButton>
+                            ))}
+                        </div>
+                        <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>
+                            New ships wait by the Base until given their own orders.
+                        </div>
+                        <div style={{ marginTop:8, display:'flex', gap:8 }}>
+                            {Array.from({ length: MAX_QUEUE }).map((_, i) => {
+                                const item = queue[i]
+                                const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
+                                return (
+                                    <div key={i} style={{ width:100, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
+                                        <div>{item ? ShipData[item.type].name : '—'}</div>
+                                        <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
+                                            {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                )
+            })()}
 
-    // A drag-selected group of ships takes orders via the map itself — every click sets/adds a waypoint
-    // onto each one's own route (see MapScene's handleClick) — this panel is just the selection readout
-    // + bulk Clear Orders/Cancel.
-    if(selectedShipIds.length > 0){
-        const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
-        return (
-            <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
-                <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
-                    {selectedShips.length} unit{selectedShips.length === 1 ? '' : 's'} selected — click the map to give orders
+            {selectedShipIds.length > 0 ? (
+                // A drag-selected group of ships takes orders via the map itself — every click sets/adds
+                // a waypoint onto each one's own route (see MapScene's handleClick) — this panel is just
+                // the selection readout + bulk Clear Orders/Cancel.
+                <div>
+                    <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
+                        {selectedShips.length} unit{selectedShips.length === 1 ? '' : 's'} selected — click the map to give orders
+                    </div>
+                    <div style={{ marginTop:8, display:'flex' }}>
+                        <ToolButton onClick={()=>clearShipWaypoints(selectedShipIds)}>Clear Orders</ToolButton>
+                        <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
+                    </div>
                 </div>
-                <div style={{ marginTop:8, display:'flex' }}>
-                    <ToolButton onClick={()=>clearShipWaypoints(selectedShipIds)}>Clear Orders</ToolButton>
-                    <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
-                </div>
-            </div>
-        )
-    }
-
-    return <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.green, fontFamily:'Body', fontSize:14 }}>Click your Base to build ships, or drag to select units</div>
+            ) : (
+                <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>Drag to select units</div>
+            )}
+        </div>
+    )
 }

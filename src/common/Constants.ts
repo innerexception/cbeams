@@ -14,6 +14,12 @@ export const CELL_SIZE = 32
 export const gridToWorld = (x:number, y:number) => ({ x: x*CELL_SIZE + CELL_SIZE/2, y: y*CELL_SIZE + CELL_SIZE/2 })
 export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(worldX/CELL_SIZE), y: Math.floor(worldY/CELL_SIZE) })
 
+// Minimum gap MapScene's applyShipSeparation keeps enforcing between any two ship bodies, every frame,
+// on top of whatever movement decision each one already made that frame — this is what makes a pile of
+// ships arriving at the same waypoint spread out instead of stacking exactly on top of each other,
+// rather than a one-off placement check.
+export const SHIP_SEPARATION_PX = 1
+
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
