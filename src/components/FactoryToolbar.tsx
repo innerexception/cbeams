@@ -26,7 +26,7 @@ export default () => {
     // A single selected Base opens its production panel — the same role the old shipyard building's
     // panel used to play, just keyed off "exactly one ship selected, and it's a Base" instead of a
     // separate selected-building concept (see MapScene's click handler / store's selectedShipIds).
-    const selectedBase = selectedShipIds.length === 1 ? ships.find(s => s.id === selectedShipIds[0] && s.type === ShipType.Base) : undefined
+    const selectedBase = selectedShipIds.length === 1 ? ships.find(s => s.id === selectedShipIds[0] && s.type === ShipType.CATH) : undefined
 
     if(selectedBase){
         const queue = selectedBase.queue || []
@@ -39,7 +39,7 @@ export default () => {
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
-                    {Object.values(ShipType).filter(type => type !== ShipType.Base).map(type => (
+                    {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
                         <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type) || metal[selectedBase.faction] < getShipMetalCost(type)} onClick={()=>queueShip(selectedBase.id, type)}>{ShipData[type].name}</ToolButton>
                     ))}
                     <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>

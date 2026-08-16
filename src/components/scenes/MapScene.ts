@@ -69,7 +69,7 @@ const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
 // The only two ship kinds that self-destruct on contact with a hostile ship (see
 // isHostileDroneShipPair/onDroneShipContact/detonateDrone) — every other kind (MLRS, AWACS, ARMOR,
 // Base) just collides and bounces off physically, nothing happens.
-const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.ATD])
+const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.BOM])
 
 // Applies accumulated damage to any {id, hp} collection, removing anything that drops to 0 HP or
 // below. `onDeath` lets the caller leave its own effect at the death location — shared by every
@@ -429,9 +429,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // HP bar below any ship that's taken damage — hidden entirely at full health so an undamaged fleet
-    // doesn't clutter the map with empty bars. Also skips anything currently hidden by fog of war, same
-    // as drawProductionProgress.
     drawShipHealth = () => {
         const g = this.healthG
         g.clear()
@@ -454,10 +451,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Plain numeric readout of ship.ammoRemaining (see spawnShip/updateMlrs) at the bottom-left corner
-    // of any ship whose ShipStats sets `ammo` — the label itself is created once per such ship (see
-    // createShipSprite/destroyShipSprite), this just keeps its text/position/visibility current every
-    // frame, same fog-of-war rule the old gauge had (hidden whenever the sprite itself is).
     updateAmmoLabels = () => {
         useAppStore.getState().ships.forEach(ship => {
             const label = this.ammoLabels.get(ship.id)
@@ -483,10 +476,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Completes a Base's front-of-queue item once its production time has elapsed. If the faction's
-    // logistics budget has no room left for it (e.g. it filled up while this item was building), the
-    // ready item just holds at the front of the queue — production stays complete, it deploys the
-    // moment logistics frees up, without eating another full production cycle.
     tickProduction = () => {
         const { ships, completeQueueItem } = useAppStore.getState()
 
@@ -500,10 +489,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Places a newly completed ship at an empty spot near its Base, trying to avoid overlapping other
-    // loitering ships, and leaves it there with no orders at all — it just sits and waits until the
-    // player actually gives it a route (see moveShips' idle handling), rather than inheriting some
-    // default route from the Base the way it used to.
     spawnShip = (base:ShipData, type:ShipType) => {
         const center = { x:base.x, y:base.y }
         const size = ShipData[type].sizeHex * CELL_SIZE
@@ -526,9 +511,6 @@ export default class MapScene extends Scene {
         this.createShipSprite(ship)
     }
 
-    // Every ship (both factions' Bases included) and every Objective comes straight off the loaded map
-    // file's own entities layer — there are no other buildings left to place, so any tile on that layer
-    // that isn't a Base or an Objective is simply ignored.
     spawnEntitiesFromMap = () => {
         const map = this.make.tilemap({ key: Maps.Sandbox })
         const layer = map.getLayer('entities')
@@ -545,7 +527,7 @@ export default class MapScene extends Scene {
                 const baseFaction = ([Faction.Player, Faction.Enemy] as Array<Faction>).find(f => BASE_SPRITE_INDEX[f] === localIndex)
                 if(baseFaction){
                     const { x, y } = this.toWorld(tx, ty)
-                    const base:ShipData = { id:v4(), faction:baseFaction, type:ShipType.Base, x, y, hp:ShipData[ShipType.Base].hp }
+                    const base:ShipData = { id:v4(), faction:baseFaction, type:ShipType.CATH, x, y, hp:ShipData[ShipType.CATH].hp }
                     useAppStore.getState().addShip(base)
                     this.createShipSprite(base)
                     if(baseFaction === Faction.Enemy) this.enemyBaseId = base.id
@@ -596,13 +578,6 @@ export default class MapScene extends Scene {
     }
 
     createResourceNodeSprite = (node:ResourceNodeData) => {
-        // Both node kinds pick one frame at random out of their own block in the 'tiles' spritesheet
-        // instead of a single procedurally-drawn shape — a GasCloud (CloudIndexes) picks once here, at
-        // creation, and keeps that frame for its whole lifetime; an Asteroid's frame comes from whichever
-        // size tier its starting metal falls into (see ASTEROID_TIER_FRAMES/asteroidTier), re-picked
-        // whenever it drops into the next tier down (see updateResourceNodeSprite) rather than shrinking
-        // continuously. The tier itself is tracked on the sprite's own data so that re-pick only fires on
-        // an actual tier change, not every update.
         const frames = node.kind === ResourceNodeType.Asteroid ? ASTEROID_TIER_FRAMES[asteroidTier(node)] : CloudIndexes
         const sprite = this.add.image(node.x, node.y, 'tiles', frames[Math.floor(Math.random()*frames.length)]).setDepth(1)
         if(node.kind === ResourceNodeType.Asteroid) sprite.setData('asteroidTier', asteroidTier(node))
@@ -666,7 +641,7 @@ export default class MapScene extends Scene {
             const { x, y } = this.toWorld(spawn.x, spawn.y)
 
             const contestingFaction = [Faction.Player, Faction.Enemy].find(faction => {
-                const hasAttachedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ARMOR
+                const hasAttachedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ZEL
                     && s.latchedObjectiveId === objective.id && s.objectiveAttached)
                 if(!hasAttachedArmor) return false
 
@@ -762,19 +737,12 @@ export default class MapScene extends Scene {
         })
     }
 
-    // --- Physics sprite lifecycle -------------------------------------------------------------------
-    // Every sprite is created exactly once, at the moment its entity is actually added to the store
-    // (spawnShip; spawnEntitiesFromMap for a faction's Base), and destroyed exactly once, at the moment
-    // damage actually drops that entity's HP to 0 (the onDeath callbacks passed to applyDamage in
-    // detonateDrone/onMissileShipContact/updateArmor). None of this is polled or diffed against the
-    // store in the per-frame update loop.
-
     createShipSprite = (ship:ShipData) => {
         const isFriend = ship.faction === Faction.Player
         // Every ship type renders from its own real sprite now (see Assets.ts, each loaded under its
         // own ShipType key) — Base is the one exception with a genuinely separate texture per faction
         // ('base_enemy', baseB.png) rather than one shared texture tinted green/red like everything else.
-        const textureKey = ship.type === ShipType.Base && !isFriend ? 'base_enemy' : ship.type
+        const textureKey = ship.type === ShipType.CATH && !isFriend ? 'base_enemy' : ship.type
         const sprite = this.physics.add.sprite(ship.x, ship.y, textureKey).setTint(isFriend ? GREEN_HEX : RED_HEX)
         this.centerCircleBody(sprite)
         sprite.setData('kind', 'ship' as BodyKind)
@@ -923,24 +891,9 @@ export default class MapScene extends Scene {
             const sprite = this.shipSprites.get(dead.id)
             if(sprite) this.spawnDeathFragments(sprite)
             this.destroyShipSprite(dead.id)
-            if(dead.type === ShipType.Base) this.handleBaseDestroyed(dead.faction)
+            if(dead.type === ShipType.CATH) this.handleBaseDestroyed(dead.faction)
         })
 
-    // Advances every ship one step towards its own route (waypoints — a copy taken from its Base at
-    // spawn time, see spawnShip, independently editable afterwards either through that Base
-    // (addShipWaypoints, which also pushes the update onto every ship already spawned from it since the
-    // Base's own route is just another entry in the same ships array) or by drag-selecting the ship
-    // directly). Once a ship has worked through every waypoint it just sits at the last one — except: a
-    // Harvester actively mining an Asteroid (harvesterMiningTarget, resolved for this frame by
-    // updateHarvesterMiningTargets before this runs), which orbits it at HARVESTER_ORBIT_RADIUS_PX
-    // instead; and an ARMOR that's come within OBJECTIVE_CAPTURE_RADIUS_PX of an Objective it doesn't
-    // already own, which latches onto (moves straight to and sits on) that Objective's exact position
-    // instead — see ShipData's latchedObjectiveId for how the latch itself is acquired/released. Both
-    // override waypoint-following entirely for as long as they hold. The actual stepping — and the
-    // collision detection that comes from it — is Arcade Physics' job now (physics.moveTo sets velocity
-    // towards the target, the physics step integrates position); this just decides *where* that target is
-    // and detects arrival to advance the route. A Base's own speed:0 means physics.moveTo never actually
-    // moves it regardless of what target this computes.
     moveShips = (time:number, deltaMs:number) => {
         const { ships, setShips, resourceNodes, objectives } = useAppStore.getState()
         // ATDs that reach the end of their route detonate — but not mid-map (that would clobber this
@@ -955,7 +908,7 @@ export default class MapScene extends Scene {
             const ownWaypoints = ship.waypoints || []
             // An ATD is a guided munition, not a patrol ship — it only ever follows its route to the
             // first waypoint (its detonation target), never any further ones.
-            const waypoints = ship.type === ShipType.ATD ? ownWaypoints.slice(0, 1) : ownWaypoints
+            const waypoints = ship.type === ShipType.BOM ? ownWaypoints.slice(0, 1) : ownWaypoints
             const pathIndex = ship.pathIndex ?? 0
             const speed = ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
@@ -979,7 +932,7 @@ export default class MapScene extends Scene {
             // even while the ARMOR is still standing right on top of the Objective.
             let latchedObjectiveId = ship.latchedObjectiveId
             let latchedObjectiveWorld:{x:number,y:number} | undefined
-            if(ship.type === ShipType.ARMOR){
+            if(ship.type === ShipType.ZEL){
                 if(latchedObjectiveId){
                     const held = objectives.find(o => o.id === latchedObjectiveId)
                     if(!held || held.owner === ship.faction) latchedObjectiveId = undefined
@@ -1051,7 +1004,7 @@ export default class MapScene extends Scene {
             // jumping there in one. Base is the one exception — speed:0 means it never actually moves
             // regardless of target anyway, but it should never even ease toward facing one; it just stays
             // put at its spawn rotation permanently.
-            if(ship.type !== ShipType.Base){
+            if(ship.type !== ShipType.CATH){
                 const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !idle
                 const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
                 const turnRatePerMs = hasDirectionalTarget ? MOVE_TURN_RATE_PER_MS : IDLE_TURN_RATE_PER_MS
@@ -1062,7 +1015,7 @@ export default class MapScene extends Scene {
 
             // ATD is a one-shot guided munition: reaching the end of its (single-waypoint) route
             // detonates it right here, same as a contact hit does in onDroneShipContact.
-            if(ship.type === ShipType.ATD && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
+            if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
 
             // True only once actually at the latch point (dist<=step, same "arrived" condition the
             // snap-to-target branch above already used), not merely from the instant latchedObjectiveId
@@ -1111,11 +1064,6 @@ export default class MapScene extends Scene {
         if(survivingShipB && DRONE_TYPES.has(survivingShipB.type)) this.detonateDrone(survivingShipB, spriteB, { id:shipA.id })
     }
 
-    // A drone (KK/ATD) detonates: it always self-destructs, plus damages whatever it hit — a single
-    // primary target for KK, or an area blast (physics.overlapCirc — the same "who's nearby" query
-    // MLRS/ARMOR's own range check uses) for ATD, which ignores `primary` and just blasts everything
-    // hostile nearby. Called exactly once per detonation, directly from whatever triggered it (a
-    // contact overlap callback above, or — for an ATD reaching its route's end — moveShips).
     detonateDrone = (drone:ShipData, sprite:Physics.Arcade.Sprite, primary:{ id:string } | null) => {
         const time = this.time.now
         // Guarantees the drone itself dies in the applyDamage pass below.
@@ -1125,7 +1073,7 @@ export default class MapScene extends Scene {
         if(drone.type === ShipType.KK && primary){
             shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + damage)
         }
-        else if(drone.type === ShipType.ATD){
+        else if(drone.type === ShipType.BOM){
             const hits = this.physics.overlapCirc(sprite.x, sprite.y, ATD_BLAST_RADIUS_PX, true, false)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
@@ -1150,7 +1098,7 @@ export default class MapScene extends Scene {
                 if(deadSprite) this.spawnDeathFragments(deadSprite)
             }
             this.destroyShipSprite(dead.id)
-            if(dead.type === ShipType.Base) this.handleBaseDestroyed(dead.faction)
+            if(dead.type === ShipType.CATH) this.handleBaseDestroyed(dead.faction)
         }))
     }
 
@@ -1170,14 +1118,6 @@ export default class MapScene extends Scene {
         setShips(this.applyShipDamage(ships, new Map([[ship.id, damage]])))
     }
 
-    // Nearest hostile ship within radius of a point, found via a spatial physics query
-    // (physics.overlapCirc) instead of sweeping every ship in the game. Used by MLRS/ARMOR's own weapon
-    // targeting. Every candidate also has to fall within the *shooter's own faction's* sight range (see
-    // updateFogOfWar) — weapon range alone isn't enough to fire on something that faction can't
-    // actually see, whichever faction's ship is doing the shooting. This is what stops the AI sniping
-    // things it has no business knowing about; it never gets to peek at the player's own fog of war
-    // (which is all "faction" meant here before — always Faction.Player, regardless of who was actually
-    // shooting).
     findNearestHostileShip = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let targetShip:Physics.Arcade.Sprite = null
@@ -1196,29 +1136,20 @@ export default class MapScene extends Scene {
         return targetShip
     }
 
-    // Each MLRS, on cooldown, launches a whole salvo (MISSILE_SALVO_SIZE) of missiles, SALVO_STAGGER_MS
-    // apart so they read as a salvo instead of one stacked blob, all homing on whichever hostile ship is
-    // nearest in range. Only the salvo's first shot needs a live target (to justify firing at all);
-    // every shot after that fires regardless of whether that target is still around by the time its
-    // delay elapses — if it's gone, the missile just retargets or fizzles onward (see updateMissiles),
-    // it isn't skipped. Each MLRS starts with a fixed ammoRemaining (see ShipData's ammo) that's spent
-    // 1-per-missile and never refills — once it's at 0 it can no longer fire at all, cooldown or not; a
-    // salvo that would otherwise fire more shots than remain just fires however many it can still afford
-    // instead.
     updateMlrs = (time:number) => {
         const { ships, setShips } = useAppStore.getState()
         const shooterIds = new Set<string>()
         const shotsFired = new Map<string, number>()
 
         ships.forEach(ship => {
-            if(ship.type !== ShipType.MLRS) return
-            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.MLRS].cooldownMs) return
+            if(ship.type !== ShipType.SPR) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.SPR].cooldownMs) return
             if(!ship.ammoRemaining) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
 
-            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.MLRS].rangePx)
+            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.SPR].rangePx)
             if(!targetShip) return
 
             const shots = Math.min(MISSILE_SALVO_SIZE, ship.ammoRemaining)
@@ -1229,7 +1160,7 @@ export default class MapScene extends Scene {
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!sprite.active) return
-                    this.spawnMissile(ship.faction, sprite.x, sprite.y, targetId, ShipData[ShipType.MLRS].damage, aimX, aimY)
+                    this.spawnMissile(ship.faction, sprite.x, sprite.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY)
                 })
             }
         })
@@ -1249,19 +1180,19 @@ export default class MapScene extends Scene {
         const damageByTarget = new Map<string, number>()
 
         ships.forEach(ship => {
-            if(ship.type !== ShipType.ARMOR) return
-            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.ARMOR].cooldownMs) return
+            if(ship.type !== ShipType.ZEL) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.ZEL].cooldownMs) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
 
-            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.ARMOR].rangePx)
+            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.ZEL].rangePx)
             if(!targetShip) return
 
             shooterIds.add(ship.id)
             this.tracers.push({ x1:sprite.x, y1:sprite.y, x2:targetShip.x, y2:targetShip.y, createdAt:time })
             const targetId = targetShip.getData('id')
-            damageByTarget.set(targetId, (damageByTarget.get(targetId) || 0) + ShipData[ShipType.ARMOR].damage)
+            damageByTarget.set(targetId, (damageByTarget.get(targetId) || 0) + ShipData[ShipType.ZEL].damage)
         })
 
         if(shooterIds.size === 0) return
@@ -1269,17 +1200,10 @@ export default class MapScene extends Scene {
         setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget))
     }
 
-    // Which Asteroid (if any) each Harvester counts as "mining" this frame — the one thing moveShips
-    // (orbit target), updateHarvesters (the actual gather economy) and drawHarvesterBeams (the beam
-    // line) all agree on, computed once here from last frame's positions rather than each of the three
-    // running its own nearest-node search and risking a different answer. A node already fully depleted
-    // doesn't count, but this doesn't account for multiple Harvesters possibly converging on the same
-    // node beyond what's actually left in it — that fairness (nobody over-draws below 0) is handled by
-    // updateHarvesters' own running drawdown at the point metal is actually consumed.
     updateHarvesterMiningTargets = () => {
         const { ships, resourceNodes } = useAppStore.getState()
         this.harvesterMiningTarget.clear()
-        ships.filter(s => s.type === ShipType.Harvester).forEach(harvester => {
+        ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             const sprite = this.shipSprites.get(harvester.id)
             if(!sprite) return
 
@@ -1301,7 +1225,7 @@ export default class MapScene extends Scene {
         const drawdown = new Map<string, number>() // asteroid id -> metal drawn this frame so far
         const metalGained = new Map<Faction, number>()
 
-        ships.filter(s => s.type === ShipType.Harvester).forEach(harvester => {
+        ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             const nodeId = this.harvesterMiningTarget.get(harvester.id)
             if(!nodeId) return
             const node = resourceNodes.find(n => n.id === nodeId)
@@ -1796,7 +1720,7 @@ export default class MapScene extends Scene {
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.Base).map(s => s.id)
+            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH).map(s => s.id)
             if(orderableIds.length === 0) return
             if(!this.shiftDown){
                 setShipWaypoints(orderableIds, x, y)

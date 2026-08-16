@@ -49,17 +49,17 @@ export enum ObjectiveSpriteIndex {
 }
 
 export enum ShipType {
-    KK='kk', ATD='atd', MLRS='mlrs', AWACS='AWACS', ARMOR='ARMOR', Base='Base', Harvester='Harvester'
+    KK='kk', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN'
 }
 
 // metalCost is 1 for every ship for now (see store's queueShip, which refuses to queue one a faction
 // can't afford and deducts it from that faction's metal stockpile up front).
 export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.KK]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, sizeHex:0.4, productionTimeMs:5000, logisticsCost:1, metalCost:1 },
-    [ShipType.ATD]: { name:'Area Denial Drone', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, sizeHex:0.6, productionTimeMs:10000, logisticsCost:1, metalCost:1 },
-    [ShipType.MLRS]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:1500, rangePx:350, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10, metalCost:1 },
-    [ShipType.AWACS]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:15, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, logisticsCost:3, metalCost:1 },
-    [ShipType.ARMOR]: { name:'Zealot', speed:10, sightRadius:50, armor:2, hp:25, damage:10, cooldownMs:5000, rangePx:200, sizeHex:1, productionTimeMs:10000, logisticsCost:2, metalCost:1 },
-    [ShipType.Base]: { name:'Base', speed:0, sightRadius:300, armor:0, hp:80, damage:0, cooldownMs:0, rangePx:0, sizeHex:2, productionTimeMs:0, logisticsCost:0, metalCost:1 },
-    [ShipType.Harvester]: { name:'Harvester', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, logisticsCost:1, metalCost:1 },
+    [ShipType.BOM]: { name:'Area Denial Drone', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, sizeHex:0.6, productionTimeMs:10000, logisticsCost:1, metalCost:1 },
+    [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:1500, rangePx:350, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10, metalCost:1 },
+    [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, logisticsCost:3, metalCost:1 },
+    [ShipType.ZEL]: { name:'Zealot', speed:12, sightRadius:50, armor:2, hp:25, damage:10, cooldownMs:5000, rangePx:200, sizeHex:1, productionTimeMs:10000, logisticsCost:2, metalCost:1 },
+    [ShipType.CATH]: { name:'Cathedral', speed:0, sightRadius:300, armor:0, hp:80, damage:0, cooldownMs:0, rangePx:0, sizeHex:2, productionTimeMs:0, logisticsCost:0, metalCost:1 },
+    [ShipType.GAIN]: { name:'Harvester', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, logisticsCost:1, metalCost:1 },
 }

@@ -23,7 +23,7 @@ export interface AppState {
   scene: MapScene | null;
   mySave: SaveFile | null;
   activeMap: MapData | null;
-  // Every ship in the match, both factions' — a faction's own Base (see enum.ts's ShipType.Base) is
+  // Every ship in the match, both factions' — a faction's own Base (see enum.ts's ShipType.CATH) is
   // just another entry here, not a separate building collection the way it used to be.
   ships: Array<ShipData>;
   // The live (owner) half of every Objective on the map — see ObjectiveSpawn (in mapData/activeMap)

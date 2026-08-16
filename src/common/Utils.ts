@@ -44,7 +44,7 @@ export const getShipMetalCost = (type:ShipType) => ShipData[type].metalCost
 export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
     const { ships, resourceNodes } = useAppStore.getState()
     const ownShips = ships.filter(s => s.faction === faction)
-    const ownHarvesters = ownShips.filter(s => s.type === ShipType.Harvester)
+    const ownHarvesters = ownShips.filter(s => s.type === ShipType.GAIN)
 
     const gasCloudsCovered = resourceNodes.filter(n => n.kind === ResourceNodeType.GasCloud
         && ownHarvesters.some(h => Math.hypot(h.x-n.x, h.y-n.y) <= HARVESTER_RANGE_PX)).length

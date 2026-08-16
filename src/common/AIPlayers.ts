@@ -13,7 +13,7 @@ import { ENEMY_RAID_SIZE } from "./Constants"
 
 // Each faction's actual headquarters ship — wherever the map file's entities layer actually placed it —
 // used by checkEnemyRaid as its defensive fallback destination.
-const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.faction === faction && s.type === ShipType.Base)
+const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.faction === faction && s.type === ShipType.CATH)
 
 // One-time opening move: the enemy Base queues up a handful of kamikaze drones — going through the
 // same build queue/production timer as any player-built ship, rather than spawning them for free — and

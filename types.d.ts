@@ -118,10 +118,10 @@ interface ShipData {
     objectiveAttached?: boolean
     lastFiredAtMs?: number
     hp: number
-    // Only present for a ship whose ShipStats sets `ammo` (MLRS) — set to that value when the ship's
+    // Only present for a ship whose ShipStats sets `ammo` (SPR) — set to that value when the ship's
     // spawned, decremented per missile actually launched. Once it hits 0 it can't fire again.
     ammoRemaining?: number
-    // Only ever set on a Base (see ShipType.Base) — every other ship's own production queue, filled by
+    // Only ever set on a Base (see ShipType.CATH) — every other ship's own production queue, filled by
     // queueShip/emptied by completeQueueItem/tickProduction, the same role the old shipyard building's
     // own queue field used to play.
     queue?: Array<ProductionQueueItem>
