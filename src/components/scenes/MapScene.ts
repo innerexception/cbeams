@@ -5,7 +5,7 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost, seededRandom } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
 import { SHIP_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, Maps } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, AsteroidSpriteIndexes, CloudIndexes, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     TRACER_LIFETIME_MS,
@@ -21,6 +21,10 @@ import {
 import { colors } from "../../styles/AppStyles";
 
 const TWO_PI = Math.PI*2
+
+// Only two zoom levels for now (see enableCameraControls' wheel handler) — plain in/out toggle rather
+// than the continuous zoom this used to be.
+const ZOOM_LEVELS = [1, 2]
 
 // Once a ship finishes its route it loiters in a circle around the final waypoint.
 const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
@@ -314,65 +318,6 @@ export default class MapScene extends Scene {
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
 
-        // Objectives aren't military units, so they skip the SIDC/milsymbol pipeline entirely — a small
-        // hand-drawn pictograph each, baked once in plain white so setTint (see
-        // createObjectiveSprite/updateObjectives) can recolor by current owner without rebaking.
-        bake('objective_'+ObjectiveSprite.Crypt, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
-            g.lineStyle(2, 0xFFFFFF, 1)
-            g.lineBetween(cx-16, cy+14, cx+16, cy+14)
-            g.strokeTriangle(cx, cy-16, cx-9, cy+14, cx+9, cy+14)
-            g.lineBetween(cx-4, cy-2, cx+4, cy-2)
-        })
-        bake('objective_'+ObjectiveSprite.Shrine, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
-            g.lineStyle(2, 0xFFFFFF, 1)
-            const groundY = cy+14
-            g.lineBetween(cx-18, groundY, cx+18, groundY)
-            const bars = [{ dx:-14, w:6, h:12 }, { dx:-6, w:6, h:20 }, { dx:2, w:6, h:9 }, { dx:9, w:6, h:16 }]
-            bars.forEach(b => g.strokeRect(cx+b.dx, groundY-b.h, b.w, b.h))
-        })
-        bake('objective_'+ObjectiveSprite.NuclearReactor, OBJECTIVE_ICON_SIZE, (g, cx, cy) => {
-            g.lineStyle(2, 0xFFFFFF, 1)
-            g.fillStyle(0xFFFFFF, 1)
-            g.fillCircle(cx, cy, 3)
-            for(let i=0; i<3; i++){
-                const angle = -Math.PI/2 + i*(Math.PI*2/3)
-                const x1 = cx + Math.cos(angle)*7, y1 = cy + Math.sin(angle)*7
-                const x2 = cx + Math.cos(angle)*15, y2 = cy + Math.sin(angle)*15
-                g.lineBetween(x1, y1, x2, y2)
-                g.strokeCircle(x2, y2, 3)
-            }
-        })
-
-        const asteroidSize = CELL_SIZE
-        bake('resource_asteroid', asteroidSize, (g, cx, cy) => {
-            const rand = seededRandom('resource_asteroid_shape')
-            const spikes = 8
-            const points = []
-            for(let i=0; i<spikes; i++){
-                const angle = (i/spikes) * TWO_PI
-                const r = (asteroidSize/2) * (0.55 + rand()*0.4)
-                points.push(new Phaser.Math.Vector2(cx + Math.cos(angle)*r, cy + Math.sin(angle)*r))
-            }
-            g.fillStyle(GREEN_DIM_HEX, 0.5)
-            g.fillPoints(points, true)
-            g.lineStyle(1.5, GREEN_HEX, 0.9)
-            g.strokePoints(points, true, true)
-        })
-
-        // A GasCloud is translucent by nature (it's a gas), so it skips the opaque-black-background
-        // convention `bake` otherwise applies — built directly off the scratch graphics instead, a loose
-        // cluster of soft overlapping circles inside a thin outer ring.
-        const cloudSize = CELL_SIZE * 1.4
-        tmp.clear()
-        const ccx = cloudSize/2, ccy = cloudSize/2, cr = cloudSize*0.35
-        tmp.fillStyle(GREEN_HEX, 0.15)
-        ;[[-0.25,-0.1],[0.25,-0.15],[0,0.15],[0.32,0.12],[-0.3,0.15]].forEach(([ox,oy]) => {
-            tmp.fillCircle(ccx+ox*cloudSize, ccy+oy*cloudSize, cr*0.6)
-        })
-        tmp.lineStyle(1.5, GREEN_HEX, 0.6)
-        tmp.strokeCircle(ccx, ccy, cr)
-        tmp.generateTexture('resource_gascloud', cloudSize, cloudSize)
-
         tmp.destroy()
     }
 
@@ -625,8 +570,11 @@ export default class MapScene extends Scene {
     }
 
     createResourceNodeSprite = (node:ResourceNodeData) => {
-        const key = node.kind === ResourceNodeType.Asteroid ? 'resource_asteroid' : 'resource_gascloud'
-        const sprite = this.add.image(node.x, node.y, key).setDepth(1)
+        // Both node kinds pick one frame at random out of their own block in the 'tiles' spritesheet
+        // (AsteroidSpriteIndexes/CloudIndexes) instead of a single procedurally-drawn shape — chosen
+        // once here, at creation, so it stays the same frame for that node's whole lifetime.
+        const frames = node.kind === ResourceNodeType.Asteroid ? AsteroidSpriteIndexes : CloudIndexes
+        const sprite = this.add.image(node.x, node.y, 'tiles', frames[Math.floor(Math.random()*frames.length)]).setDepth(1)
         if(node.kind === ResourceNodeType.Asteroid) sprite.setScale(this.asteroidScale(node))
         this.resourceNodeSprites.set(node.id, sprite)
     }
@@ -648,8 +596,10 @@ export default class MapScene extends Scene {
 
     createObjectiveSprite = (spawn:ObjectiveSpawn) => {
         const { x, y } = this.toWorld(spawn.x, spawn.y)
-        const sprite = this.add.image(x, y, 'objective_'+spawn.sprite).setDepth(2)
-        sprite.setTint(this.getObjectiveOwnerColor(null))
+        // ObjectiveSpriteIndex maps each ObjectiveSprite name straight onto its frame in the 'tiles'
+        // spritesheet — the same reverse lookup spawnEntitiesFromMap used to identify spawn.sprite in
+        // the first place, just applied forwards this time to render it.
+        const sprite = this.add.image(x, y, 'tiles', ObjectiveSpriteIndex[spawn.sprite]).setDepth(2)
         this.objectiveSprites.set(spawn.id, sprite)
 
         const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
@@ -1657,8 +1607,9 @@ export default class MapScene extends Scene {
         })
 
         this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
-            const zoom = PhaserMath.Clamp(this.cameras.main.zoom - dy*0.001, 0.25, 3)
-            this.cameras.main.setZoom(zoom)
+            // Straight toggle between the two levels rather than stepping through an index — exact so
+            // long as ZOOM_LEVELS only ever holds two entries (see its own comment).
+            this.cameras.main.setZoom(dy < 0 ? ZOOM_LEVELS[ZOOM_LEVELS.length-1] : ZOOM_LEVELS[0])
         })
     }
 

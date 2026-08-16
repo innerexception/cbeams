@@ -31,10 +31,6 @@ export enum ObjectiveSprite {
     Crypt='Crypt', Shrine='Shrine', NuclearReactor='NuclearReactor'
 }
 
-export enum ObjectiveSpriteIndex {
-    Crypt=26,Shrine=27,NuclearReactor=28
-}
-
 // A gatherable map feature — see MapScene's spawnResourceNodes (procedurally scattered at match start,
 // there's no reserved tile for these on the map file) and updateHarvesters for the live gather logic.
 // An Asteroid holds a finite, depleting metal stockpile (see ResourceNodeData in types.d.ts); a
@@ -42,6 +38,12 @@ export enum ObjectiveSpriteIndex {
 // (see Utils' getLogisticsStatus).
 export enum ResourceNodeType {
     Asteroid='Asteroid', GasCloud='GasCloud'
+}
+
+export const AsteroidSpriteIndexes = [39,40,41,42,43,44,45,46,47,48,49,50,51]
+export const CloudIndexes = [78,79,80,81]
+export enum ObjectiveSpriteIndex {
+    Crypt=86,Shrine=87,NuclearReactor=88
 }
 
 export enum ShipType {
