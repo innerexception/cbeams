@@ -1,5 +1,5 @@
 import type MilsymbolDefault from "milsymbol" with { "resolution-mode": "import" }
-import { BuildingType, VehicleType, Faction } from "../../enum"
+import { ShipType, Faction } from "../../enum"
 
 // milsymbol's package.json declares "type":"module" at its root, and its single "types" entry is
 // shared by both the "require" and "import" export conditions — so TypeScript's Node16 resolution
@@ -14,28 +14,17 @@ ms.setStandard("APP6")
 
 interface SidcFunction { dimension:'G'|'A', functionId:string }
 
-export const BUILDING_SIDC_FUNCTION:Record<BuildingType, SidcFunction> = {
-    [BuildingType.Base]: { dimension:'G', functionId:'UH1---' },
-    [BuildingType.PlayerBase]: { dimension:'G', functionId:'UH1---' },
-    [BuildingType.LogisticsCenter]: { dimension:'G', functionId:'USS---' },
-    [BuildingType.CRAM]: { dimension:'G', functionId:'UCD---' },
-    [BuildingType.BLM]: { dimension:'G', functionId:'UCFRM-' },
-    [BuildingType.THADD]: { dimension:'G', functionId:'UCDM--' },
-    // Supply unit function with the Class V (Ammunition) modifier — same base icon as LogisticsCenter's
-    // generic Supply ('USS---'), just specialized to ammunition specifically.
-    [BuildingType.AmmoDump]: { dimension:'G', functionId:'USS5--' },
-    // Sensor installation — a Radar's real APP-6 function.
-    [BuildingType.Radar]: { dimension:'G', functionId:'USX---' },
-    // Signal/communications installation — Uplink's real APP-6 function.
-    [BuildingType.Uplink]: { dimension:'G', functionId:'UUS---' },
-}
-
-export const VEHICLE_SIDC_FUNCTION:Record<VehicleType, SidcFunction> = {
-    [VehicleType.KK]: { dimension:'A', functionId:'MFQ---' },
-    [VehicleType.ATD]: { dimension:'A', functionId:'MFQ---' },
-    [VehicleType.AWACS]: { dimension:'A', functionId:'MFQ---' },
-    [VehicleType.MLRS]: { dimension:'G', functionId:'UCFRM-' },
-    [VehicleType.ARMOR]: { dimension:'G', functionId:'UCA---' },
+export const SHIP_SIDC_FUNCTION:Record<ShipType, SidcFunction> = {
+    [ShipType.KK]: { dimension:'A', functionId:'MFQ---' },
+    [ShipType.ATD]: { dimension:'A', functionId:'MFQ---' },
+    [ShipType.AWACS]: { dimension:'A', functionId:'MFQ---' },
+    [ShipType.MLRS]: { dimension:'G', functionId:'UCFRM-' },
+    [ShipType.ARMOR]: { dimension:'G', functionId:'UCA---' },
+    // A faction's headquarters — no longer a building, but keeps the same real APP-6 Headquarters
+    // function it always rendered as.
+    [ShipType.Base]: { dimension:'G', functionId:'UH1---' },
+    // Engineer function — closest real APP-6 analog to an unarmed gathering/support ship.
+    [ShipType.Harvester]: { dimension:'G', functionId:'UUE---' },
 }
 
 export const buildSidc = (faction:Faction, fn:SidcFunction) => {

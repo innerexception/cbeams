@@ -1,82 +1,83 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { BuildingType, VehicleType, VehicleData, Faction, BuildingData } from '../../enum'
-import { MAX_QUEUE, MAX_WAYPOINTS, LOGISTICS_CENTER_COUNT, LOGISTICS_CENTER_PLACEMENT_RANGE_PX, LOGISTICS_CENTER_MIN_SPACING_PX, BUILDING_POINTS_BUDGET } from '../common/Constants'
-import { getLogisticsStatus, getVehicleLogisticsCost } from '../common/Utils'
+import { ShipType, ShipData } from '../../enum'
+import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
+import { getLogisticsStatus, getShipLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
-const hints = {
-    [BuildingType.CRAM]: 'Click empty ground near your base to build a CRAM Turret',
-    [BuildingType.BLM]: 'Click empty ground near your base to build a BLM',
-    [BuildingType.THADD]: 'Click empty ground near your base to build a THADD',
-    [BuildingType.AmmoDump]: 'Click empty ground near your base to build an AmmoDump — lines show which buildings would be in resupply range',
-    [BuildingType.Radar]: 'Click empty ground near your base to build a Radar — reveals a much wider ring of fog of war around it',
-    [BuildingType.Uplink]: 'Click empty ground near your base to build an Uplink — then click the building itself to reveal the whole map for 10s (1 minute cooldown)',
-}
-
 export default () => {
-    const { phase, placingFactory, setPlacingFactory, selectedFactoryId, setSelectedFactoryId, selectedShipIds, setSelectedShipIds, factories, vehicles, queueShip, clearWaypoints, clearShipWaypoints, buildingPoints } = useAppStore((state) => ({
-        phase: state.phase,
-        placingFactory: state.placingFactory,
-        setPlacingFactory: state.setPlacingBuilding,
-        selectedFactoryId: state.selectedFactoryId,
-        setSelectedFactoryId: state.setSelectedBuildingId,
+    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         setSelectedShipIds: state.setSelectedShipIds,
-        factories: state.buildings,
-        vehicles: state.vehicles,
+        ships: state.ships,
         queueShip: state.queueShip,
-        clearWaypoints: state.clearWaypoints,
         clearShipWaypoints: state.clearShipWaypoints,
-        buildingPoints: state.buildingPoints,
     }))
 
-    // Re-render periodically so queue progress bars (and, during placement, the LogisticsCenter
-    // counter) stay live.
+    // Re-render periodically so queue progress bars stay live.
     const [, forceTick] = React.useState(0)
     React.useEffect(() => {
         const interval = setInterval(() => forceTick(t => t+1), 200)
         return () => clearInterval(interval)
     }, [])
 
-    const toggle = (kind:BuildingType) => setPlacingFactory(placingFactory === kind ? null : kind)
+    // A single selected Base opens its production panel — the same role the old shipyard building's
+    // panel used to play, just keyed off "exactly one ship selected, and it's a Base" instead of a
+    // separate selected-building concept (see MapScene's click handler / store's selectedShipIds).
+    const selectedBase = selectedShipIds.length === 1 ? ships.find(s => s.id === selectedShipIds[0] && s.type === ShipType.Base) : undefined
 
-    if(phase === 'placement'){
-        const placed = factories.filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter).length
-        return (
-            <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%, -50%)', zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14, textAlign:'center' }}>
-                <div>Place your LogisticsCenters: {placed} / {LOGISTICS_CENTER_COUNT}</div>
-                <div style={{ marginTop:6, fontSize:12 }}>
-                    Click within {LOGISTICS_CENTER_PLACEMENT_RANGE_PX}px of your Base or an existing LogisticsCenter. Each one must be at least {LOGISTICS_CENTER_MIN_SPACING_PX}px from any other.
-                </div>
-            </div>
-        )
-    }
-    if(phase === 'building'){
+    if(selectedBase){
+        const queue = selectedBase.queue || []
+        const queueFull = queue.length >= MAX_QUEUE
+        const waypoints = selectedBase.waypoints || []
+
+        // Recomputed every render (this component already re-renders on its 200ms tick) so a button
+        // disables the instant the shared logistics budget can no longer fit that ship's cost.
+        const { logisticsRemaining } = getLogisticsStatus(selectedBase.faction)
+
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
-                {phase === 'building' && (
-                    <div style={{ color:colors.lGreen, marginBottom:6, fontFamily:'Body', fontSize:14 }}>
-                        Building points remaining: {buildingPoints[Faction.Player]} / {BUILDING_POINTS_BUDGET}
-                    </div>
-                )}
                 <div style={{ display:'flex' }}>
-                    {Object.keys(BuildingType).filter((t:BuildingType)=>BuildingData[t].buildingPoints).map((b:BuildingType)=>
-                        <ToolButton key={b} active={placingFactory === b} disabled={buildingPoints[Faction.Player] < BuildingData[b].buildingPoints} onClick={()=>toggle(b)}>{b} ({BuildingData[b].buildingPoints})</ToolButton>
-                    )}
+                    {Object.values(ShipType).filter(type => type !== ShipType.Base).map(type => (
+                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(selectedBase.id, type)}>{ShipData[type].name}</ToolButton>
+                    ))}
+                    <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
                 </div>
-                {placingFactory && <div style={{ color: colors.lGreen, marginTop: 6, fontSize: 12, fontFamily: 'Body' }}>{hints[placingFactory]}</div>}
+                <div style={{ marginTop:8, display:'flex' }}>
+                    <ToolButton active>
+                        Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
+                    </ToolButton>
+                    {waypoints.length > 0 && <ToolButton onClick={()=>clearShipWaypoints([selectedBase.id])}>Clear Orders</ToolButton>}
+                </div>
+                <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>
+                    {waypoints.length >= MAX_WAYPOINTS
+                        ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
+                        : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
+                </div>
+                <div style={{ marginTop:8, display:'flex', gap:8 }}>
+                    {Array.from({ length: MAX_QUEUE }).map((_, i) => {
+                        const item = queue[i]
+                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
+                        return (
+                            <div key={i} style={{ width:100, border:'2px solid '+colors.lGreen, padding:4, fontFamily:'Body', fontSize:11, color:colors.lGreen }}>
+                                <div>{item ? ShipData[item.type].name : '—'}</div>
+                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.lGreen, marginTop:4 }}>
+                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.lGreen }}/>}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
             </div>
         )
     }
 
     // A drag-selected group of ships (see MapScene's shift-drag box) takes orders the same way a
-    // selected shipyard's route does — every map click adds a waypoint to each one's own route (see
-    // addShipWaypoints) — this panel is just the selection readout + bulk Clear Orders/Cancel, mirroring
-    // the shipyard orders UI below.
+    // selected Base's route does above — every map click adds a waypoint to each one's own route (see
+    // addShipWaypoints) — this panel is just the selection readout + bulk Clear Orders/Cancel.
     if(selectedShipIds.length > 0){
-        const selectedShips = vehicles.filter(s => selectedShipIds.includes(s.id))
+        const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
         return (
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ color:colors.lGreen, fontFamily:'Body', fontSize:14 }}>
@@ -90,55 +91,5 @@ export default () => {
         )
     }
 
-    const selectedFactory = factories.find(f => f.id === selectedFactoryId)
-
-    if(selectedFactory && selectedFactory.kind === BuildingType.LogisticsCenter){
-        const queue = selectedFactory.queue || []
-        const queueFull = queue.length >= MAX_QUEUE
-        const waypoints = selectedFactory.waypoints || []
-        // Orders editing is always live while a shipyard is selected (see MapScene's click handler) —
-        // this button no longer gates that, it's kept purely as a labeled indicator of the mode.
-
-        // Recomputed every render (this component already re-renders on its 200ms tick) so a button
-        // disables the instant the shared logistics budget can no longer fit that vehicle's cost.
-        const { logisticsRemaining } = getLogisticsStatus(selectedFactory.faction)
-
-        return (
-            <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
-                <div style={{ display:'flex' }}>
-                    {Object.values(VehicleType).map(type => (
-                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getVehicleLogisticsCost(type)} onClick={()=>queueShip(selectedFactory.id, type)}>{VehicleData[type].name}</ToolButton>
-                    ))}
-                    <ToolButton onClick={()=>setSelectedFactoryId(null)}>Cancel</ToolButton>
-                </div>
-                <div style={{ marginTop:8, display:'flex' }}>
-                    <ToolButton active>
-                        Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
-                    </ToolButton>
-                </div>
-                <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>
-                    {waypoints.length >= MAX_WAYPOINTS
-                        ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
-                        : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
-                </div>
-                <div style={{ marginTop:8, display:'flex', gap:8 }}>
-                    {Array.from({ length: MAX_QUEUE }).map((_, i) => {
-                        const item = queue[i]
-                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/VehicleData[item.type].productionTimeMs)*100) : 0
-                        return (
-                            <div key={i} style={{ width:100, border:'2px solid '+colors.lGreen, padding:4, fontFamily:'Body', fontSize:11, color:colors.lGreen }}>
-                                <div>{item ? VehicleData[item.type].name : '—'}</div>
-                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.lGreen, marginTop:4 }}>
-                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.lGreen }}/>}
-                                </div>
-                            </div>
-                        )
-                    })}
-                </div>
-            </div>
-        )
-    }
-
-    return <div>Select a logistics center to deploy units</div>
-
+    return <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.lGreen, fontFamily:'Body', fontSize:14 }}>Click your Base to build ships, or Shift+drag to select units</div>
 }

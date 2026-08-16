@@ -5,8 +5,8 @@
 // --- World / grid ---
 export const MAP_SIZE = 100
 // Matches the Tiled map's own tile size (src/assets/maps/sandbox.json, 32x32) so a grid cell here lines
-// up exactly with a tile there — a building spawned at the entities layer's tile (x,y) (see MapScene's
-// spawnEnemyBuildingsFromMap) sits at that same (x,y) in this game's own grid, no rescaling needed.
+// up exactly with a tile there — a ship spawned at the entities layer's tile (x,y) (see MapScene's
+// spawnEntitiesFromMap) sits at that same (x,y) in this game's own grid, no rescaling needed.
 export const CELL_SIZE = 32
 
 // Grid<->world conversions — the one place this math is defined, so MapScene's rendering and the
@@ -17,29 +17,17 @@ export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(wo
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
-// --- Shipyard production/orders ---
+// --- Base production/orders ---
+// There are no buildings in this game — every ship (including a faction's own Base) queues and orders
+// through the same fields (see ShipData in types.d.ts). MAX_QUEUE/MAX_WAYPOINTS bound a Base's own queue
+// and any ship's own route respectively.
 export const MAX_QUEUE = 3
 export const MAX_WAYPOINTS = 5
-
-// --- Territory placement ---
-// Mining stations and solar mills project a smaller placement radius than bases/shipyards.
-export const PLACEMENT_RADIUS_PX = 200
-export const EXTRACTOR_RADIUS_PX = PLACEMENT_RADIUS_PX / 2
-
-// --- Placement phase ---
-// Before a match goes live, the player plants exactly this many LogisticsCenters — each within
-// LOGISTICS_CENTER_PLACEMENT_RANGE_PX of one of their own Base/LogisticsCenters (so the first of the 3
-// has to go near the Base, and later ones can chain off an already-placed LogisticsCenter to extend
-// outward) and at least LOGISTICS_CENTER_MIN_SPACING_PX from every other one they've already placed —
-// see MapScene's isValidLogisticsPlacement/handleLogisticsPlacementClick.
-export const LOGISTICS_CENTER_COUNT = 3
-export const LOGISTICS_CENTER_PLACEMENT_RANGE_PX = 300
-export const LOGISTICS_CENTER_MIN_SPACING_PX = 250
-// Once a faction's 3 LogisticsCenters are down, placement moves into its second stage: every other
-// building kind unlocks, spendable against this flat points budget (see BuildingData's buildingPoints
-// per-kind cost) — the match goes live for that faction's side the instant it hits zero. See
-// MapScene's handleBonusBuildingPlacementClick / AIPlayers' spendEnemyBuildingPoints.
-export const BUILDING_POINTS_BUDGET = 20
+// A faction's logistics cap (see Utils' getLogisticsStatus) — the ceiling on how large a fleet it can
+// field at once — starts at this floor and rises LOGISTICS_PER_GAS_CLOUD for every GasCloud that
+// faction keeps at least one Harvester near (see MapScene's updateHarvesters/HARVESTER_RANGE_PX).
+export const BASE_LOGISTICS_FLOOR = 10
+export const LOGISTICS_PER_GAS_CLOUD = 10
 
 // --- Ship movement ---
 // Once a ship finishes its route (or its orders are cleared) it loiters in a circle around the
@@ -47,75 +35,49 @@ export const BUILDING_POINTS_BUDGET = 20
 export const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
 export const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
 
-// --- Physical footprints, so ships/buildings/icons don't overlap ---
+// --- Physical footprints ---
 export const NATO_ICON_SIZE = 32
-export const BASE_FOOTPRINT_RADIUS = CELL_SIZE * 1.5
-export const FACTORY_FOOTPRINT_RADIUS = CELL_SIZE * 0.75
-export const SHIP_BUILDING_CLEARANCE_PX = 20
-// Minimum gap enforced between any two buildings' icon frames (see MapScene's
-// getBuildingIconRadius/isValidPlacement) — actual footprint is each building's real rendered icon
-// size, this is just the flat clearance added on top so frames never touch edge-to-edge.
-export const BUILDING_MIN_CLEARANCE_PX = 48
-
-// --- CRAM turret (a placeable building, not a ship) ---
-// Its cooldown, damage and range now live on its BuildingMetaData entry in enum.ts. It only ever
-// targets a hostile ship — never a missile, that's THADD's job. How long a burst's tracer dots stay on
-// screen is still a plain constant.
-export const TRACER_LIFETIME_MS = 220
 
 // --- Kamikaze drones (KK, ATD) ---
-// How close a drone has to get to a hostile unit/building to count as "contact". Their own damage now
-// lives on their VehicleStats entry in enum.ts, alongside every other vehicle's.
-export const DRONE_CONTACT_RADIUS_PX = 14
+// Both now detonate against any hostile ship they touch (there's nothing else left to touch — see
+// MapScene's DRONE_TYPES). KK hits only whatever it actually touches; ATD blasts everything hostile
+// within this radius of where it detonates. Their own damage lives on their ShipStats entry in enum.ts,
+// alongside every other ship's.
 export const ATD_BLAST_RADIUS_PX = 10
 
 // --- MLRS rocket ship ---
-// On cooldown, it launches a whole salvo of missiles at once, all homing on the same nearest target
-// in range — each missile is a scene-local projectile (not stored in the app state), tracked only
+// On cooldown, it launches a whole salvo of missiles at once, all homing on the same nearest hostile
+// ship in range — each missile is a scene-local projectile (not stored in the app state), tracked only
 // while in flight, that steers towards its target's live position every frame. Its own cooldown and
-// range now live on its VehicleStats entry in enum.ts, alongside every other vehicle's.
+// range now live on its ShipStats entry in enum.ts, alongside every other ship's.
 export const MISSILE_SALVO_SIZE = 3
 export const MISSILE_SPEED_PX_S = 220
 export const MISSILE_MAX_LIFETIME_MS = 8000
-// Missiles within a salvo (MLRS's own, or THADD's interceptors below) launch one at a time this far
-// apart instead of all at once, so a salvo actually reads as a salvo on screen rather than one stacked
-// blob of missiles flying in perfect lockstep.
+// Missiles within a salvo launch one at a time this far apart instead of all at once, so a salvo
+// actually reads as a salvo on screen rather than one stacked blob of missiles flying in perfect lockstep.
 export const SALVO_STAGGER_MS = 500
-// An offensive missile's *collision* body still flies a straight line to its target (see updateMissiles)
-// — this is purely a visual lob layered on top, a sine bump peaking at MISSILE_ARC_HEIGHT_PX partway
-// through the flight and easing back to 0 at both ends, so it reads as a lobbed shot instead of a laser.
-// It leaves a trail of fading dots behind it (CONTRAIL_*) tracing that same visual arc. A THADD
-// interceptor (targetKind 'missile') gets neither — it's a fast, straight anti-missile shot, not a lob.
+// A missile's *collision* body still flies a straight line to its target (see updateMissiles) — this is
+// purely a visual lob layered on top, a sine bump peaking at MISSILE_ARC_HEIGHT_PX partway through the
+// flight and easing back to 0 at both ends, so it reads as a lobbed shot instead of a laser. It leaves a
+// trail of fading dots behind it (CONTRAIL_*) tracing that same visual arc.
 export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60
 export const CONTRAIL_LIFETIME_MS = 5000
 
 // --- ARMOR ground vehicle ---
-// On cooldown, fires a single instant shot (like CRAM's cannon, not a homing missile) at whichever
-// hostile building is nearest in range. Its damage, cooldown and range all live on its VehicleStats
-// entry in enum.ts, alongside every other vehicle's.
-
-// --- THADD (a placeable building, not a ship) ---
-// An anti-missile battery: on cooldown, fires a 2-missile salvo at its nearest *hostile missile* in
-// range — never a vehicle or building. An interceptor missile destroys (and is destroyed by) whatever
-// hostile missile it touches, regardless of which one it was actually launched at. Its cooldown and
-// range now live on its BuildingMetaData entry in enum.ts.
-export const THADD_SALVO_SIZE = 2
-
-// --- Uplink (a placeable building, not a ship) ---
-// Clicking it (see MapScene's activateUplink) reveals the entire map — every hostile building/ship
-// renders regardless of actual sight range — for this long. Its cooldown lives on its BuildingMetaData
-// entry in enum.ts, alongside every other building's.
-export const UPLINK_REVEAL_DURATION_MS = 10000
+// On cooldown, fires a single instant shot (not a homing missile) at whichever hostile ship is nearest
+// in range. Its damage, cooldown and range all live on its ShipStats entry in enum.ts, alongside every
+// other ship's.
+export const TRACER_LIFETIME_MS = 220
 
 // --- Wreckage ---
-// Left behind by a destroyed ship/building (or a drone detonating), lingers for 10 seconds while fading out.
+// Left behind by a destroyed ship (or a drone detonating), lingers for 10 seconds while fading out.
 export const SHATTER_LIFETIME_MS = 10000
 
 // --- Objectives ---
 // A capturable map feature (see MapScene's spawnEntitiesFromMap for where they're placed, and
 // updateObjectives for the live capture check): a faction captures one the instant it has ARMOR within
-// this radius of it AND the other faction has no ship or building also within that same radius.
+// this radius of it AND the other faction has no ship also within that same radius.
 export const OBJECTIVE_CAPTURE_RADIUS_PX = 200
 export const OBJECTIVE_ICON_SIZE = 40
 // How long a faction's ARMOR has to hold an Objective uncontested (see updateObjectives) before
@@ -124,8 +86,26 @@ export const OBJECTIVE_ICON_SIZE = 40
 export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 
 // --- Enemy AI ---
-// How many drones the enemy shipyard masses before launching them at the player, once, at the start of the match.
+// How many drones the enemy Base masses before launching them at the player, once, at the start of the match.
 export const ENEMY_RAID_SIZE = 3
+
+// --- Resource nodes (Asteroids, GasClouds) ---
+// Scattered procedurally across the map at match start (see MapScene's spawnResourceNodes) — there's no
+// tile reserved for these on the map file the way a Base or Objective has. A Harvester within this
+// range of an Asteroid draws HARVESTER_COLLECTION_RATE_PER_S metal/second from it (see
+// MapScene's updateHarvesters); the same range is what makes a GasCloud count as "covered" for that
+// faction's logistics cap (see Utils' getLogisticsStatus).
+export const HARVESTER_RANGE_PX = 50
+export const HARVESTER_COLLECTION_RATE_PER_S = 1
+export const RESOURCE_ASTEROID_COUNT = 14
+export const RESOURCE_GAS_CLOUD_COUNT = 4
+// An Asteroid's starting metal stockpile is ASTEROID_AVG_METAL +/- a random amount up to
+// ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average.
+export const ASTEROID_AVG_METAL = 50
+export const ASTEROID_METAL_VARIANCE = 15
+// Minimum gap kept between any two resource nodes, and between a node and any ship (a faction's Base
+// included) at scatter time — purely so nodes don't spawn stacked on top of each other or a Base.
+export const RESOURCE_NODE_MIN_SPACING_PX = 150
 
 // --- Theme colors ---
 // GREEN is the game's one wireframe accent color, everywhere: Phaser draws want the 0xRRGGBB number,

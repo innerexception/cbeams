@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Layers, Faction, BuildingType, BuildingData, VehicleType, VehicleData } from "../../enum"
-import { SAVE_NAME } from "./Constants"
+import { Faction, ShipType, ShipData, ResourceNodeType } from "../../enum"
+import { SAVE_NAME, BASE_LOGISTICS_FLOOR, LOGISTICS_PER_GAS_CLOUD, HARVESTER_RANGE_PX } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -25,17 +25,24 @@ export const tryLoadFile = async () => {
     //}
 }
 
-// Each vehicle kind's own logistics upkeep.
-export const getVehicleLogisticsCost = (type:VehicleType) => VehicleData[type].logisticsCost
+// Each ship kind's own logistics upkeep.
+export const getShipLogisticsCost = (type:ShipType) => ShipData[type].logisticsCost
 
-// Shared by the HUD, building placement, and ship production so all three agree on remaining
-// logistics capacity — buildings and deployed vehicles alike draw against the same shared budget.
+// Shared by the HUD and ship production so both agree on remaining logistics capacity — every deployed
+// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same budget.
+// That budget itself is no longer a flat number: it's BASE_LOGISTICS_FLOOR plus LOGISTICS_PER_GAS_CLOUD
+// for every GasCloud this faction currently has at least one Harvester within HARVESTER_RANGE_PX of —
+// stacking more than one Harvester on the same cloud doesn't count it twice.
 export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
-    const { buildings, vehicles } = useAppStore.getState()
-    const ownFactories = buildings.filter(f => f.faction === faction)
-    const ownVehicles = vehicles.filter(v => v.faction === faction)
-    const maxLogistics = ownFactories.filter(b=>b.kind === BuildingType.LogisticsCenter).length*10
-    const logisticsUsed = ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
+    const { ships, resourceNodes } = useAppStore.getState()
+    const ownShips = ships.filter(s => s.faction === faction)
+    const ownHarvesters = ownShips.filter(s => s.type === ShipType.Harvester)
+
+    const gasCloudsCovered = resourceNodes.filter(n => n.kind === ResourceNodeType.GasCloud
+        && ownHarvesters.some(h => Math.hypot(h.x-n.x, h.y-n.y) <= HARVESTER_RANGE_PX)).length
+
+    const maxLogistics = BASE_LOGISTICS_FLOOR + LOGISTICS_PER_GAS_CLOUD * gasCloudsCovered
+    const logisticsUsed = ownShips.reduce((sum, s) => sum + getShipLogisticsCost(s.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }
 }

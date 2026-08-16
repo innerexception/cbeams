@@ -1,113 +1,51 @@
-import { v4 } from "uuid"
 import type MapScene from "../components/scenes/MapScene"
-import { useAppStore, AppState } from "./store"
-import { Faction, BuildingType, VehicleType, BuildingData } from "../../enum"
+import { useAppStore } from "./store"
+import { Faction, ShipType } from "../../enum"
 import { ENEMY_RAID_SIZE } from "./Constants"
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reaches back into it only for the
-// handful of things a decision actually needs — placement validation, coordinate conversion, sprite
-// creation, and the small bit of AI state that lives on the scene itself (enemyShipyardId,
-// enemyRaidLaunched, reactedBlmIds) — the same primitives the player's own actions go through, so the
-// AI can never place/build anything the player couldn't. Its *opening* buildings are no longer placed
-// here at all, though — every building (both factions' headquarters included) now comes entirely from
+// handful of things a decision actually needs — the small bit of AI state that lives on the scene
+// itself (enemyBaseId, enemyRaidLaunched) — the same primitives the player's own actions go through.
+// There are no buildings to place anymore — the enemy's Base (like the player's) comes entirely from
 // the loaded map file's own entities layer (see MapScene's spawnEntitiesFromMap); this file is left
-// with only its *reactive* behavior (the raid, and building a THADD in response to a player BLM).
+// with only the enemy's one reactive/opening behavior, the opening raid.
 
-// Finds whichever cell passing `isValid` sits closest to `origin` — shared by every AI placement
-// decision that just wants "as close to home as possible" (currently just buildEnemyThadd's reactive one).
-const findClosestValidCell = (scene:MapScene, origin:{x:number, y:number}, isValid:(x:number, y:number) => boolean) => {
-    let best:{x:number, y:number} = null
-    let bestDistSq = Infinity
+// Each faction's actual headquarters ship — wherever the map file's entities layer actually placed it —
+// used by checkEnemyRaid as its defensive fallback destination.
+const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.faction === faction && s.type === ShipType.Base)
 
-    for(let x=0; x<scene.mapData.width; x++){
-        for(let y=0; y<scene.mapData.height; y++){
-            if(!isValid(x, y)) continue
-            const distSq = (x-origin.x)**2 + (y-origin.y)**2
-            if(distSq < bestDistSq){ bestDistSq = distSq; best = { x, y } }
-        }
-    }
-    return best
-}
-
-// Each faction's actual headquarters building — Base for the enemy, PlayerBase for the player,
-// wherever the map file's entities layer actually placed it — used as a "close to home" anchor point
-// by the AI's reactive placement, and as checkEnemyRaid's defensive fallback destination. Looked up
-// from the store rather than mapData.bases, which no longer has anything to do with where a Base
-// actually ends up (that array is the old procedural generator's own opening positions, unused now
-// that spawnEntitiesFromMap is what actually places every building — see MapScene's spawnEntitiesFromMap).
-const findBase = (faction:Faction) => useAppStore.getState().buildings.find(f => f.faction === faction && (f.kind === BuildingType.Base || f.kind === BuildingType.PlayerBase))
-
-// One-time opening move: the enemy shipyard queues up a handful of kamikaze drones — going through
-// the same build queue/production timer as any player-built ship, rather than spawning them for
-// free — and then just sits on them once built. checkEnemyRaid is what actually sends them at the player.
-// A no-op if the map didn't actually place an enemy LogisticsCenter (enemyShipyardId, set by
-// spawnEntitiesFromMap onto the first one it finds, stays unset).
+// One-time opening move: the enemy Base queues up a handful of kamikaze drones — going through the
+// same build queue/production timer as any player-built ship, rather than spawning them for free — and
+// then just sits on them once built. checkEnemyRaid is what actually sends them at the player. A no-op
+// if the map didn't actually place an enemy Base (enemyBaseId, set by spawnEntitiesFromMap onto it,
+// stays unset).
 export const spawnEnemyRaid = (scene:MapScene) => {
     const { queueShip } = useAppStore.getState()
-    if(!scene.enemyShipyardId) return
-    for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(scene.enemyShipyardId, VehicleType.KK)
+    if(!scene.enemyBaseId) return
+    for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(scene.enemyBaseId, ShipType.KK)
 }
 
-// Watches the enemy shipyard's own production output and, the moment it has massed a full raid's
-// worth of ships loitering by it, gives it standing orders at whichever of the player's
-// LogisticsCenters is nearest — the raid's whole purpose is knocking out the player's economy, not
-// the (much tougher) Base, and the player always has at least one LogisticsCenter by the time this can
-// possibly fire (spawnEnemyRaid, which is what actually queues these ships, only runs once the
-// placement phase hands off to combat — see MapScene's startCombatPhase). Standing orders here use the
-// same shipyard-orders mechanism the player uses, just driven by the AI instead of a click on the map.
-// Runs once (checked every frame, but a no-op after firing) since it can't hook a "ship completed" event.
+// Watches the enemy Base's own production output and, the moment it has massed a full raid's worth of
+// ships loitering by it, gives it standing orders straight at the player's Base — there's no
+// LogisticsCenter to aim at instead anymore, the Base is the only thing worth raiding. Standing orders
+// here use the same ship-orders mechanism the player uses, just driven by the AI instead of a click on
+// the map. Runs once (checked every frame, but a no-op after firing) since it can't hook a "ship
+// completed" event.
 export const checkEnemyRaid = (scene:MapScene) => {
-    if(scene.enemyRaidLaunched || !scene.enemyShipyardId) return
+    if(scene.enemyRaidLaunched || !scene.enemyBaseId) return
 
-    const { vehicles: ships, buildings, addWaypoint } = useAppStore.getState()
-    const massed = ships.filter(s => s.shipyardId === scene.enemyShipyardId).length
-    if(massed < ENEMY_RAID_SIZE) return
+    const { ships, addShipWaypoints } = useAppStore.getState()
+    const raidShips = ships.filter(s => s.type === ShipType.KK && s.faction === Faction.Enemy)
+    if(raidShips.length < ENEMY_RAID_SIZE) return
 
-    const shipyard = buildings.find(f => f.id === scene.enemyShipyardId)
-    if(!shipyard) return
+    const playerBase = findBase(Faction.Player)
+    if(!playerBase) return
 
-    const nearestLogisticsCenter = buildings
-        .filter(f => f.faction === Faction.Player && f.kind === BuildingType.LogisticsCenter)
-        .reduce((nearest, f) => {
-            const distSq = (f.x-shipyard.x)**2 + (f.y-shipyard.y)**2
-            return (!nearest || distSq < nearest.distSq) ? { f, distSq } : nearest
-        }, null as { f:BuildingData, distSq:number })
-
-    // Falls back to the player's Base only if, somehow, none of their LogisticsCenters exist anymore —
-    // not expected in normal play, just a defensive floor so the raid still has somewhere to go.
-    const dest = nearestLogisticsCenter ? nearestLogisticsCenter.f : findBase(Faction.Player)
-    if(!dest) return
-
-    addWaypoint(scene.enemyShipyardId, dest.x, dest.y)
+    // Direct orders straight onto the already-massed drones themselves — editing the Base's own
+    // waypoints instead would only set the *template* future ships copy at spawn (see spawnShip), which
+    // does nothing for ships already sitting there.
+    const dest = scene.toGrid(playerBase.x, playerBase.y)
+    addShipWaypoints(raidShips.map(s => s.id), dest.x, dest.y)
     scene.enemyRaidLaunched = true
-}
-
-// Reactive defense: fires off the store subscription in MapScene's create(), so it's checked on every
-// state change rather than polled per frame. The moment a player BLM the enemy hasn't seen before
-// shows up in the store — built, not just queued — the enemy responds by building a THADD of its own
-// (see buildEnemyThadd). Tracking reacted-to ids rather than a count means a BLM that's destroyed and
-// later rebuilt still draws a fresh response.
-export const checkEnemyBlmDefense = (scene:MapScene, state:AppState) => {
-    const newPlayerBlms = state.buildings.filter(b => b.faction === Faction.Player && b.kind === BuildingType.BLM && !scene.reactedBlmIds.has(b.id))
-    newPlayerBlms.forEach(b => {
-        scene.reactedBlmIds.add(b.id)
-        buildEnemyThadd(scene)
-    })
-}
-
-// Places a THADD as close to the enemy's own base as any currently-valid cell allows — the same
-// isValidPlacement gate everything else builds through (territory, logistics budget, no overlap),
-// and the same "closest valid cell to home" heuristic. A no-op if there's no enemy Base to anchor off
-// of, or nowhere valid is found (map fully claimed, or the logistics budget has no room left).
-export const buildEnemyThadd = (scene:MapScene) => {
-    const enemyBase = findBase(Faction.Enemy)
-    if(!enemyBase) return
-
-    const best = findClosestValidCell(scene, enemyBase, (x, y) => scene.isValidPlacement(BuildingType.THADD, x, y, Faction.Enemy))
-    if(!best) return
-
-    const factory:BuildingData = { id:v4(), x:best.x, y:best.y, kind:BuildingType.THADD, faction:Faction.Enemy, hp:BuildingData[BuildingType.THADD].maxHp, ammoRemaining:BuildingData[BuildingType.THADD].ammo }
-    useAppStore.getState().addFactory(factory)
-    scene.createBuildingSprite(factory)
 }
