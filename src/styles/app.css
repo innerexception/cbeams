@@ -24,7 +24,7 @@ body {
   image-rendering: pixelated;
   -webkit-font-smoothing: none;
   background: #000;
-  color:#fff;
+  color:#ffff55;
   cursor: url(../assets/img/default.png), pointer;
 }
 

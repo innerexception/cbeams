@@ -24,9 +24,9 @@ export enum Faction {
 
 // A capturable map feature — see MapScene's spawnEntitiesFromMap (fixed position/sprite, read straight
 // off the loaded map file's entities layer) and updateObjectives (live capture logic). Purely an
-// economic/strategic point of interest, not a ship, so it's kept entirely out of ShipType and doesn't
-// go through the SIDC/milsymbol pipeline (see AppSix.ts) — it renders via its own simple hand-drawn
-// icon set instead (see MapScene's generateTextures).
+// economic/strategic point of interest, not a ship, so it's kept entirely out of ShipType — it renders
+// via its own frame in the 'tiles' spritesheet instead (see ObjectiveSpriteIndex, MapScene's
+// createObjectiveSprite).
 export enum ObjectiveSprite {
     Crypt='Crypt', Shrine='Shrine', NuclearReactor='NuclearReactor'
 }

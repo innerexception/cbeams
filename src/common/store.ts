@@ -47,6 +47,7 @@ export interface AppState {
   setActiveMap: (map: MapData | null) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
   addShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
+  setShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   removeShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   clearShipWaypoints: (shipIds: Array<string>) => void;
   queueShip: (baseId: string, type: ShipType) => void;
@@ -81,19 +82,25 @@ export const useAppStore = create<AppState>((set) => ({
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMap: (activeMap) => set({ activeMap }),
   setSelectedShipIds: (selectedShipIds) => set({ selectedShipIds }),
-  // Appends one waypoint onto each selected ship's own route — used both for a drag-selected group of
-  // combat ships and for a selected Base (whose own waypoints double as the default route newly
-  // produced ships copy at spawn time — see spawnShip). Each ship keeps whatever progress it's already
-  // made; this only adds on.
+  // Appends one waypoint onto each selected ship's own route — used for a drag-selected group of combat
+  // ships (a Base itself is never included; MapScene's handleClick filters it out before calling this,
+  // since it never actually moves and doesn't hand orders down to newly produced ships anymore either —
+  // see spawnShip). Each ship keeps whatever progress it's already made; this only adds on.
   addShipWaypoints: (shipIds, x, y) => set((state) => ({
     ships: state.ships.map((s) => {
       if(!shipIds.includes(s.id)) return s;
       const waypoints = s.waypoints || [];
       if(waypoints.length >= MAX_WAYPOINTS) return s;
       // A new order overrides ARMOR's own Objective-latch the same way it overrides anything else it
-      // was doing — see ShipData's latchedObjectiveId.
-      return { ...s, waypoints: [...waypoints, { x, y }], latchedObjectiveId: undefined };
+      // was doing — see ShipData's latchedObjectiveId/objectiveAttached.
+      return { ...s, waypoints: [...waypoints, { x, y }], latchedObjectiveId: undefined, objectiveAttached: undefined };
     }),
+  })),
+  // A plain (non-shift) order-giving click — wipes whatever route a ship already had and replaces it
+  // outright with this one single waypoint, rather than appending onto it (see addShipWaypoints, used
+  // instead when shift is held). Same latch-clearing as any other new order.
+  setShipWaypoints: (shipIds, x, y) => set((state) => ({
+    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [{ x, y }], pathIndex: 0, latchedObjectiveId: undefined, objectiveAttached: undefined } : s)),
   })),
   // Clicking an existing waypoint marker for a selection removes it from every selected ship that
   // actually has a waypoint there (not just the one whose marker was clicked), same click-to-remove
@@ -110,12 +117,12 @@ export const useAppStore = create<AppState>((set) => ({
       const p = s.pathIndex ?? 0;
       const minIndex = p > index ? p-1 : p;
       const pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(s.x, s.y, newWaypoints, minIndex);
-      return { ...s, waypoints: newWaypoints, pathIndex, latchedObjectiveId: undefined };
+      return { ...s, waypoints: newWaypoints, pathIndex, latchedObjectiveId: undefined, objectiveAttached: undefined };
     }),
   })),
   // Selected ships drop their route and just sit wherever they currently are until new orders are given.
   clearShipWaypoints: (shipIds) => set((state) => ({
-    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, latchedObjectiveId: undefined } : s)),
+    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, latchedObjectiveId: undefined, objectiveAttached: undefined } : s)),
   })),
   // Refuses outright — no queue change, no metal spent — if the queue's already full or the building
   // faction (the Base's own, not necessarily the player: the enemy AI's own queueShip calls go through

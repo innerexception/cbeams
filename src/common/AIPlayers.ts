@@ -42,9 +42,8 @@ export const checkEnemyRaid = (scene:MapScene) => {
     const playerBase = findBase(Faction.Player)
     if(!playerBase) return
 
-    // Direct orders straight onto the already-massed drones themselves — editing the Base's own
-    // waypoints instead would only set the *template* future ships copy at spawn (see spawnShip), which
-    // does nothing for ships already sitting there.
+    // Direct orders straight onto the already-massed drones themselves — a Base never has orders of its
+    // own to give (see spawnShip/ShipData's waypoints), so this is the only way to actually move them.
     const dest = scene.toGrid(playerBase.x, playerBase.y)
     addShipWaypoints(raidShips.map(s => s.id), dest.x, dest.y)
     scene.enemyRaidLaunched = true

@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { ShipType, ShipData } from '../../enum'
-import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
+import { MAX_QUEUE } from '../common/Constants'
 import { getLogisticsStatus, getShipLogisticsCost, getShipMetalCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
@@ -31,7 +31,6 @@ export default () => {
     if(selectedBase){
         const queue = selectedBase.queue || []
         const queueFull = queue.length >= MAX_QUEUE
-        const waypoints = selectedBase.waypoints || []
 
         // Recomputed every render (this component already re-renders on its 200ms tick) so a button
         // disables the instant the shared logistics budget can no longer fit that ship's cost.
@@ -45,16 +44,8 @@ export default () => {
                     ))}
                     <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
                 </div>
-                <div style={{ marginTop:8, display:'flex' }}>
-                    <ToolButton active>
-                        Orders{waypoints.length > 0 ? ` (${waypoints.length}/${MAX_WAYPOINTS})` : ''}
-                    </ToolButton>
-                    {waypoints.length > 0 && <ToolButton onClick={()=>clearShipWaypoints([selectedBase.id])}>Clear Orders</ToolButton>}
-                </div>
                 <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>
-                    {waypoints.length >= MAX_WAYPOINTS
-                        ? `Waypoint limit reached (${MAX_WAYPOINTS}/${MAX_WAYPOINTS}). Click a waypoint to remove it.`
-                        : `Click the map to add a waypoint (${waypoints.length}/${MAX_WAYPOINTS}), or click an existing one to remove it. Ships built here will follow this route.`}
+                    New ships wait by the Base until given their own orders.
                 </div>
                 <div style={{ marginTop:8, display:'flex', gap:8 }}>
                     {Array.from({ length: MAX_QUEUE }).map((_, i) => {
@@ -74,9 +65,9 @@ export default () => {
         )
     }
 
-    // A drag-selected group of ships (see MapScene's shift-drag box) takes orders the same way a
-    // selected Base's route does above — every map click adds a waypoint to each one's own route (see
-    // addShipWaypoints) — this panel is just the selection readout + bulk Clear Orders/Cancel.
+    // A drag-selected group of ships takes orders via the map itself — every click sets/adds a waypoint
+    // onto each one's own route (see MapScene's handleClick) — this panel is just the selection readout
+    // + bulk Clear Orders/Cancel.
     if(selectedShipIds.length > 0){
         const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
         return (
@@ -92,5 +83,5 @@ export default () => {
         )
     }
 
-    return <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.green, fontFamily:'Body', fontSize:14 }}>Click your Base to build ships, or Shift+drag to select units</div>
+    return <div style={{ position:'absolute', top:10, left:10, zIndex:2, color:colors.green, fontFamily:'Body', fontSize:14 }}>Click your Base to build ships, or drag to select units</div>
 }

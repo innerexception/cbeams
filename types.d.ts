@@ -97,20 +97,25 @@ interface ShipData {
     x: number
     y: number
     // A ship's own route, followed in order (see MapScene's moveShips) then sat idle at the last point.
-    // For a Base (see enum.ts's ShipData[Base]), this instead doubles as the *default* route newly
-    // produced ships copy at spawn time (see spawnShip) — editing a Base's own waypoints pushes that
-    // update onto every ship already spawned from it too (see addShipWaypoints), same as editing any
-    // other ship's waypoints directly.
+    // A newly produced ship always starts with none — it just sits by its Base until given one (see
+    // spawnShip) — and a Base itself never has any of its own; it never actually moves (speed:0) and
+    // MapScene's handleClick won't let one be selected for order-giving in the first place.
     waypoints?: Array<{ x:number, y:number }>
     pathIndex?: number
     // ARMOR only — the Objective (ObjectiveData.id) it's currently latched onto, having come within
     // OBJECTIVE_CAPTURE_RADIUS_PX of it (see MapScene's moveShips). Overrides its normal route entirely
-    // while set: it moves straight to that Objective's exact position and sits there instead of
-    // continuing on to its next waypoint. Cleared the instant that Objective is captured by its own
-    // faction, or the instant it's given any new order (see store's addShipWaypoints/
+    // while set: it moves straight to that Objective's own edge and sits there instead of continuing on
+    // to its next waypoint. Set the instant it starts approaching — NOT the same instant as actually
+    // arriving there, see objectiveAttached for that. Cleared the instant that Objective is captured by
+    // its own faction, or the instant it's given any new order (see store's addShipWaypoints/
     // removeShipWaypoints/clearShipWaypoints, all of which clear this same as they always have
     // waypoints/pathIndex).
     latchedObjectiveId?: string
+    // ARMOR only — true once it's actually reached the edge point latchedObjectiveId sends it to, not
+    // merely en route there. This, not latchedObjectiveId alone, is what updateObjectives requires before
+    // a capture even starts counting down — otherwise the timer would start the instant an ARMOR merely
+    // entered range, before it had actually attached to anything.
+    objectiveAttached?: boolean
     lastFiredAtMs?: number
     hp: number
     // Only present for a ship whose ShipStats sets `ammo` (MLRS) — set to that value when the ship's

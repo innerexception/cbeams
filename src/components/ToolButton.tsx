@@ -7,7 +7,7 @@ export const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProp
     padding: '8px 14px',
     marginRight: '8px',
     background: active ? colors.green : 'black',
-    color: active ? '#000' : colors.green,
+    color: active ? '#000' : colors.yellow,
     border: '2px solid '+colors.green,
     cursor: disabled ? 'default' : 'pointer',
     opacity: disabled ? 0.4 : 1,

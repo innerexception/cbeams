@@ -2,9 +2,8 @@ import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
-import { getLogisticsStatus, getShipLogisticsCost, seededRandom } from "../../common/Utils";
+import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
-import { SHIP_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, CloudIndexes, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
@@ -12,14 +11,13 @@ import {
     ATD_BLAST_RADIUS_PX,
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
-    SHATTER_LIFETIME_MS,
     MISSILE_IMPACT_LIFETIME_MS, MISSILE_IMPACT_MIN_RADIUS_PX, MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX,
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT, RESOURCE_GAS_CLOUD_COUNT,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
-    NATO_ICON_SIZE, GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
+    GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -43,7 +41,7 @@ const AMMO_LABEL_GAP_PX = 4
 // than snapping straight there even when the heading itself jumps (e.g. the waypoint it's tracking
 // changes underneath it). IDLE is slower — a lazy drift back to north once it's got nowhere left to go,
 // vs. MOVE actually tracking its own direction of travel while it has somewhere to be. Every ship goes
-// through this the same way now, milsymbol icons included, not just the ones with real directional art.
+// through this the same way now.
 const IDLE_TURN_RATE_PER_MS = 0.002
 const MOVE_TURN_RATE_PER_MS = 0.001
 
@@ -72,10 +70,6 @@ const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
 // isHostileDroneShipPair/onDroneShipContact/detonateDrone) — every other kind (MLRS, AWACS, ARMOR,
 // Base) just collides and bounces off physically, nothing happens.
 const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.ATD])
-
-// Ship kinds that render from their own real sprite (see Assets.ts, each loaded under its own
-// ShipType key) instead of a milsymbol canvas (see generateTextures/createShipSprite).
-const REAL_SPRITE_SHIP_TYPES = new Set<ShipType>([ShipType.Harvester, ShipType.KK, ShipType.ARMOR, ShipType.AWACS, ShipType.Base, ShipType.MLRS])
 
 // Applies accumulated damage to any {id, hp} collection, removing anything that drops to 0 HP or
 // below. `onDeath` lets the caller leave its own effect at the death location — shared by every
@@ -181,7 +175,6 @@ export default class MapScene extends Scene {
     healthG: GameObjects.Graphics
     ordersG: GameObjects.Graphics
     combatG: GameObjects.Graphics
-    shatterG: GameObjects.Graphics
     missileImpactG: GameObjects.Graphics
     trailG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
@@ -229,9 +222,14 @@ export default class MapScene extends Scene {
     shiftDown: boolean = false
     dragSelectStart: { x:number, y:number } | null = null
     dragSelectCurrent: { x:number, y:number } | null = null
+    // Set on every left-button pointerdown regardless of Shift (unlike dragSelectStart, which only
+    // tracks the non-shift box-select case) — purely so pointerup can still resolve a shift+click (no
+    // real drag) into an order, even though shift-drag itself is reserved for panning the camera. See
+    // enableCameraControls' pointerup.
+    pointerDownWorld: { x:number, y:number } | null = null
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
-    shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
-    // A missile actually landing on its target — see onMissileShipContact/drawMissileImpacts.
+    // A missile actually landing on its target, or fizzling out with nothing left to retarget onto —
+    // see onMissileShipContact/updateMissiles/drawMissileImpacts.
     impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     // Decaying vapor-trail points left behind an offensive missile's actual (arced) flight path — see
     // startMissileLeg/updateMissiles for how the arc itself is computed, drawMissileTrails for the draw.
@@ -279,7 +277,6 @@ export default class MapScene extends Scene {
         this.healthG = this.add.graphics()
         this.ordersG = this.add.graphics()
         this.combatG = this.add.graphics()
-        this.shatterG = this.add.graphics()
         this.missileImpactG = this.add.graphics()
         this.trailG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
@@ -350,25 +347,9 @@ export default class MapScene extends Scene {
         const tmp = this.add.graphics()
         const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
             tmp.clear()
-            // Solid black behind every hand-drawn icon too, same as renderAppSixIcon does for the
-            // milsymbol ones — so it reads as an opaque tile rather than letting the grid/terrain under
-            // it show through the gaps in its own linework.
-            tmp.fillStyle(0x000000, 1)
-            tmp.fillRect(0, 0, size, size)
             draw(tmp, size/2, size/2)
             tmp.generateTexture(key, size, size)
         }
-
-        const shipSize = Math.ceil(NATO_ICON_SIZE)
-
-        // REAL_SPRITE_SHIP_TYPES render from their own real sprite (see Assets.ts, each loaded under its
-        // own ShipType key) instead of a milsymbol canvas — skip baking the ship_friend_/ship_hostile_
-        // pair any of them would otherwise never use (see createShipSprite).
-        Object.values(ShipType).filter(type => !REAL_SPRITE_SHIP_TYPES.has(type)).forEach(type => {
-            const fn = SHIP_SIDC_FUNCTION[type]
-            this.textures.addCanvas('ship_friend_'+type, renderAppSixIcon(buildSidc(Faction.Player, fn), shipSize, GREEN_HEX))
-            this.textures.addCanvas('ship_hostile_'+type, renderAppSixIcon(buildSidc(Faction.Enemy, fn), shipSize, RED_HEX))
-        })
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
 
@@ -397,7 +378,6 @@ export default class MapScene extends Scene {
         this.drawOrders()
         this.drawCombat(time)
         this.drawHarvesterBeams(time)
-        this.drawShatters(time)
         this.drawMissileImpacts(time)
         this.drawMissileTrails(time)
 
@@ -520,7 +500,10 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Places a newly completed ship near its Base, trying to avoid overlapping other loitering ships.
+    // Places a newly completed ship at an empty spot near its Base, trying to avoid overlapping other
+    // loitering ships, and leaves it there with no orders at all — it just sits and waits until the
+    // player actually gives it a route (see moveShips' idle handling), rather than inheriting some
+    // default route from the Base the way it used to.
     spawnShip = (base:ShipData, type:ShipType) => {
         const center = { x:base.x, y:base.y }
         const size = ShipData[type].sizeHex * CELL_SIZE
@@ -538,7 +521,7 @@ export default class MapScene extends Scene {
             if(!overlapsShip){ pos = candidate; break }
         }
 
-        const ship:ShipData = { id:v4(), faction:base.faction, type, x:pos.x, y:pos.y, waypoints:[...(base.waypoints||[])], pathIndex:0, hp:ShipData[type].hp, ammoRemaining:ShipData[type].ammo }
+        const ship:ShipData = { id:v4(), faction:base.faction, type, x:pos.x, y:pos.y, hp:ShipData[type].hp, ammoRemaining:ShipData[type].ammo }
         useAppStore.getState().addShip(ship)
         this.createShipSprite(ship)
     }
@@ -642,10 +625,10 @@ export default class MapScene extends Scene {
         this.resourceNodeSprites.delete(id)
     }
 
-    // Neutral is a dim green, deliberately not GREY_DIM_HEX — that colour reads as "hostile" everywhere
-    // else in this game (ship_hostile_*, ...), and an unclaimed Objective shouldn't look like it's
-    // already the enemy's.
-    getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? RED_HEX : GREEN_DIM_HEX
+    // Neutral is a dim green, deliberately not RED_HEX — that colour reads as "hostile" everywhere else
+    // in this game (every enemy ship's own tint, ...), and an unclaimed Objective shouldn't look like
+    // it's already the enemy's.
+    getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? RED_HEX : YELLOW_HEX
 
     createObjectiveSprite = (spawn:ObjectiveSpawn) => {
         const { x, y } = this.toWorld(spawn.x, spawn.y)
@@ -659,18 +642,19 @@ export default class MapScene extends Scene {
         this.objectiveLabels.set(spawn.id, label)
     }
 
-    // Every frame: for each Objective, does either faction currently have ARMOR actually latched onto it
-    // (ShipData's latchedObjectiveId, acquired/released by moveShips — not just "somewhere within
-    // OBJECTIVE_CAPTURE_RADIUS_PX", the meter doesn't so much as start ticking until at least one ARMOR
-    // has actually attached itself to the Objective), AND does the *other* faction have no ship (any
-    // kind, not just ARMOR) also within that same radius? That faction is "contesting" it — checked for
-    // both, so contest can be held by either side. The instant contest starts (or switches sides),
-    // capturingFaction/captureStartedAtMs are (re)set to track that hold; the instant it breaks (no one
-    // contesting, or the last latched ARMOR simply leaving/dying resolves the same way — hasLatchedArmor
-    // just goes false), they reset to null, discarding whatever progress had built up. Only once a single
-    // faction has held it uncontested for a full OBJECTIVE_CAPTURE_TIME_MS does owner actually flip — see
-    // ObjectiveData for the full model. Also checks the win condition every pass: one faction holding
-    // every Objective on the map at once ends the match immediately (handleAllObjectivesCaptured).
+    // Every frame: for each Objective, does either faction currently have ARMOR actually attached to it
+    // (ShipData's objectiveAttached — true only once it's physically reached the edge point
+    // latchedObjectiveId sends it to, not from the instant it merely started approaching; the meter
+    // doesn't so much as start ticking until that happens), AND does the *other* faction have no ship
+    // (any kind, not just ARMOR) also within OBJECTIVE_CAPTURE_RADIUS_PX? That faction is "contesting"
+    // it — checked for both, so contest can be held by either side. The instant contest starts (or
+    // switches sides), capturingFaction/captureStartedAtMs are (re)set to track that hold; the instant it
+    // breaks (no one contesting, or the last attached ARMOR simply leaving/dying resolves the same way —
+    // hasAttachedArmor just goes false), they reset to null, discarding whatever progress had built up.
+    // Only once a single faction has held it uncontested for a full OBJECTIVE_CAPTURE_TIME_MS does owner
+    // actually flip — see ObjectiveData for the full model. Also checks the win condition every pass: one
+    // faction holding every Objective on the map at once ends the match immediately
+    // (handleAllObjectivesCaptured).
     updateObjectives = (time:number) => {
         const { objectives, ships, setObjectives } = useAppStore.getState()
         if(objectives.length === 0) return
@@ -682,9 +666,9 @@ export default class MapScene extends Scene {
             const { x, y } = this.toWorld(spawn.x, spawn.y)
 
             const contestingFaction = [Faction.Player, Faction.Enemy].find(faction => {
-                const hasLatchedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ARMOR
-                    && s.latchedObjectiveId === objective.id)
-                if(!hasLatchedArmor) return false
+                const hasAttachedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ARMOR
+                    && s.latchedObjectiveId === objective.id && s.objectiveAttached)
+                if(!hasAttachedArmor) return false
 
                 const enemyShipPresent = ships.some(s => s.faction !== faction
                     && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
@@ -787,10 +771,11 @@ export default class MapScene extends Scene {
 
     createShipSprite = (ship:ShipData) => {
         const isFriend = ship.faction === Faction.Player
+        // Every ship type renders from its own real sprite now (see Assets.ts, each loaded under its
+        // own ShipType key) — Base is the one exception with a genuinely separate texture per faction
+        // ('base_enemy', baseB.png) rather than one shared texture tinted green/red like everything else.
         const textureKey = ship.type === ShipType.Base && !isFriend ? 'base_enemy' : ship.type
-        const sprite = REAL_SPRITE_SHIP_TYPES.has(ship.type)
-            ? this.physics.add.sprite(ship.x, ship.y, textureKey).setTint(isFriend ? GREEN_HEX : RED_HEX)
-            : this.physics.add.sprite(ship.x, ship.y, (isFriend ? 'ship_friend_' : 'ship_hostile_') + ship.type)
+        const sprite = this.physics.add.sprite(ship.x, ship.y, textureKey).setTint(isFriend ? GREEN_HEX : RED_HEX)
         this.centerCircleBody(sprite)
         sprite.setData('kind', 'ship' as BodyKind)
         sprite.setData('id', ship.id)
@@ -832,9 +817,9 @@ export default class MapScene extends Scene {
         this.ammoLabels.delete(id)
     }
 
-    // A destroyed ship splits into two pieces along a jagged cut instead of the old debris-line shatter
-    // effect. Each piece is the dying sprite's own texture/frame/tint, clipped to its half of the cut by
-    // a GeometryMask built from a Graphics object that is never added to the display list (so it never
+    // A destroyed ship splits into two pieces along a jagged cut. Each piece is the dying sprite's own
+    // texture/frame/tint, clipped to its half of the cut by a GeometryMask built from a Graphics object
+    // that is never added to the display list (so it never
     // renders as its own visible shape — see the `add:false` argument, same idiom rangeShadeBrush uses)
     // — only its geometry matters. That mask Graphics and the piece Image are then driven by the *same*
     // Phaser tween (both listed as targets), so their x/y/rotation stay in perfect lockstep as the piece
@@ -849,28 +834,41 @@ export default class MapScene extends Scene {
         const w = sprite.width, h = sprite.height
         if(w <= 0 || h <= 0) return
 
-        // A jagged line from a random point on the top edge to a random point on the bottom edge, in the
-        // sprite's own local (unrotated) space — computed once, since (unlike the old shatter effect)
-        // nothing here ever gets redrawn frame to frame, so there's no need for it to be reproducible
-        // between draws the way seededRandom exists for.
+        // Always cut across the sprite's short axis rather than lengthwise — e.g. a tall, narrow ship
+        // (the common case: most of these sprites are taller than wide) snaps into a top half and a
+        // bottom half, not two long slivers. The jagged line sweeps the full short axis (a random point
+        // on one short-axis edge to a random point on the other), jittered along the long axis as it
+        // goes — computed once, since nothing here ever gets redrawn frame to frame the way a raw
+        // Graphics-drawn effect would, so there's no need for the randomness to be reproducible between
+        // draws.
+        const cutAcrossWidth = w <= h
         const segments = 4
-        const startX = (Math.random()-0.5) * w*0.6
-        const endX = (Math.random()-0.5) * w*0.6
+        const sweepHalf = cutAcrossWidth ? w/2 : h/2
+        const tiltHalf = cutAcrossWidth ? h/2 : w/2
+        const startTilt = (Math.random()-0.5) * tiltHalf*0.6
+        const endTilt = (Math.random()-0.5) * tiltHalf*0.6
         const jaggedPoints:Array<{x:number,y:number}> = []
         for(let i=0; i<=segments; i++){
             const t = i/segments
-            const y = -h/2 + h*t
-            const jitter = (i===0 || i===segments) ? 0 : (Math.random()-0.5) * w*0.3
-            jaggedPoints.push({ x: startX+(endX-startX)*t + jitter, y })
+            const sweep = -sweepHalf + sweepHalf*2*t
+            const jitter = (i===0 || i===segments) ? 0 : (Math.random()-0.5) * tiltHalf*0.6
+            const tilt = startTilt+(endTilt-startTilt)*t + jitter
+            jaggedPoints.push(cutAcrossWidth ? { x:sweep, y:tilt } : { x:tilt, y:sweep })
         }
 
-        const leftPolygon = [{ x:-w/2, y:-h/2 }, ...jaggedPoints, { x:-w/2, y:h/2 }]
-        const rightPolygon = [{ x:w/2, y:-h/2 }, ...[...jaggedPoints].reverse(), { x:w/2, y:h/2 }]
+        const topLeft = { x:-w/2, y:-h/2 }, topRight = { x:w/2, y:-h/2 }
+        const bottomLeft = { x:-w/2, y:h/2 }, bottomRight = { x:w/2, y:h/2 }
+        // cutAcrossWidth: pieceA is the top half, pieceB the bottom half. Otherwise (cut spans height):
+        // pieceA is the left half, pieceB the right half — the original left/right split.
+        const pieceAPolygon = cutAcrossWidth ? [topLeft, ...jaggedPoints, topRight] : [topLeft, ...jaggedPoints, bottomLeft]
+        const pieceBPolygon = cutAcrossWidth ? [bottomLeft, ...[...jaggedPoints].reverse(), bottomRight] : [topRight, ...[...jaggedPoints].reverse(), bottomRight]
+        const pieceALocalDir = cutAcrossWidth ? { x:0, y:-1 } : { x:-1, y:0 }
+        const pieceBLocalDir = cutAcrossWidth ? { x:0, y:1 } : { x:1, y:0 }
 
         ;[
-            { polygon:leftPolygon, localDirX:-1 },
-            { polygon:rightPolygon, localDirX:1 },
-        ].forEach(({ polygon, localDirX }) => {
+            { polygon:pieceAPolygon, localDir:pieceALocalDir, spinSign:-1 },
+            { polygon:pieceBPolygon, localDir:pieceBLocalDir, spinSign:1 },
+        ].forEach(({ polygon, localDir, spinSign }) => {
             const piece = this.add.image(sprite.x, sprite.y, sprite.texture.key, sprite.frame.name)
                 .setOrigin(0.5).setRotation(sprite.rotation).setScale(sprite.scaleX, sprite.scaleY).setDepth(sprite.depth)
             if(sprite.isTinted) piece.setTint(sprite.tintTopLeft)
@@ -882,23 +880,21 @@ export default class MapScene extends Scene {
             mask.fillStyle(0xFFFFFF).fillPoints(polygon, true)
             piece.setMask(mask.createGeometryMask())
 
-            // Flies outward perpendicular to its own half of the cut (local +/-X), rotated into world
-            // space by the sprite's own heading at the moment of death — so the split always reads as
-            // "this ship broke in half," regardless of which way it happened to be facing.
+            // Flies outward perpendicular to its own half of the cut (local direction above), rotated
+            // into world space by the sprite's own heading at the moment of death — so the split always
+            // reads as "this ship broke in half," regardless of which way it happened to be facing.
             const distance = SHIP_FRAGMENT_MIN_DISTANCE_PX + Math.random()*(SHIP_FRAGMENT_MAX_DISTANCE_PX-SHIP_FRAGMENT_MIN_DISTANCE_PX)
-            const worldDx = localDirX*Math.cos(sprite.rotation)*distance
-            const worldDy = localDirX*Math.sin(sprite.rotation)*distance
-            const spin = localDirX * (0.3 + Math.random()*0.5)
+            const worldDx = (localDir.x*Math.cos(sprite.rotation) - localDir.y*Math.sin(sprite.rotation)) * distance
+            const worldDy = (localDir.x*Math.sin(sprite.rotation) + localDir.y*Math.cos(sprite.rotation)) * distance
+            const spin = spinSign * (0.3 + Math.random()*0.5)
 
-            // alpha is included here too even though it only visibly affects piece (a mask's own alpha
-            // doesn't affect what it masks) — one tween driving both targets in lockstep start to finish,
-            // rather than two separate tweens that could in principle finish a frame apart.
+            // No fade — piece and mask just fly/spin in lockstep for the full duration, then both get
+            // destroyed outright in onComplete.
             this.tweens.add({
                 targets: [piece, mask],
                 x: sprite.x+worldDx,
                 y: sprite.y+worldDy,
                 rotation: sprite.rotation+spin,
-                alpha: 0,
                 duration: SHIP_FRAGMENT_LIFETIME_MS,
                 ease: 'Cubic.Out',
                 onComplete: () => { piece.destroy(); mask.destroy() },
@@ -908,10 +904,8 @@ export default class MapScene extends Scene {
 
     // A physics body's offset is relative to its texture frame's top-left corner — this centers a
     // circle within whatever frame the sprite is currently showing. The radius is derived from the
-    // texture's own dimensions rather than passed in: milsymbol's asCanvas() bakes each icon's canvas
-    // to exactly its symbol bounding box (see AppSix.ts/renderAppSixIcon), so sprite.width/height
-    // already *is* the real rendered icon footprint — friendly rectangle frames and hostile diamond
-    // frames alike. Half the shorter side keeps the circle inscribed inside that frame on both shapes.
+    // texture's own dimensions rather than passed in, so it just matches whatever that ship's actual
+    // sprite footprint is. Half the shorter side keeps the circle inscribed inside that frame.
     centerCircleBody = (sprite:Physics.Arcade.Sprite) => {
         const radius = Math.min(sprite.width, sprite.height) / 2
         const body = sprite.body as Physics.Arcade.Body
@@ -1070,7 +1064,12 @@ export default class MapScene extends Scene {
             // detonates it right here, same as a contact hit does in onDroneShipContact.
             if(ship.type === ShipType.ATD && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
 
-            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId }
+            // True only once actually at the latch point (dist<=step, same "arrived" condition the
+            // snap-to-target branch above already used), not merely from the instant latchedObjectiveId
+            // was acquired — see ShipData's objectiveAttached for why that distinction matters.
+            const objectiveAttached = !!latchedObjectiveWorld && dist <= step
+
+            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId, objectiveAttached }
         })
 
         setShips(updated)
@@ -1138,7 +1137,7 @@ export default class MapScene extends Scene {
 
         const { ships, setShips } = useAppStore.getState()
         setShips(applyDamage(ships, shipDamage, dead => {
-            // The detonating drone itself gets the same plain white impact flash a missile landing a hit
+            // The detonating drone itself gets the same plain yellow impact flash a missile landing a hit
             // uses (sized off its own damage stat) instead of the fragments-splitting effect, and its
             // sprite is just removed immediately rather than animated away — a drone going off is
             // instantaneous, not something that "breaks apart." Anything else caught in the blast (ATD)
@@ -1388,8 +1387,8 @@ export default class MapScene extends Scene {
     // current (already-arced) position to whatever hostile ship is now nearest (searched over the whole
     // map — a missile mid-flight has no "range" of its own the way a stationary weapon does), and keeps
     // trying every frame right up until its leg completes in case something comes into range before
-    // then. If nothing's ever found, it's destroyed (with a shatter effect, same as an actual impact)
-    // the instant its leg's arc finishes, rather than flying on forever with nothing to hit.
+    // then. If nothing's ever found, it's destroyed (with the same impact flash as an actual hit) the
+    // instant its leg's arc finishes, rather than flying on forever with nothing to hit.
     updateMissiles = (time:number, deltaMs:number) => {
         this.missilesGroup.children.each((child:Physics.Arcade.Sprite) => {
             if(!child.active) return true
@@ -1419,10 +1418,11 @@ export default class MapScene extends Scene {
 
             // The leg's run its full course (rawProgress could only still exceed 1 here if nothing was
             // found to retarget onto above) with nothing to show for it — fizzle right where the arc
-            // came back down instead of flying on forever in a straight line.
+            // came back down instead of flying on forever in a straight line, with the same plain yellow
+            // impact flash an actual hit uses (see onMissileShipContact).
             if(rawProgress > 1){
                 child.destroy()
-                this.shatters.push({ x:legTargetX, y:legTargetY, createdAt:time, seed:child.getData('id') })
+                this.impactFlashes.push({ x:legTargetX, y:legTargetY, createdAt:time, damage:child.getData('damage') })
                 return true
             }
 
@@ -1501,36 +1501,11 @@ export default class MapScene extends Scene {
 
     randomFlickerIntervalMs = () => HARVESTER_BEAM_FLICKER_MIN_MS + Math.random()*(HARVESTER_BEAM_FLICKER_MAX_MS-HARVESTER_BEAM_FLICKER_MIN_MS)
 
-    // A jagged scatter of debris fragments (shape kept stable frame-to-frame by seeding the randomness
-    // off the missile's own id, since this redraws every frame unlike spawnDeathFragments), fading out
-    // over 10s — the one remaining case is a missile fizzling out mid-flight with nothing left to
-    // retarget onto (see updateMissiles); an actual ship dying uses spawnDeathFragments instead.
-    drawShatters = (time:number) => {
-        const g = this.shatterG
-        g.clear()
-
-        this.shatters = this.shatters.filter(s => time - s.createdAt < SHATTER_LIFETIME_MS)
-        this.shatters.forEach(s => {
-            const progress = (time - s.createdAt) / SHATTER_LIFETIME_MS
-            const alpha = 1 - progress
-            const rand = seededRandom(s.seed)
-
-            g.lineStyle(1.5, GREEN_HEX, alpha)
-            const pieces = 6
-            for(let i=0; i<pieces; i++){
-                const angle = rand()*TWO_PI
-                const len = CELL_SIZE * (0.3 + rand()*0.5)
-                const startX = s.x + (rand()-0.5)*CELL_SIZE*0.6
-                const startY = s.y + (rand()-0.5)*CELL_SIZE*0.6
-                g.lineBetween(startX, startY, startX+Math.cos(angle)*len, startY+Math.sin(angle)*len)
-            }
-        })
-    }
-
-    // A missile actually landing on its target (see onMissileShipContact) — a plain white circle, sized
-    // off the damage that hit landed for, fully opaque at the instant of impact and fading linearly to
-    // nothing over MISSILE_IMPACT_LIFETIME_MS. Separate from drawShatters' wreckage effect, which still
-    // fires independently if that damage actually killed the ship.
+    // A missile actually landing on its target (see onMissileShipContact), or fizzling out mid-flight
+    // with nothing left to retarget onto (see updateMissiles) — either way, a plain yellow circle sized
+    // off its own damage stat, fully opaque at the instant it appears and fading linearly to nothing over
+    // MISSILE_IMPACT_LIFETIME_MS. Separate from spawnDeathFragments, which still fires independently if
+    // a real hit actually killed its target.
     drawMissileImpacts = (time:number) => {
         const g = this.missileImpactG
         g.clear()
@@ -1539,7 +1514,7 @@ export default class MapScene extends Scene {
         this.impactFlashes.forEach(f => {
             const progress = (time - f.createdAt) / MISSILE_IMPACT_LIFETIME_MS
             const radius = MISSILE_IMPACT_MIN_RADIUS_PX + f.damage*MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX
-            g.fillStyle(0xFFFFFF, 1-progress)
+            g.fillStyle(YELLOW_HEX, 1-progress)
             g.fillCircle(f.x, f.y, radius)
         })
     }
@@ -1597,24 +1572,24 @@ export default class MapScene extends Scene {
     // currently a permanent no-op, left in place in case terrain annotation via a separate Tiled layer
     // comes back later.
     drawTerrain = () => {
-        const g = this.g
-        const terrain = this.mapData.terrain
-        if(!terrain) return
+        // const g = this.g
+        // const terrain = this.mapData.terrain
+        // if(!terrain) return
 
-        const scaleX = CELL_SIZE / terrain.tilewidth
-        const scaleY = CELL_SIZE / terrain.tileheight
-        const tileW = terrain.tilewidth * scaleX
-        const tileH = terrain.tileheight * scaleY
+        // const scaleX = CELL_SIZE / terrain.tilewidth
+        // const scaleY = CELL_SIZE / terrain.tileheight
+        // const tileW = terrain.tilewidth * scaleX
+        // const tileH = terrain.tileheight * scaleY
 
-        g.lineStyle(1, GREEN_DIM_HEX, 0.6)
-        terrain.layers.forEach(layer => {
-            for(let ty=0; ty<layer.height; ty++){
-                for(let tx=0; tx<layer.width; tx++){
-                    // if(!layer.data[ty*layer.width + tx]) continue
-                    // g.strokeRect(tx*tileW, ty*tileH, tileW, tileH)
-                }
-            }
-        })
+        // g.lineStyle(1, GREEN_DIM_HEX, 0.6)
+        // terrain.layers.forEach(layer => {
+        //     for(let ty=0; ty<layer.height; ty++){
+        //         for(let tx=0; tx<layer.width; tx++){
+        //             // if(!layer.data[ty*layer.width + tx]) continue
+        //             // g.strokeRect(tx*tileW, ty*tileH, tileW, tileH)
+        //         }
+        //     }
+        // })
     }
 
     // Draws each selected ship's own route (line + numbered waypoint markers) — a selected Base's own
@@ -1773,13 +1748,16 @@ export default class MapScene extends Scene {
             if(!this.hoveredCell) return
             if(!pointer.leftButtonDown()) return
 
-            // Plain left-mousedown always starts a potential unit-selection box (resolved into either a
-            // click or a full box-select on pointerup, by drag distance — see enableCameraControls'
-            // pointerup/handleClick below). Shift+left-drag and right-drag are both reserved for panning
-            // the camera instead, handled entirely by pointermove/pointerup, so there's nothing to do
-            // here for either.
+            const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
+            // Tracked regardless of Shift, purely to resolve a click on pointerup (see its own comment).
+            this.pointerDownWorld = { x:worldPoint.x, y:worldPoint.y }
+
+            // Plain left-mousedown (only) additionally starts a potential unit-selection box (resolved
+            // into either a click or a full box-select on pointerup, by drag distance — see
+            // enableCameraControls' pointerup/handleClick below). Shift+left-drag and right-drag are both
+            // reserved for panning the camera instead, handled entirely by pointermove/pointerup, so
+            // there's nothing more to do here for either.
             if(!this.shiftDown){
-                const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
                 this.dragSelectStart = { x:worldPoint.x, y:worldPoint.y }
                 this.dragSelectCurrent = this.dragSelectStart
             }
@@ -1790,12 +1768,13 @@ export default class MapScene extends Scene {
         })
     }
 
-    // A shift-less pointerdown/up with negligible movement (see enableCameraControls' pointerup, which
-    // decides click vs. box-select by drag distance) — click-to-select/order handling lives here rather
-    // than pointerdown itself so it only fires once we know the gesture wasn't actually a drag.
+    // A pointerdown/up with negligible movement, shift held or not (see enableCameraControls' pointerup,
+    // which decides click vs. drag by distance — a shift+click still resolves here even though
+    // shift+drag itself is reserved for panning) — click-to-select/order handling lives here rather than
+    // pointerdown itself so it only fires once we know the gesture wasn't actually a drag.
     handleClick = (worldX:number, worldY:number) => {
         if(!this.hoveredCell) return
-        const { ships, selectedShipIds, setSelectedShipIds, addShipWaypoints, removeShipWaypoints } = useAppStore.getState()
+        const { ships, selectedShipIds, setSelectedShipIds, addShipWaypoints, setShipWaypoints, removeShipWaypoints } = useAppStore.getState()
 
         // Clicking directly on one of the player's own ships always (re)selects just that ship, even
         // while a different group is already selected — takes priority over handing the existing
@@ -1806,18 +1785,27 @@ export default class MapScene extends Scene {
             return
         }
 
-        // A selection (a drag-selected group of combat ships, or a single selected Base) takes
-        // orders the same way either way — every click adds one more waypoint onto each selected
-        // ship's own route. Clicking a cell that's already a waypoint for any of the selected ships
-        // removes it from every selected ship that has one there instead (removeShipWaypoints), same
-        // click-to-remove gesture, just applied across the whole selection at once.
+        // A selection (a drag-selected group of combat ships, or a single selected Base) takes orders
+        // the same way either way — except a Base itself never takes a movement order anymore (it never
+        // actually moves, speed:0, and no longer hands one down as a default route to new ships either —
+        // see spawnShip), so it's filtered out of whatever's selected before anything below applies.
+        // Plain click: wipes whatever route each remaining selected ship already had and replaces it
+        // outright with just this one order. Shift+click: queues instead — appends onto the existing
+        // route, same as it always has, with the same click-an-existing-waypoint-to-remove-it gesture
+        // (removeShipWaypoints) applied across the whole selection at once.
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
+            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.Base).map(s => s.id)
+            if(orderableIds.length === 0) return
+            if(!this.shiftDown){
+                setShipWaypoints(orderableIds, x, y)
+                return
+            }
+            const selectedShips = ships.filter(s => orderableIds.includes(s.id))
             const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
-            if(clickedExisting) removeShipWaypoints(selectedShipIds, x, y)
-            else addShipWaypoints(selectedShipIds, x, y)
+            if(clickedExisting) removeShipWaypoints(orderableIds, x, y)
+            else addShipWaypoints(orderableIds, x, y)
             return
         }
 
@@ -1867,11 +1855,24 @@ export default class MapScene extends Scene {
         })
 
         this.input.on('pointerup', () => {
-            if(!this.dragSelectStart) return
+            const pointer = this.input.activePointer
+            const isClick = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.upX, pointer.upY) < 6
+
+            if(!this.dragSelectStart){
+                // Shift was held throughout, so no box-select was ever active — a shift+drag pans the
+                // camera instead (handled entirely by pointermove above), but a shift+click (negligible
+                // movement) still needs to resolve as a click here, same as a plain one, so it can queue
+                // an order rather than being silently swallowed (see handleClick/pointerDownWorld).
+                if(this.pointerDownWorld && isClick) this.handleClick(this.pointerDownWorld.x, this.pointerDownWorld.y)
+                this.pointerDownWorld = null
+                return
+            }
+
             const start = this.dragSelectStart
             const end = this.dragSelectCurrent || start
             this.dragSelectStart = null
             this.dragSelectCurrent = null
+            this.pointerDownWorld = null
             this.dragSelectG.clear()
 
             // Every shift-less mousedown starts a potential box-select (so the box can be drawn live as
@@ -1879,8 +1880,7 @@ export default class MapScene extends Scene {
             // pointer that barely moved from its down position is a click, not a drag — hand it to the
             // same select/order logic a click has always used (see enableSelectionControls' handleClick)
             // instead of resolving it as an (empty) box-select.
-            const pointer = this.input.activePointer
-            if(Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.upX, pointer.upY) < 6){
+            if(isClick){
                 this.handleClick(start.x, start.y)
                 return
             }
