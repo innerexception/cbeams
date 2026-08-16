@@ -85,6 +85,9 @@ const applyDamage = <T extends { id:string, hp:number }>(items:Array<T>, damageB
         return { ...item, hp }
     }).filter(item => item !== null)
 
+// Used by drawPlacementRanges to trim a circle's stroked boundary wherever a SAME-faction circle
+// covers it, so same-faction sight bubbles merge into one seamless shape with no interior line
+// (opposing-faction circles are left full — see fillCircleOverlap for how their overlap is shown instead).
 const normalizeAngle = (a:number) => {
     a = a % TWO_PI
     return a < 0 ? a + TWO_PI : a
@@ -128,6 +131,16 @@ export default class MapScene extends Scene {
     // since unit sight range moves continuously — unlike the rest of the static art above, which only
     // ever needs to be touched when a building is added or removed.
     rangeG: GameObjects.Graphics
+    // Opposing-faction sight-circle overlap shading (see drawPlacementRanges' fillCircleOverlap pass)
+    // can't just be a series of fillPath calls on a normal Graphics object — wherever more than one
+    // lens/whole-circle shape covers the same point (e.g. three-plus circles all overlapping near each
+    // other), each shape's own alpha would blend on top of the last and that spot would end up brighter
+    // than a simple two-circle overlap. rangeShadeBrush draws every shape fully opaque (solid fills
+    // don't stack in brightness, they just overwrite) onto rangeShadeRT, a RenderTexture that flattens
+    // them into one single opaque mask; only THAT flattened result gets one uniform alpha applied, as
+    // a single texture — so no matter how many shapes cover a point, it reads exactly the same brightness.
+    rangeShadeBrush: GameObjects.Graphics
+    rangeShadeRT: GameObjects.RenderTexture
     previewG: GameObjects.Graphics
     // The placement ghost's icon — a real APP-6 'factory_'+kind texture (baked by generateTextures),
     // tinted/faded per showPreviewIcon rather than hand-drawn into previewG. Reassigned per-call, so its
@@ -208,6 +221,10 @@ export default class MapScene extends Scene {
         this.input.mouse.disableContextMenu()
         this.g = this.add.graphics()
         this.rangeG = this.add.graphics()
+        // Not added to the display list (make(..., false)) — this is purely a brush passed to
+        // rangeShadeRT.draw(), never rendered on its own.
+        this.rangeShadeBrush = this.make.graphics({}, false)
+        this.rangeShadeRT = this.add.renderTexture(0, 0, MAP_SIZE*CELL_SIZE, MAP_SIZE*CELL_SIZE).setOrigin(0, 0).setAlpha(0.12)
         this.previewG = this.add.graphics()
         this.selectionG = this.add.graphics()
         this.progressG = this.add.graphics()
@@ -1811,11 +1828,13 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Placement circles behave like bubbles: each circle's own arc is only drawn where it isn't touching
-    // another bubble, and wherever two bubbles touch they form a flat side (the shared chord) instead of a
-    // curved overlap — trimmed by any other bubble covering part of that edge so nothing draws jagged.
-    // Every building AND every unit (its own VehicleStats.sightRadius) contributes a bubble — units move,
-    // so this runs every frame from update() rather than only whenever drawMap's static art changes.
+    // Every building AND every unit (its own VehicleStats.sightRadius) contributes a sight-radius circle
+    // — units move, so this runs every frame from update() rather than only whenever drawMap's static
+    // art changes. Same-faction circles merge into one seamless shape (each one's boundary is trimmed
+    // wherever a same-faction circle covers it, so there's no interior line through the overlap).
+    // Opposing-faction circles are left as full, untrimmed circles instead — their overlap is
+    // communicated with a light fill over the lens-shaped intersection. See the big commented-out block
+    // below for the old boundary-trimming/collision-line approach this replaced, kept for reference.
     drawPlacementRanges = () => {
         const g = this.rangeG
         g.clear()
@@ -1825,13 +1844,12 @@ export default class MapScene extends Scene {
         const unitCircles = vehicles.map(s => ({ x: s.x, y: s.y, r: VehicleData[s.type].sightRadius, faction: s.faction }))
         const circles = [...structureCircles, ...unitCircles]
 
-        // Rounded portions: each circle's boundary where it doesn't touch any other bubble.
         g.lineStyle(1, GREEN_HEX, 0.25)
         circles.forEach((circle, i) => {
             let visible:Array<[number,number]> = [[0, TWO_PI]]
 
             circles.forEach((other, j) => {
-                if(i === j) return
+                if(i === j || other.faction !== circle.faction) return
                 const dx = other.x - circle.x
                 const dy = other.y - circle.y
                 const d = Math.hypot(dx, dy)
@@ -1853,65 +1871,152 @@ export default class MapScene extends Scene {
             })
         })
 
-        // Flat sides: only where two OPPOSING-faction bubbles touch, draw their shared chord (trimmed by any
-        // third bubble covering part of it) as a thick front line. Same-faction contacts merge silently.
+        // Every opposing-faction overlap shape is painted fully opaque onto the scratch brush — solid
+        // fills don't stack in brightness where they cover the same point, they just overwrite — then
+        // flattened once into rangeShadeRT and given one uniform alpha there (see rangeShadeBrush's field
+        // comment), so three-plus overlapping circles never read any brighter than a simple pair.
+        this.rangeShadeBrush.clear()
+        this.rangeShadeBrush.fillStyle(GREEN_HEX, 1)
         circles.forEach((circle, i) => {
             circles.forEach((other, j) => {
-                if(j <= i) return
-                const dx = other.x - circle.x
-                const dy = other.y - circle.y
-                const d = Math.hypot(dx, dy)
-                if(d < 0.001 || d >= circle.r + other.r) return
-                if(d <= Math.abs(circle.r - other.r)) return // one bubble fully swallows the other, no shared edge
-                if(other.faction === circle.faction) return // same-faction contacts merge with no interior line at all
-
-                const a = (d*d + circle.r*circle.r - other.r*other.r) / (2*d)
-                const h = Math.sqrt(Math.max(circle.r*circle.r - a*a, 0))
-                const midX = circle.x + a*dx/d
-                const midY = circle.y + a*dy/d
-                const perpX = -dy/d
-                const perpY = dx/d
-
-                const ax = midX + perpX*h, ay = midY + perpY*h
-                const bx = midX - perpX*h, by = midY - perpY*h
-                const segDX = bx-ax, segDY = by-ay
-
-                // Trim by power distance (Laguerre/Voronoi), not simple disk membership: wherever a third
-                // bubble is a closer/more dominant boundary than circle i, hand that portion of the line
-                // over to it. This keeps neighboring pairs' trimmed edges meeting exactly, with no gaps.
-                const powerI = circle.x*circle.x + circle.y*circle.y - circle.r*circle.r
-                let segVisible:Array<[number,number]> = [[0, 1]]
-                circles.forEach((third, k) => {
-                    if(k === i || k === j) return
-                    const ix = circle.x - third.x
-                    const iy = circle.y - third.y
-                    const powerK = third.x*third.x + third.y*third.y - third.r*third.r
-                    const m = 2*(segDX*ix + segDY*iy)
-                    const c = 2*(ax*ix + ay*iy) + powerK - powerI
-
-                    if(Math.abs(m) < 1e-9){
-                        if(c < 0) segVisible = subtractArc(segVisible, 0, 1) // third dominates the whole line
-                        return
-                    }
-                    const t0 = -c/m
-                    if(m > 0){
-                        const hi = Math.min(1, t0)
-                        if(hi > 0) segVisible = subtractArc(segVisible, 0, hi)
-                    }
-                    else {
-                        const lo = Math.max(0, t0)
-                        if(lo < 1) segVisible = subtractArc(segVisible, lo, 1)
-                    }
-                })
-
-                g.lineStyle(4, GREEN_HEX, 0.9)
-                segVisible.forEach(([t0, t1]) => {
-                    if(t1-t0 < 0.001) return
-                    g.lineBetween(ax+segDX*t0, ay+segDY*t0, ax+segDX*t1, ay+segDY*t1)
-                })
+                if(j <= i || other.faction === circle.faction) return
+                this.fillCircleOverlap(this.rangeShadeBrush, circle, other)
             })
         })
+        this.rangeShadeRT.clear()
+        this.rangeShadeRT.draw(this.rangeShadeBrush)
     }
+
+    // The shaded region where two opposing-faction sight circles overlap: either the lens bounded by
+    // their two intersection points (the common "two arcs meeting at both crossing points" construction —
+    // same underlying trig as the old collision-line code below, just building a fillable path out of it
+    // instead of a boundary line), or, if one circle sits entirely inside the other, that whole smaller
+    // circle.
+    fillCircleOverlap = (g:GameObjects.Graphics, circle:{x:number,y:number,r:number}, other:{x:number,y:number,r:number}) => {
+        const dx = other.x - circle.x
+        const dy = other.y - circle.y
+        const d = Math.hypot(dx, dy)
+        if(d >= circle.r + other.r) return // no overlap at all
+
+        if(d < 0.001 || d <= Math.abs(circle.r - other.r)){
+            const inner = circle.r <= other.r ? circle : other
+            g.fillCircle(inner.x, inner.y, inner.r)
+            return
+        }
+
+        const alpha = Math.atan2(dy, dx)
+        const thetaA = Math.acos(PhaserMath.Clamp((d*d + circle.r*circle.r - other.r*other.r) / (2*d*circle.r), -1, 1))
+        const alphaB = alpha + Math.PI
+        const thetaB = Math.acos(PhaserMath.Clamp((d*d + other.r*other.r - circle.r*circle.r) / (2*d*other.r), -1, 1))
+
+        g.beginPath()
+        g.arc(circle.x, circle.y, circle.r, alpha-thetaA, alpha+thetaA, false)
+        g.arc(other.x, other.y, other.r, alphaB-thetaB, alphaB+thetaB, false)
+        g.closePath()
+        g.fillPath()
+    }
+
+    // --- Reference only: the old collision-aware bubble rendering (each circle's own boundary trimmed
+    // wherever it touched another bubble, with a thick "front line" chord — trimmed by power-distance
+    // against any third bubble — drawn wherever two OPPOSING-faction bubbles collided). Superseded by
+    // the plain-circles-plus-lens-shading version above; kept here purely for reference.
+    //
+    // drawPlacementRanges = () => {
+    //     const g = this.rangeG
+    //     g.clear()
+    //
+    //     const { buildings, vehicles } = useAppStore.getState()
+    //     const structureCircles = buildings.map(s => ({ ...this.toWorld(s.x, s.y), r: getStructureRadius(s), faction: s.faction }))
+    //     const unitCircles = vehicles.map(s => ({ x: s.x, y: s.y, r: VehicleData[s.type].sightRadius, faction: s.faction }))
+    //     const circles = [...structureCircles, ...unitCircles]
+    //
+    //     // Rounded portions: each circle's boundary where it doesn't touch any other bubble.
+    //     g.lineStyle(1, GREEN_HEX, 0.25)
+    //     circles.forEach((circle, i) => {
+    //         let visible:Array<[number,number]> = [[0, TWO_PI]]
+    //
+    //         circles.forEach((other, j) => {
+    //             if(i === j) return
+    //             const dx = other.x - circle.x
+    //             const dy = other.y - circle.y
+    //             const d = Math.hypot(dx, dy)
+    //             if(d < 0.001 || d >= circle.r + other.r) return
+    //             if(d + circle.r <= other.r){ visible = []; return } // swallowed whole by the other bubble
+    //             if(d + other.r <= circle.r) return // other bubble fully inside this one, doesn't hide anything
+    //
+    //             const cosTheta = PhaserMath.Clamp((d*d + circle.r*circle.r - other.r*other.r) / (2*d*circle.r), -1, 1)
+    //             const theta = Math.acos(cosTheta)
+    //             const alpha = Math.atan2(dy, dx)
+    //             visible = subtractCircularRange(visible, alpha-theta, alpha+theta)
+    //         })
+    //
+    //         visible.forEach(([start, end]) => {
+    //             if(end-start < 0.001) return
+    //             g.beginPath()
+    //             g.arc(circle.x, circle.y, circle.r, start, end, false)
+    //             g.strokePath()
+    //         })
+    //     })
+    //
+    //     // Flat sides: only where two OPPOSING-faction bubbles touch, draw their shared chord (trimmed by any
+    //     // third bubble covering part of it) as a thick front line. Same-faction contacts merge silently.
+    //     circles.forEach((circle, i) => {
+    //         circles.forEach((other, j) => {
+    //             if(j <= i) return
+    //             const dx = other.x - circle.x
+    //             const dy = other.y - circle.y
+    //             const d = Math.hypot(dx, dy)
+    //             if(d < 0.001 || d >= circle.r + other.r) return
+    //             if(d <= Math.abs(circle.r - other.r)) return // one bubble fully swallows the other, no shared edge
+    //             if(other.faction === circle.faction) return // same-faction contacts merge with no interior line at all
+    //
+    //             const a = (d*d + circle.r*circle.r - other.r*other.r) / (2*d)
+    //             const h = Math.sqrt(Math.max(circle.r*circle.r - a*a, 0))
+    //             const midX = circle.x + a*dx/d
+    //             const midY = circle.y + a*dy/d
+    //             const perpX = -dy/d
+    //             const perpY = dx/d
+    //
+    //             const ax = midX + perpX*h, ay = midY + perpY*h
+    //             const bx = midX - perpX*h, by = midY - perpY*h
+    //             const segDX = bx-ax, segDY = by-ay
+    //
+    //             // Trim by power distance (Laguerre/Voronoi), not simple disk membership: wherever a third
+    //             // bubble is a closer/more dominant boundary than circle i, hand that portion of the line
+    //             // over to it. This keeps neighboring pairs' trimmed edges meeting exactly, with no gaps.
+    //             const powerI = circle.x*circle.x + circle.y*circle.y - circle.r*circle.r
+    //             let segVisible:Array<[number,number]> = [[0, 1]]
+    //             circles.forEach((third, k) => {
+    //                 if(k === i || k === j) return
+    //                 const ix = circle.x - third.x
+    //                 const iy = circle.y - third.y
+    //                 const powerK = third.x*third.x + third.y*third.y - third.r*third.r
+    //                 const m = 2*(segDX*ix + segDY*iy)
+    //                 const c = 2*(ax*ix + ay*iy) + powerK - powerI
+    //
+    //                 if(Math.abs(m) < 1e-9){
+    //                     if(c < 0) segVisible = subtractArc(segVisible, 0, 1) // third dominates the whole line
+    //                     return
+    //                 }
+    //                 const t0 = -c/m
+    //                 if(m > 0){
+    //                     const hi = Math.min(1, t0)
+    //                     if(hi > 0) segVisible = subtractArc(segVisible, 0, hi)
+    //                 }
+    //                 else {
+    //                     const lo = Math.max(0, t0)
+    //                     if(lo < 1) segVisible = subtractArc(segVisible, lo, 1)
+    //                 }
+    //             })
+    //
+    //             g.lineStyle(4, GREEN_HEX, 0.9)
+    //             segVisible.forEach(([t0, t1]) => {
+    //                 if(t1-t0 < 0.001) return
+    //                 g.lineBetween(ax+segDX*t0, ay+segDY*t0, ax+segDX*t1, ay+segDY*t1)
+    //             })
+    //         })
+    //     })
+    // }
 
     // The placement ghost that follows the cursor is the exact same real APP-6 icon texture the built
     // building will actually use (baked once by generateTextures — see 'factory_'+kind there), not a
