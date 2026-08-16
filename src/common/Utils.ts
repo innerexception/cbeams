@@ -5,9 +5,13 @@ import { SAVE_NAME, BASE_LOGISTICS_FLOOR, LOGISTICS_PER_GAS_CLOUD, HARVESTER_RAN
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
+// Tolerates a missing/non-string seed (falls back to '', still fully deterministic) rather than
+// throwing — every caller here derives its seed from a ship/entity id that should always be a real
+// string, but this stays defensive against whatever stale/malformed data slips through regardless.
 export const seededRandom = (seed:string) => {
     let h = 0
-    for(let i=0; i<seed.length; i++) h = (h*31 + seed.charCodeAt(i)) | 0
+    const s = seed ?? ''
+    for(let i=0; i<s.length; i++) h = (h*31 + s.charCodeAt(i)) | 0
     return () => {
         h = (h*1664525 + 1013904223) | 0
         return ((h >>> 0) / 0xffffffff)

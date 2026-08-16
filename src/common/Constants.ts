@@ -73,8 +73,31 @@ export const CONTRAIL_LIFETIME_MS = 5000
 export const TRACER_LIFETIME_MS = 220
 
 // --- Wreckage ---
-// Left behind by a destroyed ship (or a drone detonating), lingers for 10 seconds while fading out.
+// A missile that fizzles out mid-flight with nothing left to retarget onto (see MapScene's
+// updateMissiles) — the one remaining user of this jagged debris-line effect; an actual ship dying uses
+// spawnDeathFragments instead (see SHIP_FRAGMENT_LIFETIME_MS).
 export const SHATTER_LIFETIME_MS = 10000
+
+// --- Ship destruction ---
+// A destroyed ship's own sprite splits into two pieces along a jagged cut (see MapScene's
+// spawnDeathFragments) instead of the plain debris-line shatter effect — each piece flies outward from
+// the split, spinning slowly, fading to nothing, driven entirely by a Phaser tween computed once at the
+// moment of death rather than redrawn by hand every frame. Cleaned up (including its baked mask) the
+// instant that tween finishes.
+export const SHIP_FRAGMENT_LIFETIME_MS = 4000
+export const SHIP_FRAGMENT_MIN_DISTANCE_PX = 32
+export const SHIP_FRAGMENT_MAX_DISTANCE_PX = 56
+
+// --- Missile impacts ---
+// A missile actually landing on its target (see MapScene's onMissileShipContact) flashes a plain white
+// circle at the impact point instead of the wreckage shatter effect — sized off the damage that hit
+// landed for (radius = MISSILE_IMPACT_MIN_RADIUS_PX + damage*MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX), fully
+// opaque at the moment of impact, fading out over MISSILE_IMPACT_LIFETIME_MS. Independent of the target
+// actually dying — that still gets its own splitting-in-two death effect (see destroyShipSprite/
+// spawnDeathFragments) on top, same as before.
+export const MISSILE_IMPACT_LIFETIME_MS = 2000
+export const MISSILE_IMPACT_MIN_RADIUS_PX = 6
+export const MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX = 2
 
 // --- Objectives ---
 // A capturable map feature (see MapScene's spawnEntitiesFromMap for where they're placed, and

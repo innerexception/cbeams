@@ -13,6 +13,8 @@ import {
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
     SHATTER_LIFETIME_MS,
+    MISSILE_IMPACT_LIFETIME_MS, MISSILE_IMPACT_MIN_RADIUS_PX, MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX,
+    SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT, RESOURCE_GAS_CLOUD_COUNT,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
@@ -31,6 +33,10 @@ const ZOOM_LEVELS = [1, 2]
 // shipLabelOffsetPx) — assumes a north-oriented sprite, i.e. measured straight up from center by half
 // the sprite's own (unrotated) height, regardless of whatever heading it's actually facing right now.
 const SHIP_LABEL_GAP_PX = 10
+
+// Fixed gap outside the bottom-left corner of a ship's own sprite where its remaining-ammo readout sits
+// (see updateAmmoLabels) — same "assumes north-oriented, unrotated dimensions" caveat as SHIP_LABEL_GAP_PX.
+const AMMO_LABEL_GAP_PX = 4
 
 // How much of the way toward its desired heading a ship turns per millisecond (see moveShips) — a
 // fraction of the remaining angle each frame, not a fixed angular speed, so the turn eases out rather
@@ -69,7 +75,7 @@ const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.ATD])
 
 // Ship kinds that render from their own real sprite (see Assets.ts, each loaded under its own
 // ShipType key) instead of a milsymbol canvas (see generateTextures/createShipSprite).
-const REAL_SPRITE_SHIP_TYPES = new Set<ShipType>([ShipType.Harvester, ShipType.KK, ShipType.ARMOR])
+const REAL_SPRITE_SHIP_TYPES = new Set<ShipType>([ShipType.Harvester, ShipType.KK, ShipType.ARMOR, ShipType.AWACS, ShipType.Base, ShipType.MLRS])
 
 // Applies accumulated damage to any {id, hp} collection, removing anything that drops to 0 HP or
 // below. `onDeath` lets the caller leave its own effect at the death location — shared by every
@@ -176,8 +182,8 @@ export default class MapScene extends Scene {
     ordersG: GameObjects.Graphics
     combatG: GameObjects.Graphics
     shatterG: GameObjects.Graphics
+    missileImpactG: GameObjects.Graphics
     trailG: GameObjects.Graphics
-    ammoG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
     // The Harvester mining beam line (see drawHarvesterBeams) — its own layer rather than combatG since
     // it isn't combat and flickers on its own random per-Harvester schedule rather than decaying like a
@@ -203,6 +209,9 @@ export default class MapScene extends Scene {
     missilesGroup: Physics.Arcade.Group
     shipSprites: Map<string, Physics.Arcade.Sprite> = new Map()
     shipLabels: Map<string, GameObjects.Text> = new Map()
+    // Remaining-shots readout for any ship whose ShipStats sets `ammo` (currently just MLRS) — only
+    // ever created for those (see createShipSprite), unlike shipLabels which every ship gets.
+    ammoLabels: Map<string, GameObjects.Text> = new Map()
     // Objectives have no physics body at all (capture is a plain distance check, not a collision — see
     // updateObjectives) — just a plain Image, tinted per current owner.
     objectiveSprites: Map<string, GameObjects.Image> = new Map()
@@ -222,6 +231,8 @@ export default class MapScene extends Scene {
     dragSelectCurrent: { x:number, y:number } | null = null
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     shatters: Array<{ x:number, y:number, createdAt:number, seed:string }> = []
+    // A missile actually landing on its target — see onMissileShipContact/drawMissileImpacts.
+    impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     // Decaying vapor-trail points left behind an offensive missile's actual (arced) flight path — see
     // startMissileLeg/updateMissiles for how the arc itself is computed, drawMissileTrails for the draw.
     // Tagged per-missile (missileId) so drawMissileTrails can connect each missile's own points into its
@@ -269,8 +280,8 @@ export default class MapScene extends Scene {
         this.ordersG = this.add.graphics()
         this.combatG = this.add.graphics()
         this.shatterG = this.add.graphics()
+        this.missileImpactG = this.add.graphics()
         this.trailG = this.add.graphics()
-        this.ammoG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
         this.dragSelectG = this.add.graphics()
         this.harvesterBeamG = this.add.graphics()
@@ -378,15 +389,16 @@ export default class MapScene extends Scene {
         this.updateFogOfWar()
         this.updateShipLabels()
         this.drawPlacementRanges()
-        this.drawObjectiveRanges(time)
+        this.drawObjectiveCaptureProgress(time)
 
         this.drawProductionProgress()
         this.drawShipHealth()
-        this.drawAmmoGauges()
+        this.updateAmmoLabels()
         this.drawOrders()
         this.drawCombat(time)
         this.drawHarvesterBeams(time)
         this.drawShatters(time)
+        this.drawMissileImpacts(time)
         this.drawMissileTrails(time)
 
         // Pulsating octagon selection ring around every selected ship — a faction's Base included, at a
@@ -462,30 +474,22 @@ export default class MapScene extends Scene {
         })
     }
 
-    drawAmmoGauges = () => {
-        const g = this.ammoG
-        g.clear()
-
+    // Plain numeric readout of ship.ammoRemaining (see spawnShip/updateMlrs) at the bottom-left corner
+    // of any ship whose ShipStats sets `ammo` — the label itself is created once per such ship (see
+    // createShipSprite/destroyShipSprite), this just keeps its text/position/visibility current every
+    // frame, same fog-of-war rule the old gauge had (hidden whenever the sprite itself is).
+    updateAmmoLabels = () => {
         useAppStore.getState().ships.forEach(ship => {
-            const maxAmmo = ShipData[ship.type].ammo
-            if(!maxAmmo || ship.ammoRemaining === undefined) return
+            const label = this.ammoLabels.get(ship.id)
+            if(!label) return
             const sprite = this.shipSprites.get(ship.id)
-            if(!sprite || sprite.visible === false) return
-            this.drawAmmoGauge(g, sprite.x, sprite.y, sprite.width, sprite.height, ship.ammoRemaining/maxAmmo)
+            const visible = !!sprite && sprite.visible
+            label.setVisible(visible)
+            if(!visible) return
+
+            label.setText(String(ship.ammoRemaining ?? 0))
+            label.setPosition(sprite.x - sprite.displayWidth/2 - AMMO_LABEL_GAP_PX, sprite.y + sprite.displayHeight/2 + AMMO_LABEL_GAP_PX)
         })
-    }
-
-    drawAmmoGauge = (g:GameObjects.Graphics, x:number, y:number, spriteWidth:number, spriteHeight:number, ratio:number) => {
-        const percent = PhaserMath.Clamp(ratio, 0, 1)
-        const w = 4, h = spriteHeight * 0.8
-        const barX = x + spriteWidth/2 + 6
-        const barY = y - h/2
-
-        g.lineStyle(1, GREEN_HEX, 1)
-        g.strokeRect(barX, barY, w, h)
-        g.fillStyle(GREEN_HEX, 0.9)
-        const filledH = h * percent
-        g.fillRect(barX, barY + (h-filledH), w, filledH)
     }
 
     floatText = (gridX:number, gridY:number, text:string) => {
@@ -717,27 +721,10 @@ export default class MapScene extends Scene {
         onShowModal(faction === Faction.Player ? Modal.Victory : Modal.Defeat)
     }
 
-    // Phaser's Graphics has no native dashed-stroke option — this just walks the circumference in
-    // alternating dash/gap angular steps (sized from real pixel lengths, so the dash length stays
-    // consistent regardless of the circle's radius) and strokes each dash as its own short segment.
-    drawDashedCircle = (g:GameObjects.Graphics, cx:number, cy:number, radius:number, color:number, alpha:number, dashLenPx:number = 10, gapLenPx:number = 8) => {
-        const circumference = TWO_PI * radius
-        const dashAngle = (dashLenPx / circumference) * TWO_PI
-        const gapAngle = (gapLenPx / circumference) * TWO_PI
-        g.lineStyle(1, color, alpha)
-        for(let angle = 0; angle < TWO_PI; angle += dashAngle + gapAngle){
-            const endAngle = Math.min(angle + dashAngle, TWO_PI)
-            g.lineBetween(cx + Math.cos(angle)*radius, cy + Math.sin(angle)*radius, cx + Math.cos(endAngle)*radius, cy + Math.sin(endAngle)*radius)
-        }
-    }
-
-    // A dashed ring at OBJECTIVE_CAPTURE_RADIUS_PX around each Objective, tinted the same as its icon
-    // (see getObjectiveOwnerColor — neutral/player/enemy) so it's obvious both where the capture radius
-    // actually is and who currently holds it, at a glance. While a hold is actually in progress (see
-    // updateObjectives' capturingFaction/captureStartedAtMs) it also gets a small progress bar under its
-    // label, tinted to whoever's currently contesting it, so the 30s hold itself is visible ticking up —
-    // not just the range circle it has to happen inside of.
-    drawObjectiveRanges = (time:number) => {
+    // While a hold on an Objective is actually in progress (see updateObjectives'
+    // capturingFaction/captureStartedAtMs), draws a small progress bar under its label, tinted to
+    // whoever's currently contesting it, so the 30s hold itself is visible ticking up.
+    drawObjectiveCaptureProgress = (time:number) => {
         const g = this.objectiveRangeG
         g.clear()
 
@@ -745,7 +732,6 @@ export default class MapScene extends Scene {
             const spawn = this.mapData.objectives.find(o => o.id === objective.id)
             if(!spawn) return
             const { x, y } = this.toWorld(spawn.x, spawn.y)
-            this.drawDashedCircle(g, x, y, OBJECTIVE_CAPTURE_RADIUS_PX, this.getObjectiveOwnerColor(objective.owner), 0.5)
 
             if(objective.capturingFaction === null || objective.captureStartedAtMs === null) return
             const percent = PhaserMath.Clamp((time-objective.captureStartedAtMs) / OBJECTIVE_CAPTURE_TIME_MS, 0, 1)
@@ -801,12 +787,9 @@ export default class MapScene extends Scene {
 
     createShipSprite = (ship:ShipData) => {
         const isFriend = ship.faction === Faction.Player
-        // Harvester, KK and ARMOR use their own real sprites instead of a milsymbol canvas (see
-        // generateTextures) — one shared texture per type across both factions, tinted the same
-        // green/red every other ship's milsymbol canvas is baked in, so it still reads as friend-or-foe
-        // at a glance.
+        const textureKey = ship.type === ShipType.Base && !isFriend ? 'base_enemy' : ship.type
         const sprite = REAL_SPRITE_SHIP_TYPES.has(ship.type)
-            ? this.physics.add.sprite(ship.x, ship.y, ship.type).setTint(isFriend ? GREEN_HEX : RED_HEX)
+            ? this.physics.add.sprite(ship.x, ship.y, textureKey).setTint(isFriend ? GREEN_HEX : RED_HEX)
             : this.physics.add.sprite(ship.x, ship.y, (isFriend ? 'ship_friend_' : 'ship_hostile_') + ship.type)
         this.centerCircleBody(sprite)
         sprite.setData('kind', 'ship' as BodyKind)
@@ -819,6 +802,13 @@ export default class MapScene extends Scene {
         const label = this.add.text(ship.x, ship.y-this.shipLabelOffsetPx(sprite), ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
         this.shipLabels.set(ship.id, label)
 
+        // Only ships whose ShipStats sets `ammo` get one at all — content/position/visibility is kept
+        // current every frame by updateAmmoLabels, this just creates the object to update.
+        if(ShipData[ship.type].ammo){
+            const ammoLabel = this.add.text(ship.x, ship.y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false)
+            this.ammoLabels.set(ship.id, ammoLabel)
+        }
+
         // Fog of war: an enemy ship's sprite starts hidden regardless — updateFogOfWar (run every frame)
         // is what actually decides visibility from here, based on the player's sight range. Starting
         // hidden just avoids a one-frame flash of visibility before that first check runs.
@@ -829,11 +819,91 @@ export default class MapScene extends Scene {
     // display height, plus the fixed gap. See SHIP_LABEL_GAP_PX.
     shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
 
+    // Pure cleanup only — no death effect of its own. Every death effect (spawnDeathFragments for a ship
+    // actually destroyed, the plain impact flash + immediate removal detonateDrone uses for the
+    // detonating drone itself) is the caller's own decision, triggered off the live sprite *before* it
+    // calls this, since this is what actually destroys it.
     destroyShipSprite = (id:string) => {
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
         this.shipLabels.get(id)?.destroy()
         this.shipLabels.delete(id)
+        this.ammoLabels.get(id)?.destroy()
+        this.ammoLabels.delete(id)
+    }
+
+    // A destroyed ship splits into two pieces along a jagged cut instead of the old debris-line shatter
+    // effect. Each piece is the dying sprite's own texture/frame/tint, clipped to its half of the cut by
+    // a GeometryMask built from a Graphics object that is never added to the display list (so it never
+    // renders as its own visible shape — see the `add:false` argument, same idiom rangeShadeBrush uses)
+    // — only its geometry matters. That mask Graphics and the piece Image are then driven by the *same*
+    // Phaser tween (both listed as targets), so their x/y/rotation stay in perfect lockstep as the piece
+    // flies outward and spins — the mask "rides along" with the piece it's clipping without either of
+    // them being manually repositioned by us on a per-frame basis; Phaser's own tween update loop is
+    // doing that work, not ours. onComplete just destroys both pieces (image + mask), nothing lingers.
+    spawnDeathFragments = (sprite:Physics.Arcade.Sprite) => {
+        // Natural (unscaled) frame size, not displayWidth/Height — the mask polygon is built in this
+        // same natural space and the sprite's own scaleX/scaleY is mirrored onto both the piece Image and
+        // its mask Graphics below, so the two stay geometrically consistent regardless of the original
+        // sprite's scale.
+        const w = sprite.width, h = sprite.height
+        if(w <= 0 || h <= 0) return
+
+        // A jagged line from a random point on the top edge to a random point on the bottom edge, in the
+        // sprite's own local (unrotated) space — computed once, since (unlike the old shatter effect)
+        // nothing here ever gets redrawn frame to frame, so there's no need for it to be reproducible
+        // between draws the way seededRandom exists for.
+        const segments = 4
+        const startX = (Math.random()-0.5) * w*0.6
+        const endX = (Math.random()-0.5) * w*0.6
+        const jaggedPoints:Array<{x:number,y:number}> = []
+        for(let i=0; i<=segments; i++){
+            const t = i/segments
+            const y = -h/2 + h*t
+            const jitter = (i===0 || i===segments) ? 0 : (Math.random()-0.5) * w*0.3
+            jaggedPoints.push({ x: startX+(endX-startX)*t + jitter, y })
+        }
+
+        const leftPolygon = [{ x:-w/2, y:-h/2 }, ...jaggedPoints, { x:-w/2, y:h/2 }]
+        const rightPolygon = [{ x:w/2, y:-h/2 }, ...[...jaggedPoints].reverse(), { x:w/2, y:h/2 }]
+
+        ;[
+            { polygon:leftPolygon, localDirX:-1 },
+            { polygon:rightPolygon, localDirX:1 },
+        ].forEach(({ polygon, localDirX }) => {
+            const piece = this.add.image(sprite.x, sprite.y, sprite.texture.key, sprite.frame.name)
+                .setOrigin(0.5).setRotation(sprite.rotation).setScale(sprite.scaleX, sprite.scaleY).setDepth(sprite.depth)
+            if(sprite.isTinted) piece.setTint(sprite.tintTopLeft)
+
+            // Not added to the display list — exists purely as a mask shape (see this function's own
+            // comment above), never rendered on its own.
+            const mask = this.make.graphics({}, false)
+                .setPosition(sprite.x, sprite.y).setRotation(sprite.rotation).setScale(sprite.scaleX, sprite.scaleY)
+            mask.fillStyle(0xFFFFFF).fillPoints(polygon, true)
+            piece.setMask(mask.createGeometryMask())
+
+            // Flies outward perpendicular to its own half of the cut (local +/-X), rotated into world
+            // space by the sprite's own heading at the moment of death — so the split always reads as
+            // "this ship broke in half," regardless of which way it happened to be facing.
+            const distance = SHIP_FRAGMENT_MIN_DISTANCE_PX + Math.random()*(SHIP_FRAGMENT_MAX_DISTANCE_PX-SHIP_FRAGMENT_MIN_DISTANCE_PX)
+            const worldDx = localDirX*Math.cos(sprite.rotation)*distance
+            const worldDy = localDirX*Math.sin(sprite.rotation)*distance
+            const spin = localDirX * (0.3 + Math.random()*0.5)
+
+            // alpha is included here too even though it only visibly affects piece (a mask's own alpha
+            // doesn't affect what it masks) — one tween driving both targets in lockstep start to finish,
+            // rather than two separate tweens that could in principle finish a frame apart.
+            this.tweens.add({
+                targets: [piece, mask],
+                x: sprite.x+worldDx,
+                y: sprite.y+worldDy,
+                rotation: sprite.rotation+spin,
+                alpha: 0,
+                duration: SHIP_FRAGMENT_LIFETIME_MS,
+                ease: 'Cubic.Out',
+                onComplete: () => { piece.destroy(); mask.destroy() },
+            })
+        })
     }
 
     // A physics body's offset is relative to its texture frame's top-left corner — this centers a
@@ -848,15 +918,17 @@ export default class MapScene extends Scene {
         body.setCircle(radius, sprite.width/2 - radius, sprite.height/2 - radius)
     }
 
-    // Applies damage to ships and handles the shared "any ship death" side effects (destroy sprite,
-    // shatter effect, and — since a faction's Base is now just another (if critical) ship — ending the
-    // match the instant a Base actually dies), so most ship-damage call sites don't have to repeat all
-    // three. (detonateDrone applies its own damage inline instead, since it needs to skip the shatter
-    // for the drone itself — it already pushed one manually at the moment of detonation.)
-    applyShipDamage = (ships:Array<ShipData>, damageByTarget:Map<string,number>, time:number) =>
+    // Applies damage to ships and handles the shared "any ship death" side effects (the death-fragments
+    // split effect, destroying the sprite, and — since a faction's Base is now just another (if
+    // critical) ship — ending the match the instant a Base actually dies), so most ship-damage call sites
+    // don't have to repeat all three. (detonateDrone applies its own damage inline instead of going
+    // through this, since a drone kills itself unconditionally as part of its own detonation rather than
+    // via a shared damage map, and wants a different effect for that one death — see its own comment.)
+    applyShipDamage = (ships:Array<ShipData>, damageByTarget:Map<string,number>) =>
         applyDamage(ships, damageByTarget, dead => {
+            const sprite = this.shipSprites.get(dead.id)
+            if(sprite) this.spawnDeathFragments(sprite)
             this.destroyShipSprite(dead.id)
-            this.shatters.push({ x:dead.x, y:dead.y, createdAt:time, seed:dead.id })
             if(dead.type === ShipType.Base) this.handleBaseDestroyed(dead.faction)
         })
 
@@ -1047,16 +1119,14 @@ export default class MapScene extends Scene {
     // contact overlap callback above, or — for an ATD reaching its route's end — moveShips).
     detonateDrone = (drone:ShipData, sprite:Physics.Arcade.Sprite, primary:{ id:string } | null) => {
         const time = this.time.now
+        // Guarantees the drone itself dies in the applyDamage pass below.
         const shipDamage = new Map<string, number>([[drone.id, drone.hp]])
-
-        this.shatters.push({ x:sprite.x, y:sprite.y, createdAt:time, seed:drone.id })
+        const damage = ShipData[drone.type].damage
 
         if(drone.type === ShipType.KK && primary){
-            const damage = ShipData[ShipType.KK].damage
             shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + damage)
         }
         else if(drone.type === ShipType.ATD){
-            const damage = ShipData[ShipType.ATD].damage
             const hits = this.physics.overlapCirc(sprite.x, sprite.y, ATD_BLAST_RADIUS_PX, true, false)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
@@ -1068,8 +1138,19 @@ export default class MapScene extends Scene {
 
         const { ships, setShips } = useAppStore.getState()
         setShips(applyDamage(ships, shipDamage, dead => {
+            // The detonating drone itself gets the same plain white impact flash a missile landing a hit
+            // uses (sized off its own damage stat) instead of the fragments-splitting effect, and its
+            // sprite is just removed immediately rather than animated away — a drone going off is
+            // instantaneous, not something that "breaks apart." Anything else caught in the blast (ATD)
+            // or hit directly (KK's primary) still gets the normal fragments-splitting death.
+            if(dead.id === drone.id){
+                this.impactFlashes.push({ x:sprite.x, y:sprite.y, createdAt:time, damage })
+            }
+            else {
+                const deadSprite = this.shipSprites.get(dead.id)
+                if(deadSprite) this.spawnDeathFragments(deadSprite)
+            }
             this.destroyShipSprite(dead.id)
-            if(dead.id !== drone.id) this.shatters.push({ x:dead.x, y:dead.y, createdAt:time, seed:dead.id })
             if(dead.type === ShipType.Base) this.handleBaseDestroyed(dead.faction)
         }))
     }
@@ -1082,12 +1163,12 @@ export default class MapScene extends Scene {
         if(!ship) return
 
         const time = this.time.now
-        const x = missile.x, y = missile.y, seed = missile.getData('id'), damage = missile.getData('damage')
+        const x = missile.x, y = missile.y, damage = missile.getData('damage')
         missile.destroy()
-        this.shatters.push({ x, y, createdAt:time, seed })
+        this.impactFlashes.push({ x, y, createdAt:time, damage })
 
         const { ships, setShips } = useAppStore.getState()
-        setShips(this.applyShipDamage(ships, new Map([[ship.id, damage]]), time))
+        setShips(this.applyShipDamage(ships, new Map([[ship.id, damage]])))
     }
 
     // Nearest hostile ship within radius of a point, found via a spatial physics query
@@ -1186,7 +1267,7 @@ export default class MapScene extends Scene {
 
         if(shooterIds.size === 0) return
 
-        setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget, time))
+        setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget))
     }
 
     // Which Asteroid (if any) each Harvester counts as "mining" this frame — the one thing moveShips
@@ -1420,8 +1501,10 @@ export default class MapScene extends Scene {
 
     randomFlickerIntervalMs = () => HARVESTER_BEAM_FLICKER_MIN_MS + Math.random()*(HARVESTER_BEAM_FLICKER_MAX_MS-HARVESTER_BEAM_FLICKER_MIN_MS)
 
-    // Wreckage marking where a ship was destroyed: a jagged scatter of debris fragments (shape kept
-    // stable frame-to-frame by seeding the randomness off the dead ship's id), fading out over 10s.
+    // A jagged scatter of debris fragments (shape kept stable frame-to-frame by seeding the randomness
+    // off the missile's own id, since this redraws every frame unlike spawnDeathFragments), fading out
+    // over 10s — the one remaining case is a missile fizzling out mid-flight with nothing left to
+    // retarget onto (see updateMissiles); an actual ship dying uses spawnDeathFragments instead.
     drawShatters = (time:number) => {
         const g = this.shatterG
         g.clear()
@@ -1441,6 +1524,23 @@ export default class MapScene extends Scene {
                 const startY = s.y + (rand()-0.5)*CELL_SIZE*0.6
                 g.lineBetween(startX, startY, startX+Math.cos(angle)*len, startY+Math.sin(angle)*len)
             }
+        })
+    }
+
+    // A missile actually landing on its target (see onMissileShipContact) — a plain white circle, sized
+    // off the damage that hit landed for, fully opaque at the instant of impact and fading linearly to
+    // nothing over MISSILE_IMPACT_LIFETIME_MS. Separate from drawShatters' wreckage effect, which still
+    // fires independently if that damage actually killed the ship.
+    drawMissileImpacts = (time:number) => {
+        const g = this.missileImpactG
+        g.clear()
+
+        this.impactFlashes = this.impactFlashes.filter(f => time - f.createdAt < MISSILE_IMPACT_LIFETIME_MS)
+        this.impactFlashes.forEach(f => {
+            const progress = (time - f.createdAt) / MISSILE_IMPACT_LIFETIME_MS
+            const radius = MISSILE_IMPACT_MIN_RADIUS_PX + f.damage*MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX
+            g.fillStyle(0xFFFFFF, 1-progress)
+            g.fillCircle(f.x, f.y, radius)
         })
     }
 
