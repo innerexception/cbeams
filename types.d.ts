@@ -82,9 +82,6 @@ interface ShipStats {
     sizeHex: number
     productionTimeMs: number
     logisticsCost: number
-    // Metal deducted from the building faction's stockpile the instant it's queued (see store's
-    // queueShip) — refused outright if that faction can't afford it, same up-front gate as logisticsCost.
-    metalCost: number
     // Missiles an MLRS can ever launch, total, over its whole lifetime — undefined for every other
     // ship (none of them fire missiles). See ShipData's ammoRemaining for the live count.
     ammo?:number
@@ -124,8 +121,18 @@ interface ShipData {
     lastFiredAtMs?: number
     hp: number
     // Only present for a ship whose ShipStats sets `ammo` (SPR) — set to that value when the ship's
-    // spawned, decremented per missile actually launched. Once it hits 0 it can't fire again.
+    // spawned, decremented per missile actually launched, or refilled by a nearby GAIN (see MapScene's
+    // updateAmmoResupply). Once it hits 0 it can't fire again.
     ammoRemaining?: number
+    // GAIN only — how much metal it's currently carrying, up to HARVESTER_METAL_CAPACITY. Gained by
+    // mining an Asteroid (see MapScene's updateHarvesters/drawHarvesterMetalGauge) and spent refilling
+    // any ammo-using ship within HARVESTER_RESUPPLY_RANGE_PX (see updateAmmoResupply) — there's no
+    // faction-wide stockpile anymore, this carried amount is the only metal that exists.
+    metalCarried?: number
+    // GAIN only — when it last transferred a unit of ammo via updateAmmoResupply, so that transfer stays
+    // gated to one whole unit per HARVESTER_RESUPPLY_INTERVAL_MS instead of a continuous per-frame
+    // fractional rate (the same cooldown-timestamp pattern lastFiredAtMs uses for weapon cooldowns).
+    lastResupplyAtMs?: number
     // Only ever set on a Base (see ShipType.CATH) — every other ship's own production queue, filled by
     // queueShip/emptied by completeQueueItem/tickProduction, the same role the old shipyard building's
     // own queue field used to play.

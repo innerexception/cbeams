@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, ShipType, ShipData, Faction } from '../../enum';
-import { MAX_WAYPOINTS, MAX_QUEUE, STARTING_METAL, gridToWorld } from './Constants';
+import { Modal, ShipType } from '../../enum';
+import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld } from './Constants';
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
 // the ship already is without ever sending it back to a waypoint it has already passed.
@@ -30,11 +30,9 @@ export interface AppState {
   // for each one's fixed id/position/sprite, decided once at generation and never duplicated here.
   objectives: Array<ObjectiveData>;
   // Every Asteroid currently on the map (see MapScene's spawnResourceNodes) — removed from this array
-  // outright once a Harvester drains its metal to 0 (see updateHarvesters).
+  // outright once a Harvester drains its metal to 0 (see updateHarvesters). There's no faction-wide
+  // metal stockpile anymore — a GAIN ship carries what it mines itself (see ShipData's metalCarried).
   resourceNodes: Array<ResourceNodeData>;
-  // Each faction's banked metal — starts at STARTING_METAL, collected by its Harvesters (see MapScene's
-  // updateHarvesters), and spent up front the instant a ship is queued (see queueShip).
-  metal: Record<Faction, number>;
   // The player's currently selected ship(s) — either a drag-selected group of combat ships (see
   // MapScene's drag-select box) taking move orders, or a single clicked Base opening its production
   // panel (see FactoryToolbar). Both go through this same field/setter; there's no separate
@@ -58,7 +56,6 @@ export interface AppState {
   setObjectives: (objectives: Array<ObjectiveData>) => void;
   addResourceNode: (node: ResourceNodeData) => void;
   setResourceNodes: (nodes: Array<ResourceNodeData>) => void;
-  addMetal: (faction: Faction, amount: number) => void;
 }
 
 const initialState = {
@@ -70,7 +67,6 @@ const initialState = {
   ships: [] as Array<ShipData>,
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,
-  metal: { [Faction.Player]: STARTING_METAL, [Faction.Enemy]: STARTING_METAL } as Record<Faction, number>,
   selectedShipIds: [] as Array<string>,
 };
 
@@ -124,22 +120,17 @@ export const useAppStore = create<AppState>((set) => ({
   clearShipWaypoints: (shipIds) => set((state) => ({
     ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, latchedObjectiveId: undefined, objectiveAttached: undefined } : s)),
   })),
-  // Refuses outright — no queue change, no metal spent — if the queue's already full or the building
-  // faction (the Base's own, not necessarily the player: the enemy AI's own queueShip calls go through
-  // this exact same gate) can't afford metalCost. Paid up front the instant it's queued, not on
-  // completion, same as the queue slot itself is claimed immediately.
+  // Refuses outright — no queue change — if the queue's already full (the Base's own, not necessarily
+  // the player: the enemy AI's own queueShip calls go through this exact same gate).
   queueShip: (baseId, type) => set((state) => {
     const base = state.ships.find((s) => s.id === baseId);
     if(!base) return {};
     const queue = base.queue || [];
     if(queue.length >= MAX_QUEUE) return {};
-    const cost = ShipData[type].metalCost;
-    if((state.metal[base.faction] ?? 0) < cost) return {};
 
     const item: ProductionQueueItem = { id: v4(), type, startedAt: queue.length === 0 ? Date.now() : null };
     return {
       ships: state.ships.map((s) => (s.id === baseId ? { ...s, queue: [...queue, item] } : s)),
-      metal: { ...state.metal, [base.faction]: state.metal[base.faction] - cost },
     };
   }),
   completeQueueItem: (baseId) => set((state) => ({
@@ -156,5 +147,4 @@ export const useAppStore = create<AppState>((set) => ({
   setObjectives: (objectives) => set({ objectives }),
   addResourceNode: (node) => set((state) => ({ resourceNodes: [...state.resourceNodes, node] })),
   setResourceNodes: (resourceNodes) => set({ resourceNodes }),
-  addMetal: (faction, amount) => set((state) => ({ metal: { ...state.metal, [faction]: state.metal[faction] + amount } })),
 }));

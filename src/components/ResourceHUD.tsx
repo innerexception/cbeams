@@ -9,7 +9,6 @@ export default () => {
     // numbers come from getLogisticsStatus, which reads the store itself.
     useAppStore((state) => state.ships)
     const objectives = useAppStore((state) => state.objectives)
-    const metal = useAppStore((state) => state.metal[Faction.Player])
 
     const { maxLogistics, logisticsUsed, logisticsRemaining } = getLogisticsStatus()
     const logisticsPercent = Math.min(100, (Math.max(0, logisticsRemaining)/maxLogistics)*100)
@@ -19,7 +18,6 @@ export default () => {
 
     return (
         <div style={{ position:'absolute', top:10, right:10, zIndex:2, color:colors.green, fontFamily:'Body', fontSize:14, display:'flex', alignItems:'flex-start', gap:24 }}>
-            <div>Metal: {Math.floor(metal)}</div>
             <div>Objectives: {objectivesHeld} / {objectives.length}</div>
             <div style={{ textAlign:'right' }}>
                 <div>Logistics: {logisticsRemaining} / {maxLogistics}</div>

@@ -32,10 +32,6 @@ export const tryLoadFile = async () => {
 // Each ship kind's own logistics upkeep.
 export const getShipLogisticsCost = (type:ShipType) => ShipData[type].logisticsCost
 
-// Each ship kind's own up-front metal price (see store's queueShip, which deducts it from the building
-// faction's stockpile the instant it's queued, and refuses to queue anything that faction can't afford).
-export const getShipMetalCost = (type:ShipType) => ShipData[type].metalCost
-
 // Shared by the HUD and ship production so both agree on remaining logistics capacity — every deployed
 // ship (a faction's Base included, though its own logisticsCost is 0) draws against the same flat
 // BASE_LOGISTICS_FLOOR budget.

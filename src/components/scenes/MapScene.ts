@@ -16,6 +16,7 @@ import {
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT,
+    HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
     GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
@@ -75,6 +76,7 @@ export default class MapScene extends Scene {
     selectionG: GameObjects.Graphics
     progressG: GameObjects.Graphics
     healthG: GameObjects.Graphics
+    harvesterMetalG: GameObjects.Graphics
     ordersG: GameObjects.Graphics
     combatG: GameObjects.Graphics
     missileImpactG: GameObjects.Graphics
@@ -129,6 +131,7 @@ export default class MapScene extends Scene {
         this.selectionG = this.add.graphics()
         this.progressG = this.add.graphics()
         this.healthG = this.add.graphics()
+        this.harvesterMetalG = this.add.graphics()
         this.ordersG = this.add.graphics()
         this.combatG = this.add.graphics()
         this.missileImpactG = this.add.graphics()
@@ -229,6 +232,7 @@ export default class MapScene extends Scene {
         this.updateMlrs(time)
         this.updateArmor(time)
         this.updateHarvesters(delta)
+        this.updateAmmoResupply(time)
         this.updateObjectives(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
@@ -239,6 +243,7 @@ export default class MapScene extends Scene {
 
         this.drawProductionProgress()
         this.drawShipHealth()
+        this.drawHarvesterMetalGauge()
         this.updateAmmoLabels()
         this.drawOrders()
         this.drawCombat(time)
@@ -305,6 +310,32 @@ export default class MapScene extends Scene {
             g.lineStyle(1, GREEN_HEX, 1)
             g.strokeRect(barX, barY, w, h)
             g.fillStyle(GREEN_HEX, 0.9)
+            g.fillRect(barX, barY, w*percent, h)
+        })
+    }
+
+    // How full a GAIN ship's carried metal is (see ShipData's metalCarried/HARVESTER_METAL_CAPACITY) —
+    // always shown, not just when partially empty like drawShipHealth's HP bar, since "currently empty"
+    // is itself useful info here rather than clutter to hide. Drawn on its own row below the HP bar's
+    // (offset an extra bar-height further out) so a damaged, partially-full Harvester can show both at
+    // once without them overlapping.
+    drawHarvesterMetalGauge = () => {
+        const g = this.harvesterMetalG
+        g.clear()
+
+        useAppStore.getState().ships.forEach(s => {
+            if(s.type !== ShipType.GAIN) return
+            const sprite = this.shipSprites.get(s.id)
+            if(!sprite || sprite.visible === false) return
+
+            const percent = PhaserMath.Clamp((s.metalCarried ?? 0) / HARVESTER_METAL_CAPACITY, 0, 1)
+            const w = CELL_SIZE * 1.4, h = 4
+            const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
+            const barX = s.x - w/2, barY = s.y + footprint + h*2 + 2
+
+            g.lineStyle(1, YELLOW_HEX, 1)
+            g.strokeRect(barX, barY, w, h)
+            g.fillStyle(YELLOW_HEX, 0.9)
             g.fillRect(barX, barY, w*percent, h)
         })
     }
@@ -961,6 +992,7 @@ export default class MapScene extends Scene {
         const { ships, resourceNodes } = useAppStore.getState()
         this.harvesterMiningTarget.clear()
         ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
+            if((harvester.metalCarried ?? 0) >= HARVESTER_METAL_CAPACITY) return
             const sprite = this.shipSprites.get(harvester.id)
             if(!sprite) return
 
@@ -975,12 +1007,16 @@ export default class MapScene extends Scene {
         })
     }
 
+    // A Harvester no longer deposits what it mines into a shared faction stockpile — it carries the
+    // metal itself (see ShipData's metalCarried), capped at HARVESTER_METAL_CAPACITY, spent later
+    // refilling ammo (see updateAmmoResupply). Stops drawing from its target the instant it's full,
+    // same as updateHarvesterMiningTargets already refuses to assign one a target once it is.
     updateHarvesters = (deltaMs:number) => {
-        const { ships, resourceNodes, addMetal, setResourceNodes } = useAppStore.getState()
+        const { ships, resourceNodes, setShips, setResourceNodes } = useAppStore.getState()
         if(this.harvesterMiningTarget.size === 0) return
 
         const drawdown = new Map<string, number>() // asteroid id -> metal drawn this frame so far
-        const metalGained = new Map<Faction, number>()
+        const metalGainedByShip = new Map<string, number>()
 
         ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             const nodeId = this.harvesterMiningTarget.get(harvester.id)
@@ -988,16 +1024,23 @@ export default class MapScene extends Scene {
             const node = resourceNodes.find(n => n.id === nodeId)
             if(!node) return
 
+            const capacityLeft = HARVESTER_METAL_CAPACITY - (harvester.metalCarried ?? 0)
+            if(capacityLeft <= 0) return
             const remaining = (node.metal ?? 0) - (drawdown.get(node.id) || 0)
             if(remaining <= 0) return
-            const gathered = Math.min(remaining, HARVESTER_COLLECTION_RATE_PER_S * (deltaMs/1000))
+            const gathered = Math.min(remaining, capacityLeft, HARVESTER_COLLECTION_RATE_PER_S * (deltaMs/1000))
             drawdown.set(node.id, (drawdown.get(node.id) || 0) + gathered)
-            metalGained.set(harvester.faction, (metalGained.get(harvester.faction) || 0) + gathered)
+            metalGainedByShip.set(harvester.id, gathered)
         })
 
         if(drawdown.size === 0) return
 
-        metalGained.forEach((amount, faction) => addMetal(faction, amount))
+        if(metalGainedByShip.size > 0){
+            setShips(ships.map(s => {
+                const gained = metalGainedByShip.get(s.id)
+                return gained ? { ...s, metalCarried: (s.metalCarried ?? 0) + gained } : s
+            }))
+        }
 
         const depletedIds:Array<string> = []
         const updated = resourceNodes.map(n => {
@@ -1014,6 +1057,48 @@ export default class MapScene extends Scene {
             if(depletedIds.includes(id)) return
             this.updateResourceNodeSprite(updated.find(n => n.id === id))
         })
+    }
+
+    // Any ship within HARVESTER_RESUPPLY_RANGE_PX of a Harvester has its own ammoRemaining topped up
+    // from that Harvester's carried metal, 1-for-1, one whole unit at a time every
+    // HARVESTER_RESUPPLY_INTERVAL_MS (gated by lastResupplyAtMs, the same cooldown-timestamp pattern
+    // lastFiredAtMs uses) rather than a continuous per-second rate, so neither ammoRemaining nor
+    // metalCarried ever drifts off a whole number.
+    updateAmmoResupply = (time:number) => {
+        const { ships, setShips } = useAppStore.getState()
+        const harvesters = ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1
+            && (!s.lastResupplyAtMs || time - s.lastResupplyAtMs >= HARVESTER_RESUPPLY_INTERVAL_MS))
+        if(harvesters.length === 0) return
+
+        const metalSpent = new Map<string, number>() // harvester id -> metal spent this tick
+        const ammoGained = new Map<string, number>() // ship id -> ammo gained this tick
+        const resuppliedHarvesterIds = new Set<string>()
+
+        harvesters.forEach(harvester => {
+            const target = ships.find(t => t.faction === harvester.faction
+                && ShipData[t.type].ammo
+                && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo
+                && Phaser.Math.Distance.Between(harvester.x, harvester.y, t.x, t.y) <= HARVESTER_RESUPPLY_RANGE_PX)
+            if(!target) return
+
+            metalSpent.set(harvester.id, 1)
+            ammoGained.set(target.id, (ammoGained.get(target.id) || 0) + 1)
+            resuppliedHarvesterIds.add(harvester.id)
+        })
+
+        if(resuppliedHarvesterIds.size === 0) return
+
+        setShips(ships.map(s => {
+            const spent = metalSpent.get(s.id)
+            const gained = ammoGained.get(s.id)
+            if(!spent && !gained) return s
+            return {
+                ...s,
+                metalCarried: spent ? (s.metalCarried ?? 0) - spent : s.metalCarried,
+                ammoRemaining: gained ? (s.ammoRemaining ?? 0) + gained : s.ammoRemaining,
+                lastResupplyAtMs: spent ? time : s.lastResupplyAtMs,
+            }
+        }))
     }
 
     spawnMissile = (faction:Faction, x:number, y:number, targetId:string, damage:number, aimX:number, aimY:number) => {

@@ -2,15 +2,3 @@ Factions start with a pre-set number of logistics centers from which units may b
 Defenses may be deployed within a radius of a logistics center.
 Total logistics available = number of logistics centers * 10
 Logistics centers must be placed at least 500px away from another logistics center
-
-
-Placement phase
-Place logi centers
-
-Buildings have point value
-Place all other buildings up to your starting point value
-Buildings must be placed near a logi center
-
-Objective areas spawn at random in the middle of the map. Control all objectives for 1 min to win.
-Control can only be achieved using ARMOR or IFV
-

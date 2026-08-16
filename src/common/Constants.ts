@@ -23,14 +23,6 @@ export const SHIP_SEPARATION_PX = 1
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
-// --- Economy ---
-// Every ship now costs metal to queue (see ShipData's metalCost in enum.ts, store's queueShip) and
-// neither faction starts with a Harvester already placed (see MapScene's spawnEntitiesFromMap — only a
-// Base comes off the map file) — without some starting stockpile, nobody could ever afford the very
-// first Harvester needed to start earning any. Applies to both factions, the enemy's own opening raid
-// (AIPlayers' spawnEnemyRaid) included.
-export const STARTING_METAL = 10
-
 // --- Base production/orders ---
 // There are no buildings in this game — every ship (including a faction's own Base) queues and orders
 // through the same fields (see ShipData in types.d.ts). MAX_QUEUE/MAX_WAYPOINTS bound a Base's own queue
@@ -125,6 +117,17 @@ export const HARVESTER_RANGE_PX = HARVESTER_ORBIT_RADIUS_PX + 30
 // target and would just trail behind it in a straight line instead of curving.
 export const HARVESTER_ORBIT_ANGULAR_SPEED = 0.0001 // radians per ms
 export const HARVESTER_COLLECTION_RATE_PER_S = 1
+// A Harvester no longer deposits what it mines into a shared faction stockpile — there is no faction
+// stockpile anymore — it just carries the metal itself, up to this cap (see MapScene's updateHarvesters/
+// drawHarvesterMetalGauge for the gather side, updateAmmoResupply for what it's actually spent on).
+export const HARVESTER_METAL_CAPACITY = 50
+// Any ship within this range of a Harvester (any type, not just ones that fire — see MapScene's
+// updateAmmoResupply) has its own ammoRemaining topped up from that Harvester's carried metal, one
+// whole unit (1 metal for 1 ammo) at a time every HARVESTER_RESUPPLY_INTERVAL_MS — a discrete tick
+// rather than a continuous per-second rate, since ammoRemaining is a whole-number "shots left" stat and
+// transferring in fractional amounts would leave it (and metalCarried) drifting off whole numbers.
+export const HARVESTER_RESUPPLY_RANGE_PX = 100
+export const HARVESTER_RESUPPLY_INTERVAL_MS = 1000
 export const RESOURCE_ASTEROID_COUNT = 14
 // An Asteroid's starting metal stockpile is ASTEROID_AVG_METAL +/- a random amount up to
 // ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average.

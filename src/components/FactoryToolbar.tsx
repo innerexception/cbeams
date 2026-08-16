@@ -2,18 +2,17 @@ import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { Faction, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE } from '../common/Constants'
-import { getLogisticsStatus, getShipLogisticsCost, getShipMetalCost } from '../common/Utils'
+import { getLogisticsStatus, getShipLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
 export default () => {
-    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints, metal } = useAppStore((state) => ({
+    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         setSelectedShipIds: state.setSelectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         clearShipWaypoints: state.clearShipWaypoints,
-        metal: state.metal,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -43,7 +42,7 @@ export default () => {
                     <div>
                         <div style={{ display:'flex' }}>
                             {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
-                                <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type) || metal[playerBase.faction] < getShipMetalCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name}</ToolButton>
+                                <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name}</ToolButton>
                             ))}
                         </div>
                         <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>
