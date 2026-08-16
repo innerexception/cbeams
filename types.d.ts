@@ -116,6 +116,11 @@ interface ShipData {
     // a capture even starts counting down — otherwise the timer would start the instant an ARMOR merely
     // entered range, before it had actually attached to anything.
     objectiveAttached?: boolean
+    // EYE only — set the instant it finishes its very first route and comes to a stop (see MapScene's
+    // moveShips). From then on it's permanently immobile: moveShips forces it idle regardless of any
+    // waypoints it might have, and MapScene's handleClick won't let it be given new orders at all — it
+    // just sits wherever it stopped until destroyed.
+    movementLocked?: boolean
     lastFiredAtMs?: number
     hp: number
     // Only present for a ship whose ShipStats sets `ammo` (SPR) — set to that value when the ship's
@@ -127,15 +132,13 @@ interface ShipData {
     queue?: Array<ProductionQueueItem>
 }
 
-// A gatherable resource node — world coordinates (like a ship, not a grid cell like ObjectiveSpawn),
-// since they're scattered procedurally rather than read off a fixed map-file layer (see MapScene's
-// spawnResourceNodes). metal/maxMetal are only ever set on an Asteroid: metal is the live remaining
-// stockpile a nearby Harvester draws down (see MapScene's updateHarvesters), maxMetal is what it
-// started with, kept around purely so its sprite can be scaled down proportionally as it depletes. A
-// GasCloud never depletes, so both stay undefined for one.
+// A gatherable Asteroid — world coordinates (like a ship, not a grid cell like ObjectiveSpawn), since
+// they're scattered procedurally rather than read off a fixed map-file layer (see MapScene's
+// spawnResourceNodes). metal is the live remaining stockpile a nearby Harvester draws down (see
+// MapScene's updateHarvesters); maxMetal is what it started with, kept around purely so its sprite can
+// be scaled down proportionally as it depletes.
 interface ResourceNodeData {
     id: string
-    kind: import('./enum').ResourceNodeType
     x: number
     y: number
     metal?: number

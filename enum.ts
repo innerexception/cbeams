@@ -33,17 +33,10 @@ export enum ObjectiveSprite {
 
 // A gatherable map feature — see MapScene's spawnResourceNodes (procedurally scattered at match start,
 // there's no reserved tile for these on the map file) and updateHarvesters for the live gather logic.
-// An Asteroid holds a finite, depleting metal stockpile (see ResourceNodeData in types.d.ts); a
-// GasCloud never depletes — it just raises whichever faction keeps a Harvester near it's logistics cap
-// (see Utils' getLogisticsStatus).
-export enum ResourceNodeType {
-    Asteroid='Asteroid', GasCloud='GasCloud'
-}
-
+// Holds a finite, depleting metal stockpile (see ResourceNodeData in types.d.ts).
 export const AsteroidSpriteIndexesLarge = [41,46,48]
 export const AsteroidSpriteIndexesMed = [40,42,47]
 export const AsteroidSpriteIndexesSmall = [39,43,44,45,49,50,51]
-export const CloudIndexes = [78,79,80,81]
 export enum ObjectiveSpriteIndex {
     Crypt=86,Shrine=87,NuclearReactor=88
 }

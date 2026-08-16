@@ -5,7 +5,7 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, CloudIndexes, Maps } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
     TRACER_LIFETIME_MS,
@@ -15,7 +15,7 @@ import {
     MISSILE_IMPACT_LIFETIME_MS, MISSILE_IMPACT_MIN_RADIUS_PX, MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX,
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
-    HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT, RESOURCE_GAS_CLOUD_COUNT,
+    HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
     GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
@@ -405,7 +405,7 @@ export default class MapScene extends Scene {
     }
 
     spawnResourceNodes = () => {
-        const placeNode = (kind:ResourceNodeType) => {
+        const placeNode = () => {
             for(let attempt=0; attempt<60; attempt++){
                 const gridX = Math.random()*this.mapData.width
                 const gridY = Math.random()*this.mapData.height
@@ -416,27 +416,25 @@ export default class MapScene extends Scene {
                 const tooCloseToNode = useAppStore.getState().resourceNodes.some(n => Phaser.Math.Distance.Between(x, y, n.x, n.y) < RESOURCE_NODE_MIN_SPACING_PX)
                 if(tooCloseToNode) continue
 
-                const metal = kind === ResourceNodeType.Asteroid ? Math.round(ASTEROID_AVG_METAL + (Math.random()*2-1)*ASTEROID_METAL_VARIANCE) : undefined
-                const node:ResourceNodeData = { id:v4(), kind, x, y, metal, maxMetal:metal }
+                const metal = Math.round(ASTEROID_AVG_METAL + (Math.random()*2-1)*ASTEROID_METAL_VARIANCE)
+                const node:ResourceNodeData = { id:v4(), x, y, metal, maxMetal:metal }
                 useAppStore.getState().addResourceNode(node)
                 this.createResourceNodeSprite(node)
                 return
             }
         }
 
-        for(let i=0; i<RESOURCE_ASTEROID_COUNT; i++) placeNode(ResourceNodeType.Asteroid)
-        for(let i=0; i<RESOURCE_GAS_CLOUD_COUNT; i++) placeNode(ResourceNodeType.GasCloud)
+        for(let i=0; i<RESOURCE_ASTEROID_COUNT; i++) placeNode()
     }
 
     createResourceNodeSprite = (node:ResourceNodeData) => {
-        const frames = node.kind === ResourceNodeType.Asteroid ? ASTEROID_TIER_FRAMES[asteroidTier(node)] : CloudIndexes
+        const frames = ASTEROID_TIER_FRAMES[asteroidTier(node)]
         const sprite = this.add.image(node.x, node.y, 'tiles', frames[Math.floor(Math.random()*frames.length)]).setDepth(1)
-        if(node.kind === ResourceNodeType.Asteroid) sprite.setData('asteroidTier', asteroidTier(node))
+        sprite.setData('asteroidTier', asteroidTier(node))
         this.resourceNodeSprites.set(node.id, sprite)
     }
 
     updateResourceNodeSprite = (node:ResourceNodeData) => {
-        if(node.kind !== ResourceNodeType.Asteroid) return
         const sprite = this.resourceNodeSprites.get(node.id)
         if(!sprite) return
         const tier = asteroidTier(node)
@@ -672,7 +670,8 @@ export default class MapScene extends Scene {
             const speed = ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
-            const idle = pathIndex >= waypoints.length
+            const movementLocked = ship.type === ShipType.EYE && !!ship.movementLocked
+            const idle = movementLocked || pathIndex >= waypoints.length
             const miningNodeId = this.harvesterMiningTarget.get(ship.id)
             const miningNode = miningNodeId ? resourceNodes.find(n => n.id === miningNodeId) : undefined
 
@@ -717,7 +716,7 @@ export default class MapScene extends Scene {
             const prevX = sprite.x, prevY = sprite.y
 
             const dist = Phaser.Math.Distance.Between(sprite.x, sprite.y, target.x, target.y)
-            const nextPathIndex = (!miningNode && !latchedObjectiveWorld && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
+            const nextPathIndex = (!miningNode && !latchedObjectiveWorld && !movementLocked && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
             const arrivedAtRouteEnd = nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length
 
             if(dist <= step){
@@ -740,8 +739,9 @@ export default class MapScene extends Scene {
             if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
 
             const objectiveAttached = !!latchedObjectiveWorld && dist <= step
+            const justLockedIn = ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && dist <= step
 
-            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId, objectiveAttached }
+            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId, objectiveAttached, movementLocked: movementLocked || justLockedIn }
         })
 
         this.applyShipSeparation(updated)
@@ -750,16 +750,6 @@ export default class MapScene extends Scene {
         arrivedAtds.forEach(({ ship, sprite }) => this.detonateDrone(ship, sprite, null))
     }
 
-    // Nudges every overlapping pair of ship sprites directly apart by half their overlap each — on top
-    // of whatever target each one was already moving toward this frame (see moveShips above), not a
-    // replacement for it. Run every frame, so it's a continuous soft correction rather than a one-off
-    // placement check the way spawnShip's own overlap-avoidance is: a group of ships still travelling
-    // together keeps jostling apart as they go, and a pile that all arrive at the exact same waypoint
-    // settles into a spread rather than stacking exactly on top of each other, since once idle they stay
-    // wherever this push last left them (see moveShips' idle target) instead of snapping back together.
-    // A stationary ship (speed:0 — currently only CATH) is never itself pushed, only ever pushes others
-    // off of it, so the Base doesn't visibly drift from something colliding with it. Mutates `updated`'s
-    // x/y in place to match, since this runs after each ship's own entry in it was already built.
     applyShipSeparation = (updated:Array<ShipData>) => {
         for(let i=0; i<updated.length; i++){
             const a = updated[i]
@@ -977,7 +967,7 @@ export default class MapScene extends Scene {
             let nearest:ResourceNodeData = null
             let nearestDist = Infinity
             resourceNodes.forEach(node => {
-                if(node.kind !== ResourceNodeType.Asteroid || (node.metal ?? 0) <= 0) return
+                if((node.metal ?? 0) <= 0) return
                 const d = Phaser.Math.Distance.Between(sprite.x, sprite.y, node.x, node.y)
                 if(d <= HARVESTER_RANGE_PX && d < nearestDist){ nearestDist = d; nearest = node }
             })
@@ -1289,7 +1279,7 @@ export default class MapScene extends Scene {
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH).map(s => s.id)
+            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
             if(orderableIds.length === 0) return
             if(!this.shiftDown){
                 setShipWaypoints(orderableIds, x, y)

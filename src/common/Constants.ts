@@ -37,11 +37,9 @@ export const STARTING_METAL = 10
 // and any ship's own route respectively.
 export const MAX_QUEUE = 3
 export const MAX_WAYPOINTS = 5
-// A faction's logistics cap (see Utils' getLogisticsStatus) — the ceiling on how large a fleet it can
-// field at once — starts at this floor and rises LOGISTICS_PER_GAS_CLOUD for every GasCloud that
-// faction keeps at least one Harvester near (see MapScene's updateHarvesters/HARVESTER_RANGE_PX).
+// A faction's logistics cap (see Utils' getLogisticsStatus) — the flat ceiling on how large a fleet it
+// can field at once.
 export const BASE_LOGISTICS_FLOOR = 10
-export const LOGISTICS_PER_GAS_CLOUD = 10
 
 // --- Kamikaze drones (KK, ATD) ---
 // Both now detonate against any hostile ship they touch (there's nothing else left to touch — see
@@ -111,12 +109,11 @@ export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 // How many drones the enemy Base masses before launching them at the player, once, at the start of the match.
 export const ENEMY_RAID_SIZE = 3
 
-// --- Resource nodes (Asteroids, GasClouds) ---
+// --- Resource nodes (Asteroids) ---
 // Scattered procedurally across the map at match start (see MapScene's spawnResourceNodes) — there's no
 // tile reserved for these on the map file the way a Base or Objective has. A Harvester within this
 // range of an Asteroid draws HARVESTER_COLLECTION_RATE_PER_S metal/second from it (see
-// MapScene's updateHarvesters); the same range is what makes a GasCloud count as "covered" for that
-// faction's logistics cap (see Utils' getLogisticsStatus).
+// MapScene's updateHarvesters).
 export const HARVESTER_ORBIT_RADIUS_PX = 40
 // Must clear the orbit radius with room to spare — once mining, a Harvester circles its Asteroid at
 // exactly HARVESTER_ORBIT_RADIUS_PX (see MapScene's moveShips), so the engagement range has to stay
@@ -129,7 +126,6 @@ export const HARVESTER_RANGE_PX = HARVESTER_ORBIT_RADIUS_PX + 30
 export const HARVESTER_ORBIT_ANGULAR_SPEED = 0.0001 // radians per ms
 export const HARVESTER_COLLECTION_RATE_PER_S = 1
 export const RESOURCE_ASTEROID_COUNT = 14
-export const RESOURCE_GAS_CLOUD_COUNT = 4
 // An Asteroid's starting metal stockpile is ASTEROID_AVG_METAL +/- a random amount up to
 // ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average.
 export const ASTEROID_AVG_METAL = 50

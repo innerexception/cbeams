@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Faction, ShipType, ShipData, ResourceNodeType } from "../../enum"
-import { SAVE_NAME, BASE_LOGISTICS_FLOOR, LOGISTICS_PER_GAS_CLOUD, HARVESTER_RANGE_PX } from "./Constants"
+import { Faction, ShipType, ShipData } from "../../enum"
+import { SAVE_NAME, BASE_LOGISTICS_FLOOR } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -37,19 +37,13 @@ export const getShipLogisticsCost = (type:ShipType) => ShipData[type].logisticsC
 export const getShipMetalCost = (type:ShipType) => ShipData[type].metalCost
 
 // Shared by the HUD and ship production so both agree on remaining logistics capacity — every deployed
-// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same budget.
-// That budget itself is no longer a flat number: it's BASE_LOGISTICS_FLOOR plus LOGISTICS_PER_GAS_CLOUD
-// for every GasCloud this faction currently has at least one Harvester within HARVESTER_RANGE_PX of —
-// stacking more than one Harvester on the same cloud doesn't count it twice.
+// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same flat
+// BASE_LOGISTICS_FLOOR budget.
 export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
-    const { ships, resourceNodes } = useAppStore.getState()
+    const { ships } = useAppStore.getState()
     const ownShips = ships.filter(s => s.faction === faction)
-    const ownHarvesters = ownShips.filter(s => s.type === ShipType.GAIN)
 
-    const gasCloudsCovered = resourceNodes.filter(n => n.kind === ResourceNodeType.GasCloud
-        && ownHarvesters.some(h => Math.hypot(h.x-n.x, h.y-n.y) <= HARVESTER_RANGE_PX)).length
-
-    const maxLogistics = BASE_LOGISTICS_FLOOR + LOGISTICS_PER_GAS_CLOUD * gasCloudsCovered
+    const maxLogistics = BASE_LOGISTICS_FLOOR
     const logisticsUsed = ownShips.reduce((sum, s) => sum + getShipLogisticsCost(s.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }

@@ -5,11 +5,9 @@ import { Faction } from '../../enum'
 import { colors } from '../styles/AppStyles'
 
 export default () => {
-    // Subscribed purely so this re-renders whenever a ship is added/removed/destroyed, or a resource
-    // node is added/depleted — the actual numbers come from getLogisticsStatus, which reads the store
-    // itself (a faction's logistics cap now depends on both: which GasClouds its Harvesters are near).
+    // Subscribed purely so this re-renders whenever a ship is added/removed/destroyed — the actual
+    // numbers come from getLogisticsStatus, which reads the store itself.
     useAppStore((state) => state.ships)
-    useAppStore((state) => state.resourceNodes)
     const objectives = useAppStore((state) => state.objectives)
     const metal = useAppStore((state) => state.metal[Faction.Player])
 
