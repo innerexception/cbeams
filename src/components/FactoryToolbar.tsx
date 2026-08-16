@@ -2,17 +2,18 @@ import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE, MAX_WAYPOINTS } from '../common/Constants'
-import { getLogisticsStatus, getShipLogisticsCost } from '../common/Utils'
+import { getLogisticsStatus, getShipLogisticsCost, getShipMetalCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 
 export default () => {
-    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints } = useAppStore((state) => ({
+    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints, metal } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         setSelectedShipIds: state.setSelectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         clearShipWaypoints: state.clearShipWaypoints,
+        metal: state.metal,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -40,7 +41,7 @@ export default () => {
             <div style={{ position:'absolute', top:10, left:10, zIndex:2 }}>
                 <div style={{ display:'flex' }}>
                     {Object.values(ShipType).filter(type => type !== ShipType.Base).map(type => (
-                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(selectedBase.id, type)}>{ShipData[type].name}</ToolButton>
+                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type) || metal[selectedBase.faction] < getShipMetalCost(type)} onClick={()=>queueShip(selectedBase.id, type)}>{ShipData[type].name}</ToolButton>
                     ))}
                     <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
                 </div>

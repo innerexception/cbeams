@@ -17,6 +17,14 @@ export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(wo
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
+// --- Economy ---
+// Every ship now costs metal to queue (see ShipData's metalCost in enum.ts, store's queueShip) and
+// neither faction starts with a Harvester already placed (see MapScene's spawnEntitiesFromMap — only a
+// Base comes off the map file) — without some starting stockpile, nobody could ever afford the very
+// first Harvester needed to start earning any. Applies to both factions, the enemy's own opening raid
+// (AIPlayers' spawnEnemyRaid) included.
+export const STARTING_METAL = 10
+
 // --- Base production/orders ---
 // There are no buildings in this game — every ship (including a faction's own Base) queues and orders
 // through the same fields (see ShipData in types.d.ts). MAX_QUEUE/MAX_WAYPOINTS bound a Base's own queue
@@ -28,12 +36,6 @@ export const MAX_WAYPOINTS = 5
 // faction keeps at least one Harvester near (see MapScene's updateHarvesters/HARVESTER_RANGE_PX).
 export const BASE_LOGISTICS_FLOOR = 10
 export const LOGISTICS_PER_GAS_CLOUD = 10
-
-// --- Ship movement ---
-// Once a ship finishes its route (or its orders are cleared) it loiters in a circle around the
-// final waypoint / wherever it was.
-export const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
-export const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
 
 // --- Physical footprints ---
 export const NATO_ICON_SIZE = 32
@@ -95,7 +97,16 @@ export const ENEMY_RAID_SIZE = 3
 // range of an Asteroid draws HARVESTER_COLLECTION_RATE_PER_S metal/second from it (see
 // MapScene's updateHarvesters); the same range is what makes a GasCloud count as "covered" for that
 // faction's logistics cap (see Utils' getLogisticsStatus).
-export const HARVESTER_RANGE_PX = 50
+export const HARVESTER_ORBIT_RADIUS_PX = 40
+// Must clear the orbit radius with room to spare — once mining, a Harvester circles its Asteroid at
+// exactly HARVESTER_ORBIT_RADIUS_PX (see MapScene's moveShips), so the engagement range has to stay
+// comfortably wider than that or it would immediately count as "out of range" the instant it started
+// orbiting.
+export const HARVESTER_RANGE_PX = HARVESTER_ORBIT_RADIUS_PX + 30
+// The tangential speed this implies (HARVESTER_ORBIT_RADIUS_PX * this, in px/ms) has to stay under the
+// Harvester's own ShipStats.speed (see enum.ts) or it could never actually keep up with its own orbit
+// target and would just trail behind it in a straight line instead of curving.
+export const HARVESTER_ORBIT_ANGULAR_SPEED = 0.0001 // radians per ms
 export const HARVESTER_COLLECTION_RATE_PER_S = 1
 export const RESOURCE_ASTEROID_COUNT = 14
 export const RESOURCE_GAS_CLOUD_COUNT = 4
@@ -112,4 +123,13 @@ export const RESOURCE_NODE_MIN_SPACING_PX = 150
 // React/DOM styling and Phaser text colors want the '#rrggbb' string — both are derived from one value.
 export const GREEN_HEX = 0x55FF55
 export const GREEN_DIM_HEX = 0x006500
-export const GREY_DIM_HEX = 0x666666
+export const YELLOW_HEX = 0xFFFF55
+export const RED_HEX=0xff5555
+
+// How often the (purely cosmetic) mining beam line flickers on/off while a Harvester is actively
+// drawing from an Asteroid — see MapScene's drawHarvesterBeams. A random interval within this range is
+// rolled fresh after every toggle, not a fixed blink rate. Independent of
+// HARVESTER_COLLECTION_RATE_PER_S, which still accrues continuously every frame regardless of how
+// often the beam itself is actually drawn.
+export const HARVESTER_BEAM_FLICKER_MIN_MS = 250
+export const HARVESTER_BEAM_FLICKER_MAX_MS = 1000

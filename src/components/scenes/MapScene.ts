@@ -5,7 +5,7 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost, seededRandom } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
 import { SHIP_SIDC_FUNCTION, buildSidc, renderAppSixIcon } from "../../common/AppSix";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, AsteroidSpriteIndexes, CloudIndexes, Maps } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ResourceNodeType, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, CloudIndexes, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid,
     TRACER_LIFETIME_MS,
@@ -15,8 +15,9 @@ import {
     SHATTER_LIFETIME_MS,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT, RESOURCE_GAS_CLOUD_COUNT,
+    HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
-    NATO_ICON_SIZE, GREEN_HEX, GREEN_DIM_HEX, GREY_DIM_HEX,
+    NATO_ICON_SIZE, GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -26,25 +27,49 @@ const TWO_PI = Math.PI*2
 // than the continuous zoom this used to be.
 const ZOOM_LEVELS = [1, 2]
 
-// Once a ship finishes its route it loiters in a circle around the final waypoint.
-const ORBIT_RADIUS_PX = CELL_SIZE * 1.5
-const ORBIT_ANGULAR_SPEED = 0.0005 // radians per ms
+// Fixed gap above the top edge of a ship's own sprite where its type label floats (see
+// shipLabelOffsetPx) — assumes a north-oriented sprite, i.e. measured straight up from center by half
+// the sprite's own (unrotated) height, regardless of whatever heading it's actually facing right now.
+const SHIP_LABEL_GAP_PX = 10
 
-// How far above a ship's own position its type label floats — clear of the (now unframed) icon
-// itself, which is roughly NATO_ICON_SIZE*0.6 tall, so the text never sits on top of it.
-const SHIP_LABEL_OFFSET_PX = NATO_ICON_SIZE * 0.7
+// How much of the way toward its desired heading a ship turns per millisecond (see moveShips) — a
+// fraction of the remaining angle each frame, not a fixed angular speed, so the turn eases out rather
+// than snapping straight there even when the heading itself jumps (e.g. the waypoint it's tracking
+// changes underneath it). IDLE is slower — a lazy drift back to north once it's got nowhere left to go,
+// vs. MOVE actually tracking its own direction of travel while it has somewhere to be. Every ship goes
+// through this the same way now, milsymbol icons included, not just the ones with real directional art.
+const IDLE_TURN_RATE_PER_MS = 0.002
+const MOVE_TURN_RATE_PER_MS = 0.001
 
-// Stable per-ship angular offset so multiple ships orbiting the same point spread out instead of stacking.
-const shipOrbitPhase = (id:string) => {
+// Stable per-ship angular offset so multiple ships converging on the same point spread out around it
+// instead of stacking on the same spot — Harvesters orbiting the same Asteroid, ARMOR latched onto the
+// same Objective's edge (see moveShips).
+const stableAngularPhase = (id:string) => {
     let h = 0
     for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
     return ((h >>> 0) % 1000) / 1000 * TWO_PI
+}
+
+// An Asteroid's sprite frame comes from one of three size tiers instead of shrinking continuously as
+// its metal depletes (see createResourceNodeSprite/updateResourceNodeSprite) — each tier's own block of
+// frames in the 'tiles' spritesheet (see enum.ts).
+const ASTEROID_TIER_FRAMES = { large:AsteroidSpriteIndexesLarge, med:AsteroidSpriteIndexesMed, small:AsteroidSpriteIndexesSmall }
+type AsteroidTier = keyof typeof ASTEROID_TIER_FRAMES
+const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
+    const metal = node.metal ?? 0
+    if(metal > 40) return 'large'
+    if(metal > 20) return 'med'
+    return 'small'
 }
 
 // The only two ship kinds that self-destruct on contact with a hostile ship (see
 // isHostileDroneShipPair/onDroneShipContact/detonateDrone) — every other kind (MLRS, AWACS, ARMOR,
 // Base) just collides and bounces off physically, nothing happens.
 const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.ATD])
+
+// Ship kinds that render from their own real sprite (see Assets.ts, each loaded under its own
+// ShipType key) instead of a milsymbol canvas (see generateTextures/createShipSprite).
+const REAL_SPRITE_SHIP_TYPES = new Set<ShipType>([ShipType.Harvester, ShipType.KK, ShipType.ARMOR])
 
 // Applies accumulated damage to any {id, hp} collection, removing anything that drops to 0 HP or
 // below. `onDeath` lets the caller leave its own effect at the death location — shared by every
@@ -154,6 +179,10 @@ export default class MapScene extends Scene {
     trailG: GameObjects.Graphics
     ammoG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
+    // The Harvester mining beam line (see drawHarvesterBeams) — its own layer rather than combatG since
+    // it isn't combat and flickers on its own random per-Harvester schedule rather than decaying like a
+    // tracer.
+    harvesterBeamG: GameObjects.Graphics
     // Repeating starfield backdrop, sized to cover the camera's full scroll bounds (see centerCameraBounds)
     // — a plain Image would stretch/tile awkwardly at that size, a TileSprite repeats the source texture
     // at its native resolution instead. Sits behind everything else (see create's setDepth) purely for
@@ -199,6 +228,16 @@ export default class MapScene extends Scene {
     // own polyline instead of drawing every missile's dots into one shared cloud.
     contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
 
+    // Which Asteroid (if any) each Harvester is currently within range of and actively drawing metal
+    // from — recomputed fresh once per frame by updateHarvesterMiningTargets, before movement, the
+    // gather economy, and the beam line all read from it, so all three agree on the same target rather
+    // than each running their own (potentially different, since positions move) nearest-node search.
+    // Absent entry = that Harvester isn't mining anything right now.
+    harvesterMiningTarget: Map<string, string> = new Map()
+    // Per-Harvester on/off flicker state for the mining beam line (see drawHarvesterBeams) — reset
+    // (deleted) the instant a Harvester stops mining, so it starts fresh next time.
+    harvesterBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
+
     // Enemy AI state — read/written by the helper functions in src/common/AIPlayers.ts, which take
     // this scene as their first argument rather than owning the state themselves. enemyBaseId is set
     // the moment spawnEntitiesFromMap finds the enemy's Base on the map file's entities layer.
@@ -234,6 +273,7 @@ export default class MapScene extends Scene {
         this.ammoG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
         this.dragSelectG = this.add.graphics()
+        this.harvesterBeamG = this.add.graphics()
 
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
@@ -310,10 +350,13 @@ export default class MapScene extends Scene {
 
         const shipSize = Math.ceil(NATO_ICON_SIZE)
 
-        Object.values(ShipType).forEach(type => {
+        // REAL_SPRITE_SHIP_TYPES render from their own real sprite (see Assets.ts, each loaded under its
+        // own ShipType key) instead of a milsymbol canvas — skip baking the ship_friend_/ship_hostile_
+        // pair any of them would otherwise never use (see createShipSprite).
+        Object.values(ShipType).filter(type => !REAL_SPRITE_SHIP_TYPES.has(type)).forEach(type => {
             const fn = SHIP_SIDC_FUNCTION[type]
             this.textures.addCanvas('ship_friend_'+type, renderAppSixIcon(buildSidc(Faction.Player, fn), shipSize, GREEN_HEX))
-            this.textures.addCanvas('ship_hostile_'+type, renderAppSixIcon(buildSidc(Faction.Enemy, fn), shipSize, GREY_DIM_HEX))
+            this.textures.addCanvas('ship_hostile_'+type, renderAppSixIcon(buildSidc(Faction.Enemy, fn), shipSize, RED_HEX))
         })
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
@@ -322,14 +365,18 @@ export default class MapScene extends Scene {
     }
 
     update = (time:number, delta:number) => {
+        // Resolved before movement so moveShips can already orbit a Harvester that's mining this same
+        // frame, off positions from the end of the previous frame — see harvesterMiningTarget's own comment.
+        this.updateHarvesterMiningTargets()
         this.moveShips(time, delta)
         this.updateMlrs(time)
         this.updateArmor(time)
-        this.updateHarvesters(time, delta)
+        this.updateHarvesters(delta)
         this.updateObjectives(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         this.updateFogOfWar()
+        this.updateShipLabels()
         this.drawPlacementRanges()
         this.drawObjectiveRanges(time)
 
@@ -338,6 +385,7 @@ export default class MapScene extends Scene {
         this.drawAmmoGauges()
         this.drawOrders()
         this.drawCombat(time)
+        this.drawHarvesterBeams(time)
         this.drawShatters(time)
         this.drawMissileTrails(time)
 
@@ -560,28 +608,29 @@ export default class MapScene extends Scene {
         for(let i=0; i<RESOURCE_GAS_CLOUD_COUNT; i++) placeNode(ResourceNodeType.GasCloud)
     }
 
-    // An Asteroid's sprite shrinks as its metal depletes (see updateHarvesters) — clamped so it stays a
-    // visible chunk right up until the moment it's actually removed, rather than fading down to an
-    // imperceptible speck first.
-    asteroidScale = (node:ResourceNodeData) => {
-        if(!node.maxMetal) return 1
-        const ratio = PhaserMath.Clamp((node.metal ?? 0) / node.maxMetal, 0, 1)
-        return 0.4 + ratio*0.6
-    }
-
     createResourceNodeSprite = (node:ResourceNodeData) => {
         // Both node kinds pick one frame at random out of their own block in the 'tiles' spritesheet
-        // (AsteroidSpriteIndexes/CloudIndexes) instead of a single procedurally-drawn shape — chosen
-        // once here, at creation, so it stays the same frame for that node's whole lifetime.
-        const frames = node.kind === ResourceNodeType.Asteroid ? AsteroidSpriteIndexes : CloudIndexes
+        // instead of a single procedurally-drawn shape — a GasCloud (CloudIndexes) picks once here, at
+        // creation, and keeps that frame for its whole lifetime; an Asteroid's frame comes from whichever
+        // size tier its starting metal falls into (see ASTEROID_TIER_FRAMES/asteroidTier), re-picked
+        // whenever it drops into the next tier down (see updateResourceNodeSprite) rather than shrinking
+        // continuously. The tier itself is tracked on the sprite's own data so that re-pick only fires on
+        // an actual tier change, not every update.
+        const frames = node.kind === ResourceNodeType.Asteroid ? ASTEROID_TIER_FRAMES[asteroidTier(node)] : CloudIndexes
         const sprite = this.add.image(node.x, node.y, 'tiles', frames[Math.floor(Math.random()*frames.length)]).setDepth(1)
-        if(node.kind === ResourceNodeType.Asteroid) sprite.setScale(this.asteroidScale(node))
+        if(node.kind === ResourceNodeType.Asteroid) sprite.setData('asteroidTier', asteroidTier(node))
         this.resourceNodeSprites.set(node.id, sprite)
     }
 
     updateResourceNodeSprite = (node:ResourceNodeData) => {
         if(node.kind !== ResourceNodeType.Asteroid) return
-        this.resourceNodeSprites.get(node.id)?.setScale(this.asteroidScale(node))
+        const sprite = this.resourceNodeSprites.get(node.id)
+        if(!sprite) return
+        const tier = asteroidTier(node)
+        if(sprite.getData('asteroidTier') === tier) return
+        sprite.setData('asteroidTier', tier)
+        const frames = ASTEROID_TIER_FRAMES[tier]
+        sprite.setFrame(frames[Math.floor(Math.random()*frames.length)])
     }
 
     destroyResourceNodeSprite = (id:string) => {
@@ -592,7 +641,7 @@ export default class MapScene extends Scene {
     // Neutral is a dim green, deliberately not GREY_DIM_HEX — that colour reads as "hostile" everywhere
     // else in this game (ship_hostile_*, ...), and an unclaimed Objective shouldn't look like it's
     // already the enemy's.
-    getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? GREY_DIM_HEX : GREEN_DIM_HEX
+    getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? RED_HEX : GREEN_DIM_HEX
 
     createObjectiveSprite = (spawn:ObjectiveSpawn) => {
         const { x, y } = this.toWorld(spawn.x, spawn.y)
@@ -606,16 +655,18 @@ export default class MapScene extends Scene {
         this.objectiveLabels.set(spawn.id, label)
     }
 
-    // Every frame: for each Objective, does either faction currently have ARMOR within
-    // OBJECTIVE_CAPTURE_RADIUS_PX of it, AND does the *other* faction have no ship also within that
-    // same radius? That faction is "contesting" it — checked for both, so contest can be held by either
-    // side. The instant contest starts (or switches sides), capturingFaction/captureStartedAtMs are
-    // (re)set to track that hold; the instant it breaks (no one contesting, or ARMOR simply
-    // leaving/dying resolves the same way — hasArmor just goes false), they reset to null, discarding
-    // whatever progress had built up. Only once a single faction has held it uncontested for a full
-    // OBJECTIVE_CAPTURE_TIME_MS does owner actually flip — see ObjectiveData for the full model. Also
-    // checks the win condition every pass: one faction holding every Objective on the map at once ends
-    // the match immediately (handleAllObjectivesCaptured).
+    // Every frame: for each Objective, does either faction currently have ARMOR actually latched onto it
+    // (ShipData's latchedObjectiveId, acquired/released by moveShips — not just "somewhere within
+    // OBJECTIVE_CAPTURE_RADIUS_PX", the meter doesn't so much as start ticking until at least one ARMOR
+    // has actually attached itself to the Objective), AND does the *other* faction have no ship (any
+    // kind, not just ARMOR) also within that same radius? That faction is "contesting" it — checked for
+    // both, so contest can be held by either side. The instant contest starts (or switches sides),
+    // capturingFaction/captureStartedAtMs are (re)set to track that hold; the instant it breaks (no one
+    // contesting, or the last latched ARMOR simply leaving/dying resolves the same way — hasLatchedArmor
+    // just goes false), they reset to null, discarding whatever progress had built up. Only once a single
+    // faction has held it uncontested for a full OBJECTIVE_CAPTURE_TIME_MS does owner actually flip — see
+    // ObjectiveData for the full model. Also checks the win condition every pass: one faction holding
+    // every Objective on the map at once ends the match immediately (handleAllObjectivesCaptured).
     updateObjectives = (time:number) => {
         const { objectives, ships, setObjectives } = useAppStore.getState()
         if(objectives.length === 0) return
@@ -627,9 +678,9 @@ export default class MapScene extends Scene {
             const { x, y } = this.toWorld(spawn.x, spawn.y)
 
             const contestingFaction = [Faction.Player, Faction.Enemy].find(faction => {
-                const hasArmor = ships.some(s => s.faction === faction && s.type === ShipType.ARMOR
-                    && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
-                if(!hasArmor) return false
+                const hasLatchedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ARMOR
+                    && s.latchedObjectiveId === objective.id)
+                if(!hasLatchedArmor) return false
 
                 const enemyShipPresent = ships.some(s => s.faction !== faction
                     && Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
@@ -728,7 +779,16 @@ export default class MapScene extends Scene {
         ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
             const visible = this.isWithinFactionSightRange(s.x, s.y, Faction.Player)
             this.shipSprites.get(s.id)?.setVisible(visible)
-            this.shipLabels.get(s.id)?.setVisible(visible)
+        })
+    }
+
+    // A ship's label only shows while it's actually selected — never on by default, and (for an enemy
+    // ship) never while fog of war is hiding its sprite either, even if it was selected before it slipped
+    // out of sight. Run after updateFogOfWar each frame so that sprite visibility is already current.
+    updateShipLabels = () => {
+        const { selectedShipIds } = useAppStore.getState()
+        this.shipLabels.forEach((label, id) => {
+            label.setVisible(selectedShipIds.includes(id) && !!this.shipSprites.get(id)?.visible)
         })
     }
 
@@ -741,25 +801,33 @@ export default class MapScene extends Scene {
 
     createShipSprite = (ship:ShipData) => {
         const isFriend = ship.faction === Faction.Player
-        const textureKey = (isFriend ? 'ship_friend_' : 'ship_hostile_') + ship.type
-        const sprite = this.physics.add.sprite(ship.x, ship.y, textureKey)
+        // Harvester, KK and ARMOR use their own real sprites instead of a milsymbol canvas (see
+        // generateTextures) — one shared texture per type across both factions, tinted the same
+        // green/red every other ship's milsymbol canvas is baked in, so it still reads as friend-or-foe
+        // at a glance.
+        const sprite = REAL_SPRITE_SHIP_TYPES.has(ship.type)
+            ? this.physics.add.sprite(ship.x, ship.y, ship.type).setTint(isFriend ? GREEN_HEX : RED_HEX)
+            : this.physics.add.sprite(ship.x, ship.y, (isFriend ? 'ship_friend_' : 'ship_hostile_') + ship.type)
         this.centerCircleBody(sprite)
         sprite.setData('kind', 'ship' as BodyKind)
         sprite.setData('id', ship.id)
         this.shipsGroup.add(sprite)
         this.shipSprites.set(ship.id, sprite)
 
-        const label = this.add.text(ship.x, ship.y-SHIP_LABEL_OFFSET_PX, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4)
+        // Starts hidden regardless of faction — labels only ever show for a currently-selected ship (see
+        // updateShipLabels), and nothing is selected the instant a ship spawns.
+        const label = this.add.text(ship.x, ship.y-this.shipLabelOffsetPx(sprite), ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
         this.shipLabels.set(ship.id, label)
 
-        // Fog of war: an enemy ship starts hidden regardless — updateFogOfWar (run every frame) is what
-        // actually decides visibility from here, based on the player's sight range. Starting hidden
-        // just avoids a one-frame flash of visibility before that first check runs.
-        if(!isFriend){
-            sprite.setVisible(false)
-            label.setVisible(false)
-        }
+        // Fog of war: an enemy ship's sprite starts hidden regardless — updateFogOfWar (run every frame)
+        // is what actually decides visibility from here, based on the player's sight range. Starting
+        // hidden just avoids a one-frame flash of visibility before that first check runs.
+        if(!isFriend) sprite.setVisible(false)
     }
+
+    // 10px clear of the sprite's own top edge, assuming it's north-oriented — half its (unrotated)
+    // display height, plus the fixed gap. See SHIP_LABEL_GAP_PX.
+    shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
 
     destroyShipSprite = (id:string) => {
         this.shipSprites.get(id)?.destroy()
@@ -796,14 +864,19 @@ export default class MapScene extends Scene {
     // spawn time, see spawnShip, independently editable afterwards either through that Base
     // (addShipWaypoints, which also pushes the update onto every ship already spawned from it since the
     // Base's own route is just another entry in the same ships array) or by drag-selecting the ship
-    // directly). Once a ship has worked through every waypoint it loiters in a slow orbit around the
-    // last one; a ship whose orders were cleared instead orbits wherever it was when that happened. The
-    // actual stepping — and the collision detection that comes from it — is Arcade Physics' job now
-    // (physics.moveTo sets velocity towards the target, the physics step integrates position); this
-    // just decides *where* that target is and detects arrival to advance the route. A Base's own
-    // speed:0 means physics.moveTo never actually moves it regardless of what target this computes.
+    // directly). Once a ship has worked through every waypoint it just sits at the last one — except: a
+    // Harvester actively mining an Asteroid (harvesterMiningTarget, resolved for this frame by
+    // updateHarvesterMiningTargets before this runs), which orbits it at HARVESTER_ORBIT_RADIUS_PX
+    // instead; and an ARMOR that's come within OBJECTIVE_CAPTURE_RADIUS_PX of an Objective it doesn't
+    // already own, which latches onto (moves straight to and sits on) that Objective's exact position
+    // instead — see ShipData's latchedObjectiveId for how the latch itself is acquired/released. Both
+    // override waypoint-following entirely for as long as they hold. The actual stepping — and the
+    // collision detection that comes from it — is Arcade Physics' job now (physics.moveTo sets velocity
+    // towards the target, the physics step integrates position); this just decides *where* that target is
+    // and detects arrival to advance the route. A Base's own speed:0 means physics.moveTo never actually
+    // moves it regardless of what target this computes.
     moveShips = (time:number, deltaMs:number) => {
-        const { ships, setShips } = useAppStore.getState()
+        const { ships, setShips, resourceNodes, objectives } = useAppStore.getState()
         // ATDs that reach the end of their route detonate — but not mid-map (that would clobber this
         // very setShips call below with a store snapshot that still has them in it), so they're
         // collected here and only actually detonated once this pass's positions have been committed.
@@ -821,26 +894,79 @@ export default class MapScene extends Scene {
             const speed = ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
-            let target:{x:number,y:number}
-            let orbitAnchor = ship.orbitAnchor
-            let arrivedAtRouteEnd = false
-            if(waypoints.length === 0){
-                orbitAnchor = orbitAnchor || { x:sprite.x, y:sprite.y }
-                const angle = time*ORBIT_ANGULAR_SPEED + shipOrbitPhase(ship.id)
-                target = { x: orbitAnchor.x+Math.cos(angle)*ORBIT_RADIUS_PX, y: orbitAnchor.y+Math.sin(angle)*ORBIT_RADIUS_PX }
-            }
-            else if(pathIndex < waypoints.length){
-                target = this.toWorld(waypoints[pathIndex].x, waypoints[pathIndex].y)
-            }
-            else {
-                const last = this.toWorld(waypoints[waypoints.length-1].x, waypoints[waypoints.length-1].y)
-                const angle = time*ORBIT_ANGULAR_SPEED + shipOrbitPhase(ship.id)
-                target = { x: last.x+Math.cos(angle)*ORBIT_RADIUS_PX, y: last.y+Math.sin(angle)*ORBIT_RADIUS_PX }
+            // No more waypoints left (either never had any, or ran its route out) — just sit right where
+            // it already is, unless it's a Harvester actively mining or an ARMOR latched onto an
+            // Objective (see below), either of which overrides this entirely regardless of idle/waypoint
+            // state.
+            const idle = pathIndex >= waypoints.length
+            const miningNodeId = this.harvesterMiningTarget.get(ship.id)
+            const miningNode = miningNodeId ? resourceNodes.find(n => n.id === miningNodeId) : undefined
+
+            // ARMOR-only: resolve this frame's Objective latch. Already latched onto one releases the
+            // instant it's actually captured by this ship's own faction (or the Objective's simply gone —
+            // shouldn't happen, but cheap to guard); not yet latched onto anything picks up the first
+            // still-unowned-by-us Objective found within capture radius of its current position. A latch
+            // acquired here persists (via the returned ship's own latchedObjectiveId) until one of those
+            // release conditions hits or an explicit new order clears it (see store's
+            // addShipWaypoints/removeShipWaypoints/clearShipWaypoints) — it is NOT re-evaluated by
+            // distance alone every frame the way mining is, so a player's new order reliably breaks it
+            // even while the ARMOR is still standing right on top of the Objective.
+            let latchedObjectiveId = ship.latchedObjectiveId
+            let latchedObjectiveWorld:{x:number,y:number} | undefined
+            if(ship.type === ShipType.ARMOR){
+                if(latchedObjectiveId){
+                    const held = objectives.find(o => o.id === latchedObjectiveId)
+                    if(!held || held.owner === ship.faction) latchedObjectiveId = undefined
+                }
+                if(!latchedObjectiveId){
+                    const spawn = this.mapData.objectives.find(sp => {
+                        const candidate = objectives.find(o => o.id === sp.id)
+                        if(!candidate || candidate.owner === ship.faction) return false
+                        const { x, y } = this.toWorld(sp.x, sp.y)
+                        return Phaser.Math.Distance.Between(sprite.x, sprite.y, x, y) <= OBJECTIVE_CAPTURE_RADIUS_PX
+                    })
+                    if(spawn) latchedObjectiveId = spawn.id
+                }
+                if(latchedObjectiveId){
+                    // Sticks to a fixed point on the outside edge of the Objective's own icon rather than
+                    // sitting on its center — stableAngularPhase spreads multiple ARMOR latched onto the
+                    // same Objective around that edge instead of stacking on the same spot. Fixed, not
+                    // orbiting (no time term) — once parked, it just stays put.
+                    const spawn = this.mapData.objectives.find(sp => sp.id === latchedObjectiveId)
+                    if(spawn){
+                        const { x, y } = this.toWorld(spawn.x, spawn.y)
+                        const angle = stableAngularPhase(ship.id)
+                        latchedObjectiveWorld = { x: x+Math.cos(angle)*OBJECTIVE_ICON_SIZE/2, y: y+Math.sin(angle)*OBJECTIVE_ICON_SIZE/2 }
+                    }
+                }
             }
 
+            let target:{x:number,y:number}
+            if(latchedObjectiveWorld){
+                target = latchedObjectiveWorld
+            }
+            else if(miningNode){
+                const angle = time*HARVESTER_ORBIT_ANGULAR_SPEED + stableAngularPhase(ship.id)
+                target = { x: miningNode.x+Math.cos(angle)*HARVESTER_ORBIT_RADIUS_PX, y: miningNode.y+Math.sin(angle)*HARVESTER_ORBIT_RADIUS_PX }
+            }
+            else {
+                target = idle ? { x:sprite.x, y:sprite.y } : this.toWorld(waypoints[pathIndex].x, waypoints[pathIndex].y)
+            }
+
+            // Captured before any movement below changes sprite.x/y, so it's always a real (non-degenerate)
+            // direction even on the exact frame a snap-to-target lands sprite.x/y directly onto target —
+            // including every frame of a mining orbit, which snaps onto a freshly-computed point on the
+            // circle every time (see the dist<=step branch) rather than ever actually using velocity.
+            const prevX = sprite.x, prevY = sprite.y
+
             const dist = Phaser.Math.Distance.Between(sprite.x, sprite.y, target.x, target.y)
-            const nextPathIndex = waypoints.length > 0 && pathIndex < waypoints.length ? pathIndex+1 : pathIndex
-            if(nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length) arrivedAtRouteEnd = true
+            // Gated on !miningNode/!latchedObjectiveWorld — while orbiting or latched, "dist<=step"
+            // reflects distance to that override target, not the actual next waypoint, so it must never
+            // be read as "arrived" there or a ship with waypoints still queued beyond its Asteroid/
+            // Objective would silently burn through its whole remaining route without ever actually
+            // visiting any of it.
+            const nextPathIndex = (!miningNode && !latchedObjectiveWorld && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
+            const arrivedAtRouteEnd = nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length
 
             if(dist <= step){
                 sprite.setPosition(target.x, target.y)
@@ -850,13 +976,29 @@ export default class MapScene extends Scene {
                 this.physics.moveTo(sprite, target.x, target.y, speed)
             }
 
-            this.shipLabels.get(ship.id)?.setPosition(sprite.x, sprite.y-SHIP_LABEL_OFFSET_PX)
+            // Every ship's art faces "up" (toward -Y) at rotation 0 — ease it toward whatever heading
+            // it's actually moving along (a Harvester's mining orbit or an ARMOR's Objective approach
+            // included), or its default north-facing rotation once it's got nowhere left to go and
+            // nothing to mine/capture. Always eased via RotateTo rather than snapped straight to the
+            // desired angle, so a sudden heading change — the waypoint it's tracking advancing, a mining
+            // target or latch acquired/lost — turns smoothly over the next several frames instead of
+            // jumping there in one. Base is the one exception — speed:0 means it never actually moves
+            // regardless of target anyway, but it should never even ease toward facing one; it just stays
+            // put at its spawn rotation permanently.
+            if(ship.type !== ShipType.Base){
+                const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !idle
+                const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
+                const turnRatePerMs = hasDirectionalTarget ? MOVE_TURN_RATE_PER_MS : IDLE_TURN_RATE_PER_MS
+                sprite.setRotation(Phaser.Math.Angle.RotateTo(sprite.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
+            }
+
+            this.shipLabels.get(ship.id)?.setPosition(sprite.x, sprite.y-this.shipLabelOffsetPx(sprite))
 
             // ATD is a one-shot guided munition: reaching the end of its (single-waypoint) route
             // detonates it right here, same as a contact hit does in onDroneShipContact.
             if(ship.type === ShipType.ATD && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
 
-            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, orbitAnchor }
+            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId }
         })
 
         setShips(updated)
@@ -1047,40 +1189,48 @@ export default class MapScene extends Scene {
         setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget, time))
     }
 
-    // Each Harvester draws HARVESTER_COLLECTION_RATE_PER_S metal/second from whichever Asteroid is
-    // nearest within HARVESTER_RANGE_PX of it (a plain distance loop, not a physics query — there are
-    // few enough resource nodes that this is cheap, and they have no physics body to query against
-    // anyway). GasClouds aren't drawn from at all here — a GasCloud's whole effect is passive, read
-    // straight off proximity by Utils' getLogisticsStatus, nothing to do per-frame for it. Multiple
-    // Harvesters draining the same Asteroid within one frame all see each other's draw-down (via
-    // `drawdown`, a running total per node this pass) rather than each reading the same stale value, so
-    // they can't collectively over-draw it below 0.
-    updateHarvesters = (time:number, deltaMs:number) => {
-        const { ships, resourceNodes, addMetal, setResourceNodes } = useAppStore.getState()
-        const harvesters = ships.filter(s => s.type === ShipType.Harvester)
-        if(harvesters.length === 0 || resourceNodes.length === 0) return
-
-        const drawdown = new Map<string, number>() // asteroid id -> metal drawn this frame so far
-        const metalGained = new Map<Faction, number>()
-
-        harvesters.forEach(harvester => {
+    // Which Asteroid (if any) each Harvester counts as "mining" this frame — the one thing moveShips
+    // (orbit target), updateHarvesters (the actual gather economy) and drawHarvesterBeams (the beam
+    // line) all agree on, computed once here from last frame's positions rather than each of the three
+    // running its own nearest-node search and risking a different answer. A node already fully depleted
+    // doesn't count, but this doesn't account for multiple Harvesters possibly converging on the same
+    // node beyond what's actually left in it — that fairness (nobody over-draws below 0) is handled by
+    // updateHarvesters' own running drawdown at the point metal is actually consumed.
+    updateHarvesterMiningTargets = () => {
+        const { ships, resourceNodes } = useAppStore.getState()
+        this.harvesterMiningTarget.clear()
+        ships.filter(s => s.type === ShipType.Harvester).forEach(harvester => {
             const sprite = this.shipSprites.get(harvester.id)
             if(!sprite) return
 
             let nearest:ResourceNodeData = null
             let nearestDist = Infinity
             resourceNodes.forEach(node => {
-                if(node.kind !== ResourceNodeType.Asteroid) return
-                const remaining = (node.metal ?? 0) - (drawdown.get(node.id) || 0)
-                if(remaining <= 0) return
+                if(node.kind !== ResourceNodeType.Asteroid || (node.metal ?? 0) <= 0) return
                 const d = Phaser.Math.Distance.Between(sprite.x, sprite.y, node.x, node.y)
                 if(d <= HARVESTER_RANGE_PX && d < nearestDist){ nearestDist = d; nearest = node }
             })
-            if(!nearest) return
+            if(nearest) this.harvesterMiningTarget.set(harvester.id, nearest.id)
+        })
+    }
 
-            const remaining = (nearest.metal ?? 0) - (drawdown.get(nearest.id) || 0)
+    updateHarvesters = (deltaMs:number) => {
+        const { ships, resourceNodes, addMetal, setResourceNodes } = useAppStore.getState()
+        if(this.harvesterMiningTarget.size === 0) return
+
+        const drawdown = new Map<string, number>() // asteroid id -> metal drawn this frame so far
+        const metalGained = new Map<Faction, number>()
+
+        ships.filter(s => s.type === ShipType.Harvester).forEach(harvester => {
+            const nodeId = this.harvesterMiningTarget.get(harvester.id)
+            if(!nodeId) return
+            const node = resourceNodes.find(n => n.id === nodeId)
+            if(!node) return
+
+            const remaining = (node.metal ?? 0) - (drawdown.get(node.id) || 0)
+            if(remaining <= 0) return
             const gathered = Math.min(remaining, HARVESTER_COLLECTION_RATE_PER_S * (deltaMs/1000))
-            drawdown.set(nearest.id, (drawdown.get(nearest.id) || 0) + gathered)
+            drawdown.set(node.id, (drawdown.get(node.id) || 0) + gathered)
             metalGained.set(harvester.faction, (metalGained.get(harvester.faction) || 0) + gathered)
         })
 
@@ -1230,6 +1380,45 @@ export default class MapScene extends Scene {
             }
         })
     }
+
+    // A solid (fully opaque, unlike every other effect layer here) 2px yellow line from each mining
+    // Harvester straight to whatever Asteroid it's drawing from, flickering fully on/off at its own
+    // random interval (see randomFlickerIntervalMs) rather than fading like a tracer — a steadier,
+    // "still connected" read than the decaying dot-burst weapons fire uses.
+    drawHarvesterBeams = (time:number) => {
+        const g = this.harvesterBeamG
+        g.clear()
+
+        // Drop flicker state for anything that stopped mining since last frame, so it starts fresh (a
+        // freshly-rolled interval, beam visible) the next time it resumes rather than resuming
+        // mid-countdown or stuck off.
+        this.harvesterBeamState.forEach((_, id) => {
+            if(!this.harvesterMiningTarget.has(id)) this.harvesterBeamState.delete(id)
+        })
+
+        const { resourceNodes } = useAppStore.getState()
+        this.harvesterMiningTarget.forEach((nodeId, harvesterId) => {
+            const sprite = this.shipSprites.get(harvesterId)
+            const node = resourceNodes.find(n => n.id === nodeId)
+            if(!sprite || !node) return
+
+            let state = this.harvesterBeamState.get(harvesterId)
+            if(!state){
+                state = { on:true, nextToggleAt: time + this.randomFlickerIntervalMs() }
+                this.harvesterBeamState.set(harvesterId, state)
+            }
+            if(time >= state.nextToggleAt){
+                state.on = !state.on
+                state.nextToggleAt = time + this.randomFlickerIntervalMs()
+            }
+            if(!state.on) return
+
+            g.lineStyle(1, YELLOW_HEX)
+            g.lineBetween(sprite.x, sprite.y, node.x, node.y)
+        })
+    }
+
+    randomFlickerIntervalMs = () => HARVESTER_BEAM_FLICKER_MIN_MS + Math.random()*(HARVESTER_BEAM_FLICKER_MAX_MS-HARVESTER_BEAM_FLICKER_MIN_MS)
 
     // Wreckage marking where a ship was destroyed: a jagged scatter of debris fragments (shape kept
     // stable frame-to-frame by seeding the randomness off the dead ship's id), fading out over 10s.

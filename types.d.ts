@@ -82,6 +82,9 @@ interface ShipStats {
     sizeHex: number
     productionTimeMs: number
     logisticsCost: number
+    // Metal deducted from the building faction's stockpile the instant it's queued (see store's
+    // queueShip) — refused outright if that faction can't afford it, same up-front gate as logisticsCost.
+    metalCost: number
     // Missiles an MLRS can ever launch, total, over its whole lifetime — undefined for every other
     // ship (none of them fire missiles). See ShipData's ammoRemaining for the live count.
     ammo?:number
@@ -93,14 +96,21 @@ interface ShipData {
     type: import('./enum').ShipType
     x: number
     y: number
-    // A ship's own route, followed in order (see MapScene's moveShips) then orbited at the last point.
+    // A ship's own route, followed in order (see MapScene's moveShips) then sat idle at the last point.
     // For a Base (see enum.ts's ShipData[Base]), this instead doubles as the *default* route newly
     // produced ships copy at spawn time (see spawnShip) — editing a Base's own waypoints pushes that
     // update onto every ship already spawned from it too (see addShipWaypoints), same as editing any
     // other ship's waypoints directly.
     waypoints?: Array<{ x:number, y:number }>
     pathIndex?: number
-    orbitAnchor?: { x:number, y:number }
+    // ARMOR only — the Objective (ObjectiveData.id) it's currently latched onto, having come within
+    // OBJECTIVE_CAPTURE_RADIUS_PX of it (see MapScene's moveShips). Overrides its normal route entirely
+    // while set: it moves straight to that Objective's exact position and sits there instead of
+    // continuing on to its next waypoint. Cleared the instant that Objective is captured by its own
+    // faction, or the instant it's given any new order (see store's addShipWaypoints/
+    // removeShipWaypoints/clearShipWaypoints, all of which clear this same as they always have
+    // waypoints/pathIndex).
+    latchedObjectiveId?: string
     lastFiredAtMs?: number
     hp: number
     // Only present for a ship whose ShipStats sets `ammo` (MLRS) — set to that value when the ship's

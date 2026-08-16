@@ -1,4 +1,4 @@
-import { Maps, SoundEffects } from "../../enum"
+import { Maps, ShipType, SoundEffects } from "../../enum"
 
 export const FONT_DEFAULT = {
     fontFamily: 'Body', 
@@ -18,4 +18,8 @@ export const resources:Array<PhaserResource> = [
     { key: 'starfield', resource: require('./img/starfield.png'), type: 'image' },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
+    { key: ShipType.Harvester, resource: require('./img/ships/Harvester.png'), type: 'image' },
+    { key: ShipType.KK, resource: require('./img/ships/K.png'), type: 'image' },
+    { key: ShipType.ARMOR, resource: require('./img/ships/KE.png'), type: 'image' },
+    { key: ShipType.AWACS, resource: require('./img/ships/DRONE.png'), type: 'image' },
 ]

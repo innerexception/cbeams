@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, ShipType, Faction } from '../../enum';
-import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld } from './Constants';
+import { Modal, ShipType, ShipData, Faction } from '../../enum';
+import { MAX_WAYPOINTS, MAX_QUEUE, STARTING_METAL, gridToWorld } from './Constants';
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
 // the ship already is without ever sending it back to a waypoint it has already passed.
@@ -32,8 +32,8 @@ export interface AppState {
   // Every Asteroid/GasCloud currently on the map (see MapScene's spawnResourceNodes) — an Asteroid is
   // removed from this array outright once a Harvester drains its metal to 0 (see updateHarvesters).
   resourceNodes: Array<ResourceNodeData>;
-  // Each faction's banked metal, collected by its Harvesters (see MapScene's updateHarvesters) and
-  // never spent by anything yet — purely a scoreboard number for now.
+  // Each faction's banked metal — starts at STARTING_METAL, collected by its Harvesters (see MapScene's
+  // updateHarvesters), and spent up front the instant a ship is queued (see queueShip).
   metal: Record<Faction, number>;
   // The player's currently selected ship(s) — either a drag-selected group of combat ships (see
   // MapScene's drag-select box) taking move orders, or a single clicked Base opening its production
@@ -69,7 +69,7 @@ const initialState = {
   ships: [] as Array<ShipData>,
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,
-  metal: { [Faction.Player]: 0, [Faction.Enemy]: 0 } as Record<Faction, number>,
+  metal: { [Faction.Player]: STARTING_METAL, [Faction.Enemy]: STARTING_METAL } as Record<Faction, number>,
   selectedShipIds: [] as Array<string>,
 };
 
@@ -90,7 +90,9 @@ export const useAppStore = create<AppState>((set) => ({
       if(!shipIds.includes(s.id)) return s;
       const waypoints = s.waypoints || [];
       if(waypoints.length >= MAX_WAYPOINTS) return s;
-      return { ...s, waypoints: [...waypoints, { x, y }] };
+      // A new order overrides ARMOR's own Objective-latch the same way it overrides anything else it
+      // was doing — see ShipData's latchedObjectiveId.
+      return { ...s, waypoints: [...waypoints, { x, y }], latchedObjectiveId: undefined };
     }),
   })),
   // Clicking an existing waypoint marker for a selection removes it from every selected ship that
@@ -108,23 +110,31 @@ export const useAppStore = create<AppState>((set) => ({
       const p = s.pathIndex ?? 0;
       const minIndex = p > index ? p-1 : p;
       const pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(s.x, s.y, newWaypoints, minIndex);
-      return { ...s, waypoints: newWaypoints, pathIndex, orbitAnchor: undefined };
+      return { ...s, waypoints: newWaypoints, pathIndex, latchedObjectiveId: undefined };
     }),
   })),
-  // Selected ships drop their route and loiter in place (orbiting wherever they currently are) until
-  // new orders are given; orbitAnchor is cleared so movement re-anchors on their position now.
+  // Selected ships drop their route and just sit wherever they currently are until new orders are given.
   clearShipWaypoints: (shipIds) => set((state) => ({
-    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, orbitAnchor: undefined } : s)),
+    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, latchedObjectiveId: undefined } : s)),
   })),
-  queueShip: (baseId, type) => set((state) => ({
-    ships: state.ships.map((s) => {
-      if(s.id !== baseId) return s;
-      const queue = s.queue || [];
-      if(queue.length >= MAX_QUEUE) return s;
-      const item: ProductionQueueItem = { id: v4(), type, startedAt: queue.length === 0 ? Date.now() : null };
-      return { ...s, queue: [...queue, item] };
-    }),
-  })),
+  // Refuses outright — no queue change, no metal spent — if the queue's already full or the building
+  // faction (the Base's own, not necessarily the player: the enemy AI's own queueShip calls go through
+  // this exact same gate) can't afford metalCost. Paid up front the instant it's queued, not on
+  // completion, same as the queue slot itself is claimed immediately.
+  queueShip: (baseId, type) => set((state) => {
+    const base = state.ships.find((s) => s.id === baseId);
+    if(!base) return {};
+    const queue = base.queue || [];
+    if(queue.length >= MAX_QUEUE) return {};
+    const cost = ShipData[type].metalCost;
+    if((state.metal[base.faction] ?? 0) < cost) return {};
+
+    const item: ProductionQueueItem = { id: v4(), type, startedAt: queue.length === 0 ? Date.now() : null };
+    return {
+      ships: state.ships.map((s) => (s.id === baseId ? { ...s, queue: [...queue, item] } : s)),
+      metal: { ...state.metal, [base.faction]: state.metal[base.faction] - cost },
+    };
+  }),
   completeQueueItem: (baseId) => set((state) => ({
     ships: state.ships.map((s) => {
       if(s.id !== baseId) return s;
