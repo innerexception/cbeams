@@ -36,7 +36,7 @@ export default () => {
                 <ToolButton onClick={startNewGame}>New</ToolButton>
                 <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
             </div>
-            {!saveFile && <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
+            {!saveFile && <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
         </div>
     )
 }

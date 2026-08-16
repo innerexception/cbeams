@@ -15,6 +15,7 @@ export const iconSheet = require('./img/tiles.png')
 export const resources:Array<PhaserResource> = [
     { key: 'logo', resource: require('./logo.png'), type: 'image' },
     { key: 'tiles', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 32, frameHeight: 32 } },
+    { key: 'starfield', resource: require('./img/starfield.png'), type: 'image' },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
 ]

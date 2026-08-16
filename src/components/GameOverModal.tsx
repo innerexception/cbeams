@@ -9,7 +9,7 @@ import { colors } from '../styles/AppStyles';
 export default (props:{ won:boolean }) => {
     return (
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
-            <div style={{ color:colors.lGreen, fontFamily:'Body', fontSize:28, marginBottom:16, letterSpacing:2 }}>
+            <div style={{ color:colors.green, fontFamily:'Body', fontSize:28, marginBottom:16, letterSpacing:2 }}>
                 {props.won ? 'VICTORY' : 'DEFEAT'}
             </div>
             <ToolButton onClick={()=>onShowModal(Modal.NewGame)}>Quit</ToolButton>

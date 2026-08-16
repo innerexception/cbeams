@@ -6,9 +6,9 @@ import { colors } from '../styles/AppStyles'
 export const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProperties => ({
     padding: '8px 14px',
     marginRight: '8px',
-    background: active ? colors.lGreen : 'black',
-    color: active ? '#000' : colors.lGreen,
-    border: '2px solid '+colors.lGreen,
+    background: active ? colors.green : 'black',
+    color: active ? '#000' : colors.green,
+    border: '2px solid '+colors.green,
     cursor: disabled ? 'default' : 'pointer',
     opacity: disabled ? 0.4 : 1,
     fontFamily: 'Body',

@@ -90,6 +90,30 @@ const subtractCircularRange = (intervals:Array<[number,number]>, rawStart:number
     return subtractArc(subtractArc(intervals, start, TWO_PI), 0, end)
 }
 
+// The union counterpart to subtractArc — used by drawPlacementRanges to build up an enemy circle's
+// revealed arcs (unrevealed by default) as the union of wherever it overlaps a player sight circle.
+// Doesn't bother re-merging touching/overlapping intervals across separate calls into one contiguous
+// span — a few adjacent stroked arcs draw identically to one, so it's not worth the extra bookkeeping.
+const addArc = (intervals:Array<[number,number]>, addStart:number, addEnd:number):Array<[number,number]> => {
+    let s = addStart, e = addEnd
+    const untouched:Array<[number,number]> = []
+    intervals.forEach(([is, ie]) => {
+        if(ie < s || is > e) untouched.push([is, ie])
+        else { s = Math.min(s, is); e = Math.max(e, ie) }
+    })
+    untouched.push([s, e])
+    return untouched
+}
+
+// Same as addArc but accepts a raw (possibly negative or >TWO_PI) angle range and handles wraparound.
+const addCircularRange = (intervals:Array<[number,number]>, rawStart:number, rawEnd:number):Array<[number,number]> => {
+    if(rawEnd - rawStart >= TWO_PI) return [[0, TWO_PI]]
+    const start = normalizeAngle(rawStart)
+    const end = normalizeAngle(rawEnd)
+    if(start <= end) return addArc(intervals, start, end)
+    return addArc(addArc(intervals, start, TWO_PI), 0, end)
+}
+
 // The two tile indices (local to the tileset's own firstgid — see spawnEntitiesFromMap) that mark each
 // faction's Base on the map file's entities layer. There are no buildings in this game anymore — every
 // other tile that layer might still contain is simply ignored, there's nothing left to spawn for it.
@@ -126,8 +150,13 @@ export default class MapScene extends Scene {
     trailG: GameObjects.Graphics
     ammoG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
-    // Shift+left-drag rectangle for selecting a group of the player's own ships (see
-    // enableSelectionControls' pointerdown/enableCameraControls' pointermove) — plain left-drag is still
+    // Repeating starfield backdrop, sized to cover the camera's full scroll bounds (see centerCameraBounds)
+    // — a plain Image would stretch/tile awkwardly at that size, a TileSprite repeats the source texture
+    // at its native resolution instead. Sits behind everything else (see create's setDepth) purely for
+    // atmosphere; it isn't part of game state.
+    starfield: GameObjects.TileSprite
+    // Plain left-drag rectangle for selecting a group of the player's own ships (see
+    // enableSelectionControls' pointerdown/enableCameraControls' pointermove) — shift+left-drag is
     // reserved for panning.
     dragSelectG: GameObjects.Graphics
 
@@ -152,7 +181,7 @@ export default class MapScene extends Scene {
 
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
-    // Shift-drag box-select state (world coordinates) — set on pointerdown while Shift is held, updated
+    // Box-select drag state (world coordinates) — set on pointerdown while Shift is not held, updated
     // on every pointermove, resolved into a selectedShipIds set on pointerup. null whenever no drag is
     // in progress, which is also what tells enableCameraControls' pointermove to skip the normal pan.
     shiftDown: boolean = false
@@ -229,6 +258,11 @@ export default class MapScene extends Scene {
         this.cameras.main.setZoom(1)
         this.centerCameraBounds()
 
+        // Sized/positioned to the camera's own bounds rect (set just above) so the tiling covers
+        // everywhere the player can ever scroll to, not just the map itself.
+        const bounds = this.cameras.main.getBounds()
+        this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-1000).setScrollFactor(0.5)
+
         this.spawnEntitiesFromMap()
         // Resource nodes scatter after entities so they can avoid overlapping a faction's Base.
         this.spawnResourceNodes()
@@ -257,9 +291,6 @@ export default class MapScene extends Scene {
         useAppStore.getState().setLoaded(true)
     }
 
-    // Every ship renders a real APP-6 unit symbol, generated at runtime by milsymbol from a SIDC built
-    // out of SHIP_SIDC_FUNCTION (see src/common/AppSix.ts) — baked into a texture once, up front, via
-    // addCanvas since milsymbol hands back a ready-made canvas.
     generateTextures = () => {
         const tmp = this.add.graphics()
         const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
@@ -312,11 +343,6 @@ export default class MapScene extends Scene {
             }
         })
 
-        // Resource nodes aren't military units/buildings either — plain hand-drawn shapes, same as
-        // Objectives, but neither depends on tinting so each just bakes its own color directly. An
-        // Asteroid is baked at a fixed "full" size (see createResourceNodeSprite/asteroidScale for how
-        // its sprite is actually scaled down as it depletes) — an irregular rock outline, deterministic
-        // per-vertex jitter off a fixed seed so it looks the same every time this bakes, not a circle.
         const asteroidSize = CELL_SIZE
         bake('resource_asteroid', asteroidSize, (g, cx, cy) => {
             const rand = seededRandom('resource_asteroid_shape')
@@ -471,7 +497,7 @@ export default class MapScene extends Scene {
 
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
+        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.green }).setOrigin(0.5).setDepth(5)
         this.tweens.add({
             targets: label,
             y: y-20,
@@ -626,7 +652,7 @@ export default class MapScene extends Scene {
         sprite.setTint(this.getObjectiveOwnerColor(null))
         this.objectiveSprites.set(spawn.id, sprite)
 
-        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.lGreen }).setOrigin(0.5, 0).setDepth(2)
+        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
         this.objectiveLabels.set(spawn.id, label)
     }
 
@@ -773,7 +799,7 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(sprite)
         this.shipSprites.set(ship.id, sprite)
 
-        const label = this.add.text(ship.x, ship.y-SHIP_LABEL_OFFSET_PX, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.lGreen }).setOrigin(0.5).setDepth(4)
+        const label = this.add.text(ship.x, ship.y-SHIP_LABEL_OFFSET_PX, ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4)
         this.shipLabels.set(ship.id, label)
 
         // Fog of war: an enemy ship starts hidden regardless — updateFogOfWar (run every frame) is what
@@ -1386,7 +1412,7 @@ export default class MapScene extends Scene {
             g.fillCircle(x, y, 5)
             g.lineStyle(1, GREEN_HEX, 1)
             g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.lGreen }).setOrigin(0.5).setDepth(5)
+            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5).setDepth(5)
             this.orderLabels.push(label)
         })
     }
@@ -1394,8 +1420,10 @@ export default class MapScene extends Scene {
     // Every ship's own sight-radius circle — units move, so this runs every frame from update() rather
     // than only whenever drawMap's static art changes. Same-faction circles merge into one seamless
     // shape (each one's boundary is trimmed wherever a same-faction circle covers it, so there's no
-    // interior line through the overlap). Opposing-faction circles are left as full, untrimmed circles
-    // instead — their overlap is communicated with a light fill over the lens-shaped intersection.
+    // interior line through the overlap). A non-player (enemy) circle starts fully hidden instead of
+    // full — the player has no business seeing the full extent of an enemy's sight radius, only the arcs
+    // of it that actually fall within the player's own sight radius get revealed. The overlap itself is
+    // additionally communicated with a light fill over the lens-shaped intersection.
     drawPlacementRanges = () => {
         const g = this.rangeG
         g.clear()
@@ -1404,7 +1432,24 @@ export default class MapScene extends Scene {
 
         g.lineStyle(1, GREEN_HEX, 0.25)
         circles.forEach((circle, i) => {
-            let visible:Array<[number,number]> = [[0, TWO_PI]]
+            let visible:Array<[number,number]> = circle.faction === Faction.Player ? [[0, TWO_PI]] : []
+
+            // Reveal only the arcs of an enemy circle that overlap a player sight circle — everywhere
+            // else, the player has no way of knowing how far that enemy can actually see.
+            if(circle.faction !== Faction.Player) circles.forEach(player => {
+                if(player.faction !== Faction.Player) return
+                const dx = player.x - circle.x
+                const dy = player.y - circle.y
+                const d = Math.hypot(dx, dy)
+                if(d < 0.001 || d >= circle.r + player.r) return
+                if(d + circle.r <= player.r){ visible = [[0, TWO_PI]]; return } // whole enemy bubble sits inside player's own
+                if(d + player.r <= circle.r) return // player bubble fully inside this one — doesn't touch the boundary
+
+                const cosTheta = PhaserMath.Clamp((d*d + circle.r*circle.r - player.r*player.r) / (2*d*circle.r), -1, 1)
+                const theta = Math.acos(cosTheta)
+                const alpha = Math.atan2(dy, dx)
+                visible = addCircularRange(visible, alpha-theta, alpha+theta)
+            })
 
             circles.forEach((other, j) => {
                 if(i === j || other.faction !== circle.faction) return
@@ -1485,44 +1530,59 @@ export default class MapScene extends Scene {
     }
 
     enableSelectionControls = () => {
-        this.input.on('pointerdown', () => {
+        this.input.on('pointerdown', (pointer:Phaser.Input.Pointer) => {
             if(!this.hoveredCell) return
+            if(!pointer.leftButtonDown()) return
 
-            // Shift+left-drag starts a unit-selection box instead of any of the click handling below —
-            // resolved into selectedShipIds on pointerup (see enableCameraControls). Plain left-drag is
-            // still reserved for panning the camera.
-            if(this.shiftDown){
+            // Plain left-mousedown always starts a potential unit-selection box (resolved into either a
+            // click or a full box-select on pointerup, by drag distance — see enableCameraControls'
+            // pointerup/handleClick below). Shift+left-drag and right-drag are both reserved for panning
+            // the camera instead, handled entirely by pointermove/pointerup, so there's nothing to do
+            // here for either.
+            if(!this.shiftDown){
                 const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
                 this.dragSelectStart = { x:worldPoint.x, y:worldPoint.y }
                 this.dragSelectCurrent = this.dragSelectStart
-                return
             }
-
-            const { ships, selectedShipIds, setSelectedShipIds, addShipWaypoints, removeShipWaypoints } = useAppStore.getState()
-
-            // A selection (a drag-selected group of combat ships, or a single selected Base) takes
-            // orders the same way either way — every click adds one more waypoint onto each selected
-            // ship's own route. Clicking a cell that's already a waypoint for any of the selected ships
-            // removes it from every selected ship that has one there instead (removeShipWaypoints), same
-            // click-to-remove gesture, just applied across the whole selection at once.
-            if(selectedShipIds.length > 0){
-                const { x, y } = this.hoveredCell
-                if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-                const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
-                const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
-                if(clickedExisting) removeShipWaypoints(selectedShipIds, x, y)
-                else addShipWaypoints(selectedShipIds, x, y)
-                return
-            }
-
-            const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
-            const clicked = this.findOwnShipAt(worldPoint.x, worldPoint.y)
-            setSelectedShipIds(clicked ? [clicked.id] : [])
         })
 
         this.input.keyboard.on('keydown-ESC', () => {
             useAppStore.getState().setSelectedShipIds([])
         })
+    }
+
+    // A shift-less pointerdown/up with negligible movement (see enableCameraControls' pointerup, which
+    // decides click vs. box-select by drag distance) — click-to-select/order handling lives here rather
+    // than pointerdown itself so it only fires once we know the gesture wasn't actually a drag.
+    handleClick = (worldX:number, worldY:number) => {
+        if(!this.hoveredCell) return
+        const { ships, selectedShipIds, setSelectedShipIds, addShipWaypoints, removeShipWaypoints } = useAppStore.getState()
+
+        // Clicking directly on one of the player's own ships always (re)selects just that ship, even
+        // while a different group is already selected — takes priority over handing the existing
+        // selection a new waypoint.
+        const clicked = this.findOwnShipAt(worldX, worldY)
+        if(clicked){
+            setSelectedShipIds([clicked.id])
+            return
+        }
+
+        // A selection (a drag-selected group of combat ships, or a single selected Base) takes
+        // orders the same way either way — every click adds one more waypoint onto each selected
+        // ship's own route. Clicking a cell that's already a waypoint for any of the selected ships
+        // removes it from every selected ship that has one there instead (removeShipWaypoints), same
+        // click-to-remove gesture, just applied across the whole selection at once.
+        if(selectedShipIds.length > 0){
+            const { x, y } = this.hoveredCell
+            if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
+            const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
+            const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
+            if(clickedExisting) removeShipWaypoints(selectedShipIds, x, y)
+            else addShipWaypoints(selectedShipIds, x, y)
+            return
+        }
+
+        setSelectedShipIds([])
     }
 
     // Phaser's bounds-clamping pins the camera to the bounds' top-left corner whenever the world is
@@ -1543,7 +1603,7 @@ export default class MapScene extends Scene {
             const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
             this.hoveredCell = this.toGrid(worldPoint.x, worldPoint.y)
 
-            // A shift-drag box-select in progress (see enableSelectionControls' pointerdown) owns the
+            // A box-select drag in progress (see enableSelectionControls' pointerdown) owns the
             // drag entirely — no camera panning while it's live.
             if(this.dragSelectStart){
                 this.dragSelectCurrent = { x:worldPoint.x, y:worldPoint.y }
@@ -1551,12 +1611,16 @@ export default class MapScene extends Scene {
                 return
             }
 
-            if(this.input.activePointer.isDown){
+            // Panning fires for right-drag (either button) or shift+left-drag — dragSelectStart being
+            // null already rules out a plain (non-shift) left-drag, which owns the drag for box-select
+            // instead (see the early return above).
+            const pointer = this.input.activePointer
+            if(pointer.rightButtonDown() || pointer.leftButtonDown()){
                 if(this.origDragPoint){
-                    this.cameras.main.scrollX += (this.origDragPoint.x - this.input.activePointer.position.x) / this.cameras.main.zoom
-                    this.cameras.main.scrollY += (this.origDragPoint.y - this.input.activePointer.position.y) / this.cameras.main.zoom
+                    this.cameras.main.scrollX += (this.origDragPoint.x - pointer.position.x) / this.cameras.main.zoom
+                    this.cameras.main.scrollY += (this.origDragPoint.y - pointer.position.y) / this.cameras.main.zoom
                 }
-                this.origDragPoint = this.input.activePointer.position.clone()
+                this.origDragPoint = pointer.position.clone()
             }
             else {
                 this.origDragPoint = null
@@ -1570,6 +1634,17 @@ export default class MapScene extends Scene {
             this.dragSelectStart = null
             this.dragSelectCurrent = null
             this.dragSelectG.clear()
+
+            // Every shift-less mousedown starts a potential box-select (so the box can be drawn live as
+            // the pointer moves — see pointermove above), but most of them are actually just clicks. A
+            // pointer that barely moved from its down position is a click, not a drag — hand it to the
+            // same select/order logic a click has always used (see enableSelectionControls' handleClick)
+            // instead of resolving it as an (empty) box-select.
+            const pointer = this.input.activePointer
+            if(Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.upX, pointer.upY) < 6){
+                this.handleClick(start.x, start.y)
+                return
+            }
 
             const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x)
             const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y)
@@ -1587,7 +1662,7 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Draws the live shift-drag selection rectangle in world space (see dragSelectStart/Current).
+    // Draws the live box-select selection rectangle in world space (see dragSelectStart/Current).
     drawDragSelectBox = () => {
         const g = this.dragSelectG
         g.clear()
