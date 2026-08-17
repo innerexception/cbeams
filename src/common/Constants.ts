@@ -55,7 +55,7 @@ export const ATD_BLAST_RADIUS_PX = 10
 // while in flight, that steers towards its target's live position every frame. Its own cooldown and
 // range now live on its ShipStats entry in enum.ts, alongside every other ship's.
 export const MISSILE_SALVO_SIZE = 3
-export const MISSILE_SPEED_PX_S = 220
+export const MISSILE_SPEED_PX_S = 110
 export const MISSILE_MAX_LIFETIME_MS = 8000
 // Missiles within a salvo launch one at a time this far apart instead of all at once, so a salvo
 // actually reads as a salvo on screen rather than one stacked blob of missiles flying in perfect lockstep.
@@ -68,11 +68,14 @@ export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60
 export const CONTRAIL_LIFETIME_MS = 5000
 
-// --- ARMOR ground vehicle ---
-// On cooldown, fires a single instant shot (not a homing missile) at whichever hostile ship is nearest
-// in range. Its damage, cooldown and range all live on its ShipStats entry in enum.ts, alongside every
-// other ship's.
-export const TRACER_LIFETIME_MS = 220
+// --- PDF point-defense ship ---
+// On cooldown, fires a real, non-homing bullet (see MapScene's spawnBullet/updatePdf) in a straight line
+// at whichever single hostile missile is nearest in range — never a ship, PDF is purely anti-missile —
+// one target at a time, not a volley across everything in range. Its own damage/cooldown/range live on
+// its ShipStats entry in enum.ts, alongside every other ship's; only the bullet's own flight (speed, how
+// long an errant shot that hits nothing keeps flying before despawning) lives here.
+export const BULLET_SPEED_PX_S = 500
+export const BULLET_MAX_LIFETIME_MS = 1000
 
 // --- Ship destruction ---
 // A destroyed ship's own sprite splits into two pieces along a jagged cut (see MapScene's

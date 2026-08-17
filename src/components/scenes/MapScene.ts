@@ -9,7 +9,7 @@ import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteInd
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
     DOUBLE_CLICK_MS,
-    TRACER_LIFETIME_MS,
+    BULLET_SPEED_PX_S, BULLET_MAX_LIFETIME_MS,
     ATD_BLAST_RADIUS_PX,
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
@@ -66,7 +66,7 @@ const applyDamage = <T extends { id:string, hp:number }>(items:Array<T>, damageB
 
 const BASE_SPRITE_INDEX:Record<Faction, number> = { [Faction.Enemy]: 13, [Faction.Player]: 0 }
 
-type BodyKind = 'ship' | 'missile'
+type BodyKind = 'ship' | 'missile' | 'bullet'
 
 export default class MapScene extends Scene {
 
@@ -79,7 +79,6 @@ export default class MapScene extends Scene {
     healthG: GameObjects.Graphics
     harvesterMetalG: GameObjects.Graphics
     ordersG: GameObjects.Graphics
-    combatG: GameObjects.Graphics
     missileImpactG: GameObjects.Graphics
     trailG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
@@ -89,6 +88,10 @@ export default class MapScene extends Scene {
 
     shipsGroup: Physics.Arcade.Group
     missilesGroup: Physics.Arcade.Group
+    // PDF's own real, travel-time projectiles (see spawnBullet/updatePdf) — deliberately a separate
+    // group from missilesGroup: a bullet is a straight-line, non-homing shot with its own short
+    // lifetime, not an offensive missile's arced/retargeting flight.
+    bulletsGroup: Physics.Arcade.Group
     shipSprites: Map<string, Physics.Arcade.Sprite> = new Map()
     shipLabels: Map<string, GameObjects.Text> = new Map()
     ammoLabels: Map<string, GameObjects.Text> = new Map()
@@ -106,7 +109,6 @@ export default class MapScene extends Scene {
     // (same ship, within DOUBLE_CLICK_MS) apart from two unrelated single clicks.
     lastClickShipId: string | null = null
     lastClickAtMs: number = 0
-    tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
 
@@ -138,7 +140,6 @@ export default class MapScene extends Scene {
         this.healthG = this.add.graphics()
         this.harvesterMetalG = this.add.graphics()
         this.ordersG = this.add.graphics()
-        this.combatG = this.add.graphics()
         this.missileImpactG = this.add.graphics()
         this.trailG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
@@ -151,9 +152,11 @@ export default class MapScene extends Scene {
         this.generateTextures()
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
+        this.bulletsGroup = this.physics.add.group()
 
         this.physics.add.overlap(this.shipsGroup, this.shipsGroup, this.onDroneShipContact, this.isHostileDroneShipPair, this)
         this.physics.add.overlap(this.missilesGroup, this.shipsGroup, this.onMissileShipContact, this.isHostileMissileShipPair, this)
+        this.physics.add.overlap(this.bulletsGroup, this.missilesGroup, this.onBulletMissileContact, this.isHostileBulletMissilePair, this)
 
         this.mapData = useAppStore.getState().activeMap || { width:MAP_SIZE, height:MAP_SIZE, objectives:[], terrain:null }
         const tiledMap = this.make.tilemap({ key: Maps.Sandbox })
@@ -197,6 +200,15 @@ export default class MapScene extends Scene {
         }
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
+        // Bigger/brighter than missile_dot, with a soft glow ring — a bullet only lives up to
+        // BULLET_MAX_LIFETIME_MS and covers its whole (short) range in well under a second, so it needs
+        // to read clearly at a glance or PDF actually firing is easy to miss entirely.
+        bake('bullet_dot', 10, (g, cx, cy) => {
+            g.fillStyle(YELLOW_HEX, 0.35)
+            g.fillCircle(cx, cy, 5)
+            g.fillStyle(YELLOW_HEX, 1)
+            g.fillCircle(cx, cy, 2.5)
+        })
 
         // Every ship's own art is baked in the game's exact 4-color palette (black outline, green hull,
         // yellow highlight) — setTint can't recolor an enemy copy of that without breaking straight out
@@ -234,8 +246,9 @@ export default class MapScene extends Scene {
         this.updateHarvesterMiningTargets()
         this.moveShips(time, delta)
         this.updateMlrs(time)
-        this.updateArmor(time)
         this.updateDrn(time)
+        this.updatePdf(time)
+        this.updateBullets(time)
         this.updateHarvesters(delta)
         this.updateHarvesterSupport(time)
         this.updateObjectives(time)
@@ -251,7 +264,6 @@ export default class MapScene extends Scene {
         this.drawHarvesterMetalGauge()
         this.updateAmmoLabels()
         this.drawOrders()
-        this.drawCombat(time)
         this.drawHarvesterBeams(time)
         this.drawMissileImpacts(time)
         this.drawMissileTrails(time)
@@ -913,6 +925,28 @@ export default class MapScene extends Scene {
         setShips(this.applyShipDamage(ships, new Map([[ship.id, damage]])))
     }
 
+    // A PDF bullet is hostile to any missile of a different faction — same as an offensive missile is to
+    // any ship, no further filtering (a bullet doesn't care whose missile it is, only that it's enemy).
+    isHostileBulletMissilePair = (bulletObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, missileObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+        const bullet = bulletObj as Physics.Arcade.Sprite
+        const missile = missileObj as Physics.Arcade.Sprite
+        return bullet.getData('faction') !== missile.getData('faction')
+    }
+
+    // A bullet hitting a hostile missile destroys both outright — same as any other missile-ending
+    // contact, no hp/damage bookkeeping needed since a missile has no hp of its own.
+    onBulletMissileContact = (bulletObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, missileObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
+        const bullet = bulletObj as Physics.Arcade.Sprite
+        const missile = missileObj as Physics.Arcade.Sprite
+        if(!bullet.active || !missile.active) return
+
+        const time = this.time.now
+        const x = missile.x, y = missile.y, damage = missile.getData('damage')
+        bullet.destroy()
+        missile.destroy()
+        this.impactFlashes.push({ x, y, createdAt:time, damage })
+    }
+
     findNearestHostileShip = (fromFaction:Faction, x:number, y:number, range:number) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
         let targetShip:Physics.Arcade.Sprite = null
@@ -929,6 +963,29 @@ export default class MapScene extends Scene {
         })
 
         return targetShip
+    }
+
+    // Same shape as findNearestHostileShip, but for PDF's own targeting: the nearest hostile *missile*
+    // within range — never a ship, drones (KKZ/BOM) included, PDF is purely anti-missile point-defense.
+    // "One target at a time": this only ever returns a single nearest result, never a list, so a PDF
+    // ship's cooldown-gated shot (see updatePdf) always commits to just the one thing.
+    findNearestThreat = (fromFaction:Faction, x:number, y:number, range:number) => {
+        const hits = this.physics.overlapCirc(x, y, range, true, false)
+        let target:Physics.Arcade.Sprite = null
+        let nearestDist = Infinity
+
+        hits.forEach(body => {
+            const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
+            if(!obj.active) return
+            if(obj.getData('kind') !== 'missile') return
+            if(obj.getData('faction') === fromFaction) return
+
+            if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
+            const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
+            if(d < nearestDist){ nearestDist = d; target = obj }
+        })
+
+        return target
     }
 
     updateMlrs = (time:number) => {
@@ -967,30 +1024,55 @@ export default class MapScene extends Scene {
         }
     }
 
-    updateArmor = (time:number) => {
+    // Each PDF, on cooldown, fires one real bullet (see spawnBullet) at whichever single hostile missile
+    // is nearest in range — findNearestThreat only ever returns one, so this never splits fire across
+    // multiple targets in the same shot. No damage is applied here — a bullet only does anything once it
+    // actually travels there and connects (onBulletMissileContact).
+    updatePdf = (time:number) => {
         const { ships, setShips } = useAppStore.getState()
         const shooterIds = new Set<string>()
-        const damageByTarget = new Map<string, number>()
 
         ships.forEach(ship => {
-            if(ship.type !== ShipType.ZEL) return
-            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.ZEL].cooldownMs) return
+            if(ship.type !== ShipType.PDF) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.PDF].cooldownMs) return
 
             const sprite = this.shipSprites.get(ship.id)
             if(!sprite) return
 
-            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.ZEL].rangePx)
-            if(!targetShip) return
+            const target = this.findNearestThreat(ship.faction, sprite.x, sprite.y, ShipData[ShipType.PDF].rangePx)
+            if(!target) return
 
             shooterIds.add(ship.id)
-            this.tracers.push({ x1:sprite.x, y1:sprite.y, x2:targetShip.x, y2:targetShip.y, createdAt:time })
-            const targetId = targetShip.getData('id')
-            damageByTarget.set(targetId, (damageByTarget.get(targetId) || 0) + ShipData[ShipType.ZEL].damage)
+            this.spawnBullet(ship.faction, sprite.x, sprite.y, ShipData[ShipType.PDF].damage, target.x, target.y)
         })
 
         if(shooterIds.size === 0) return
 
-        setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget))
+        setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
+    }
+
+    // A real, non-homing projectile: launched once in a straight line at wherever the target was at the
+    // moment of firing (physics.moveTo sets a fixed velocity, it's never retargeted mid-flight the way an
+    // offensive missile is) — it either physically reaches and hits a hostile missile itself
+    // (onBulletMissileContact), or is despawned by updateBullets once it's been flying for
+    // BULLET_MAX_LIFETIME_MS with nothing to show for it.
+    spawnBullet = (faction:Faction, x:number, y:number, damage:number, aimX:number, aimY:number) => {
+        const bullet = this.physics.add.sprite(x, y, 'bullet_dot')
+        bullet.setData('kind', 'bullet' as BodyKind)
+        bullet.setData('faction', faction)
+        bullet.setData('damage', damage)
+        bullet.setData('createdAt', this.time.now)
+        this.bulletsGroup.add(bullet)
+        this.physics.moveTo(bullet, aimX, aimY, BULLET_SPEED_PX_S)
+    }
+
+    // Bullets render themselves (a real physics sprite in flight — no separate draw pass) — this only
+    // culls whichever ones have been flying for too long without hitting anything.
+    updateBullets = (time:number) => {
+        this.bulletsGroup.children.each((child:Physics.Arcade.Sprite) => {
+            if(child.active && time - child.getData('createdAt') > BULLET_MAX_LIFETIME_MS) child.destroy()
+            return true
+        })
     }
 
     // Each DRN, on cooldown, spends one unit of its own ammo (4 total — same ammo/ammoRemaining stat
@@ -1218,24 +1300,6 @@ export default class MapScene extends Scene {
             }
 
             return true
-        })
-    }
-
-    drawCombat = (time:number) => {
-        const g = this.combatG
-        g.clear()
-
-        this.tracers = this.tracers.filter(t => time - t.createdAt < TRACER_LIFETIME_MS)
-        this.tracers.forEach(t => {
-            const progress = (time - t.createdAt) / TRACER_LIFETIME_MS
-            const dotCount = 4
-            for(let i=0; i<dotCount; i++){
-                const dotProgress = Math.min(1, progress + i*0.12)
-                const x = t.x1 + (t.x2-t.x1)*dotProgress
-                const y = t.y1 + (t.y2-t.y1)*dotProgress
-                g.fillStyle(GREEN_HEX, (1-progress) * (1-i*0.2))
-                g.fillCircle(x, y, 1.5)
-            }
         })
     }
 
