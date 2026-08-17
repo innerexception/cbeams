@@ -19,7 +19,7 @@ export const resources:Array<PhaserResource> = [
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
     { key: ShipType.GAIN, resource: require('./img/ships/Harvester.png'), type: 'image' },
-    { key: ShipType.KK, resource: require('./img/ships/K.png'), type: 'image' },
+    { key: ShipType.KKZ, resource: require('./img/ships/K.png'), type: 'image' },
     { key: ShipType.ZEL, resource: require('./img/ships/KE.png'), type: 'image' },
     { key: ShipType.EYE, resource: require('./img/ships/DRONE.png'), type: 'image' },
     { key: ShipType.CATH, resource: require('./img/ships/baseA.png'), type: 'image' },

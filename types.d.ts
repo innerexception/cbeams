@@ -141,11 +141,12 @@ interface ShipData {
     queue?: Array<ProductionQueueItem>
 }
 
-// A gatherable Asteroid — world coordinates (like a ship, not a grid cell like ObjectiveSpawn), since
-// they're scattered procedurally rather than read off a fixed map-file layer (see MapScene's
-// spawnResourceNodes). metal is the live remaining stockpile a nearby Harvester draws down (see
-// MapScene's updateHarvesters); maxMetal is what it started with, kept around purely so its sprite can
-// be scaled down proportionally as it depletes.
+// A gatherable Asteroid — spawned at world coordinates converted once from an AsteroidSpriteIndexesLarge
+// tile's grid cell on the map's entities layer (see MapScene's spawnEntitiesFromMap), same as a ship;
+// there's no live link back to that tile afterward, unlike ObjectiveSpawn which keeps its grid (x,y)
+// around. metal is the live remaining stockpile a nearby Harvester draws down (see MapScene's
+// updateHarvesters); maxMetal is what it started with, kept around purely so its sprite can be scaled
+// down proportionally as it depletes.
 interface ResourceNodeData {
     id: string
     x: number

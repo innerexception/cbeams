@@ -5,7 +5,7 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, Maps } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
     TRACER_LIFETIME_MS,
@@ -15,10 +15,10 @@ import {
     MISSILE_IMPACT_LIFETIME_MS, MISSILE_IMPACT_MIN_RADIUS_PX, MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX,
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
-    HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT,
+    HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S,
     HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
-    ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
+    ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
@@ -49,7 +49,7 @@ const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
     return 'small'
 }
 
-const DRONE_TYPES = new Set<ShipType>([ShipType.KK, ShipType.BOM])
+const DRONE_TYPES = new Set<ShipType>([ShipType.KKZ, ShipType.BOM])
 
 const applyDamage = <T extends { id:string, hp:number }>(items:Array<T>, damageByTarget:Map<string, number>, onDeath?:(item:T) => void) =>
     items.map(item => {
@@ -164,7 +164,6 @@ export default class MapScene extends Scene {
         this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-1000).setScrollFactor(0.5)
 
         this.spawnEntitiesFromMap()
-        this.spawnResourceNodes()
         this.drawMap()
         this.enableCameraControls()
         this.enableSelectionControls()
@@ -423,6 +422,29 @@ export default class MapScene extends Scene {
                     continue
                 }
 
+                // A ShipTypeSpriteIndex (green, Player) or ShipTypeSpriteIndexEnemy (red, Enemy) tile spawns
+                // one ship of that type standing right there at match start — same tile-lookup role
+                // BASE_SPRITE_INDEX plays for a Base, just per-ShipType instead of a fixed single type.
+                const shipTypeKey = (ShipTypeSpriteIndex[localIndex] ?? ShipTypeSpriteIndexEnemy[localIndex]) as keyof typeof ShipType | undefined
+                if(shipTypeKey){
+                    const faction = ShipTypeSpriteIndex[localIndex] !== undefined ? Faction.Player : Faction.Enemy
+                    const type = ShipType[shipTypeKey]
+                    const { x, y } = this.toWorld(tx, ty)
+                    const ship:ShipData = { id:v4(), faction, type, x, y, hp:ShipData[type].hp, ammoRemaining:ShipData[type].ammo }
+                    useAppStore.getState().addShip(ship)
+                    this.createShipSprite(ship)
+                    continue
+                }
+
+                if(AsteroidSpriteIndexesLarge.includes(localIndex)){
+                    const { x, y } = this.toWorld(tx, ty)
+                    const metal = Math.round(ASTEROID_AVG_METAL + (Math.random()*2-1)*ASTEROID_METAL_VARIANCE)
+                    const node:ResourceNodeData = { id:v4(), x, y, metal, maxMetal:metal }
+                    useAppStore.getState().addResourceNode(node)
+                    this.createResourceNodeSprite(node)
+                    continue
+                }
+
                 const spriteName = ObjectiveSpriteIndex[localIndex] as ObjectiveSprite | undefined
                 if(!spriteName) continue
 
@@ -433,29 +455,6 @@ export default class MapScene extends Scene {
                 this.createObjectiveSprite(spawn)
             }
         }
-    }
-
-    spawnResourceNodes = () => {
-        const placeNode = () => {
-            for(let attempt=0; attempt<60; attempt++){
-                const gridX = Math.random()*this.mapData.width
-                const gridY = Math.random()*this.mapData.height
-                const { x, y } = this.toWorld(gridX, gridY)
-
-                const tooCloseToShip = useAppStore.getState().ships.some(s => Phaser.Math.Distance.Between(x, y, s.x, s.y) < RESOURCE_NODE_MIN_SPACING_PX)
-                if(tooCloseToShip) continue
-                const tooCloseToNode = useAppStore.getState().resourceNodes.some(n => Phaser.Math.Distance.Between(x, y, n.x, n.y) < RESOURCE_NODE_MIN_SPACING_PX)
-                if(tooCloseToNode) continue
-
-                const metal = Math.round(ASTEROID_AVG_METAL + (Math.random()*2-1)*ASTEROID_METAL_VARIANCE)
-                const node:ResourceNodeData = { id:v4(), x, y, metal, maxMetal:metal }
-                useAppStore.getState().addResourceNode(node)
-                this.createResourceNodeSprite(node)
-                return
-            }
-        }
-
-        for(let i=0; i<RESOURCE_ASTEROID_COUNT; i++) placeNode()
     }
 
     createResourceNodeSprite = (node:ResourceNodeData) => {
@@ -866,7 +865,7 @@ export default class MapScene extends Scene {
         const shipDamage = new Map<string, number>([[drone.id, drone.hp]])
         const damage = ShipData[drone.type].damage
 
-        if(drone.type === ShipType.KK && primary){
+        if(drone.type === ShipType.KKZ && primary){
             shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + damage)
         }
         else if(drone.type === ShipType.BOM){

@@ -102,10 +102,10 @@ export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 export const ENEMY_RAID_SIZE = 3
 
 // --- Resource nodes (Asteroids) ---
-// Scattered procedurally across the map at match start (see MapScene's spawnResourceNodes) — there's no
-// tile reserved for these on the map file the way a Base or Objective has. A Harvester within this
-// range of an Asteroid draws HARVESTER_COLLECTION_RATE_PER_S metal/second from it (see
-// MapScene's updateHarvesters).
+// Spawned wherever the map's entities layer has an AsteroidSpriteIndexesLarge tile (see MapScene's
+// spawnEntitiesFromMap and enum.ts) — the same tile-driven placement a Base or Objective already gets,
+// rather than scattered at random. A Harvester within this range of an Asteroid draws
+// HARVESTER_COLLECTION_RATE_PER_S metal/second from it (see MapScene's updateHarvesters).
 export const HARVESTER_ORBIT_RADIUS_PX = 40
 // Must clear the orbit radius with room to spare — once mining, a Harvester circles its Asteroid at
 // exactly HARVESTER_ORBIT_RADIUS_PX (see MapScene's moveShips), so the engagement range has to stay
@@ -133,14 +133,11 @@ export const HARVESTER_RESUPPLY_INTERVAL_MS = 1000
 // cost per hp — see MapScene's updateHarvesterSupport, which tries an ammo-short target first and only
 // falls back to a repair target if none was found (or there wasn't enough metal left for one).
 export const HARVESTER_REPAIR_METAL_COST = 2
-export const RESOURCE_ASTEROID_COUNT = 14
 // An Asteroid's starting metal stockpile is ASTEROID_AVG_METAL +/- a random amount up to
-// ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average.
+// ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average,
+// even though how many of them exist and where is now entirely up to the map file rather than rolled here.
 export const ASTEROID_AVG_METAL = 50
 export const ASTEROID_METAL_VARIANCE = 15
-// Minimum gap kept between any two resource nodes, and between a node and any ship (a faction's Base
-// included) at scatter time — purely so nodes don't spawn stacked on top of each other or a Base.
-export const RESOURCE_NODE_MIN_SPACING_PX = 150
 
 // --- Theme colors ---
 // GREEN is the game's one wireframe accent color, everywhere: Phaser draws want the 0xRRGGBB number,

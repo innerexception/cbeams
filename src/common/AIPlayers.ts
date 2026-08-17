@@ -23,7 +23,7 @@ const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.f
 export const spawnEnemyRaid = (scene:MapScene) => {
     const { queueShip } = useAppStore.getState()
     if(!scene.enemyBaseId) return
-    for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(scene.enemyBaseId, ShipType.KK)
+    for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(scene.enemyBaseId, ShipType.KKZ)
 }
 
 // Watches the enemy Base's own production output and, the moment it has massed a full raid's worth of
@@ -36,7 +36,7 @@ export const checkEnemyRaid = (scene:MapScene) => {
     if(scene.enemyRaidLaunched || !scene.enemyBaseId) return
 
     const { ships, addShipWaypoints } = useAppStore.getState()
-    const raidShips = ships.filter(s => s.type === ShipType.KK && s.faction === Faction.Enemy)
+    const raidShips = ships.filter(s => s.type === ShipType.KKZ && s.faction === Faction.Enemy)
     if(raidShips.length < ENEMY_RAID_SIZE) return
 
     const playerBase = findBase(Faction.Player)

@@ -29,7 +29,7 @@ export interface AppState {
   // The live (owner) half of every Objective on the map — see ObjectiveSpawn (in mapData/activeMap)
   // for each one's fixed id/position/sprite, decided once at generation and never duplicated here.
   objectives: Array<ObjectiveData>;
-  // Every Asteroid currently on the map (see MapScene's spawnResourceNodes) — removed from this array
+  // Every Asteroid currently on the map (see MapScene's spawnEntitiesFromMap) — removed from this array
   // outright once a Harvester drains its metal to 0 (see updateHarvesters). There's no faction-wide
   // metal stockpile anymore — a GAIN ship carries what it mines itself (see ShipData's metalCarried).
   resourceNodes: Array<ResourceNodeData>;
