@@ -3,7 +3,7 @@ import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
-import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
+import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import ShipSprite from "../sprites/ShipSprite";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
@@ -269,6 +269,8 @@ export default class MapScene extends Scene {
         this.updateObjectives(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
+        updateEnemyZel(this)
+        updateEnemyGain(this)
         this.updateFogOfWar()
         this.updateShipLabels()
         drawSightRadii(this.rangeG, this.ships)
