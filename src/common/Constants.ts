@@ -37,6 +37,11 @@ export const BASE_LOGISTICS_FLOOR = 10
 // to the other faction lowers the cap again immediately, the same as gaining one raises it.
 export const LOGISTICS_PER_OBJECTIVE = 1
 
+// --- Selection ---
+// Two clicks on the same own ship within this window (see MapScene's handleClick) count as a double
+// click — select-all-of-that-type instead of just that one ship.
+export const DOUBLE_CLICK_MS = 350
+
 // --- Kamikaze drones (KK, ATD) ---
 // Both now detonate against any hostile ship they touch (there's nothing else left to touch — see
 // MapScene's DRONE_TYPES). KK hits only whatever it actually touches; ATD blasts everything hostile

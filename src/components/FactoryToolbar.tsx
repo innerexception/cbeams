@@ -5,6 +5,7 @@ import { MAX_QUEUE } from '../common/Constants'
 import { getLogisticsStatus, getShipLogisticsCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
+import Tooltip from 'rc-tooltip'
 
 export default () => {
     const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints } = useAppStore((state) => ({
@@ -21,6 +22,10 @@ export default () => {
         const interval = setInterval(() => forceTick(t => t+1), 200)
         return () => clearInterval(interval)
     }, [])
+
+    // Collapses the build panel down to just its toggle bar so it can be tucked away when the player
+    // isn't actively queuing ships.
+    const [buildMenuMinimized, setBuildMenuMinimized] = React.useState(false)
 
     // The Base is unselectable (see MapScene's findOwnShipAt/box-select) — its build panel is always up
     // instead of only appearing once it's been clicked, so it's found directly here rather than derived
@@ -40,25 +45,41 @@ export default () => {
 
                 return (
                     <div>
-                        <div style={{ display:'flex', flexDirection:'column' }}>
-                            {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
-                                <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name}</ToolButton>
-                            ))}
+                        <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
+                            <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
+                            {buildMenuMinimized && logisticsRemaining > 0 && (
+                                // Hint badge so the player still knows there's unspent logistics capacity
+                                // without having to reopen the panel.
+                                <div style={{
+                                    width:20, height:20, borderRadius:'50%', background:colors.yellow,
+                                    color:'#000', fontFamily:'Body', fontSize:11, fontWeight:'bold',
+                                    display:'flex', alignItems:'center', justifyContent:'center',
+                                }}>{logisticsRemaining}</div>
+                            )}
                         </div>
-                        <div style={{ marginTop:8, display:'flex', gap:8 }}>
-                            {Array.from({ length: MAX_QUEUE }).map((_, i) => {
-                                const item = queue[i]
-                                const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
-                                return (
-                                    <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
-                                        <div>{item ? ShipData[item.type].name : '—'}</div>
-                                        <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
-                                            {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
-                                        </div>
-                                    </div>
-                                )
-                            })}
-                        </div>
+                        {!buildMenuMinimized && (
+                            <>
+                                <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
+                                    {Object.values(ShipType).filter(type => ShipData[type].logisticsCost).map(type => (
+                                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].logisticsCost})</ToolButton>
+                                    ))}
+                                </div>
+                                <div style={{ marginTop:8, display:'flex', gap:8 }}>
+                                    {Array.from({ length: MAX_QUEUE }).map((_, i) => {
+                                        const item = queue[i]
+                                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
+                                        return (
+                                            <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
+                                                <div>{item ? ShipData[item.type].name : '—'}</div>
+                                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
+                                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </>
+                        )}
                     </div>
                 )
             })()}
@@ -69,7 +90,15 @@ export default () => {
                 // the selection readout + bulk Clear Orders/Cancel.
                 <div>
                     <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
-                        {selectedShips.map(s=><div>{s.type}</div>)}
+                        {selectedShips.map(s=>
+                            <div key={s.id}>
+                                <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>
+                                    {/* Narrows the current selection down to just this ship's own type — drops
+                                        every other type out of it, keeps every ship of this one. */}
+                                    <div style={{ cursor:'pointer' }} onClick={()=>setSelectedShipIds(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
+                                </Tooltip>
+                            </div>
+                        )}
                     </div>
                 </div>
             ) : (

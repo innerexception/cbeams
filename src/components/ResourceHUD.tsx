@@ -22,7 +22,7 @@ export default () => {
             <div style={{ textAlign:'right' }}>
                 <div>AI Relics: {logisticsRemaining} / {maxLogistics}</div>
                 <div style={{ width:150, height:12, border:'2px solid '+colors.green, marginTop:2, marginLeft:'auto' }}>
-                    <div style={{ width:logisticsPercent+'%', height:'100%', background: overBudget ? colors.red : colors.green }}/>
+                    <div style={{ width:100-logisticsPercent+'%', height:'100%', background: overBudget ? colors.red : colors.green }}/>
                 </div>
             </div>
         </div>

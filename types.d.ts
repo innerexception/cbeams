@@ -82,8 +82,7 @@ interface ShipStats {
     sizeHex: number
     productionTimeMs: number
     logisticsCost: number
-    // Missiles an MLRS can ever launch, total, over its whole lifetime — undefined for every other
-    // ship (none of them fire missiles). See ShipData's ammoRemaining for the live count.
+    description:string
     ammo?:number
 }
 

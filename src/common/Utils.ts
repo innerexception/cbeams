@@ -41,7 +41,7 @@ export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
     const ownShips = ships.filter(s => s.faction === faction)
     const objectivesHeld = objectives.filter(o => o.owner === faction).length
 
-    const maxLogistics = BASE_LOGISTICS_FLOOR + objectivesHeld * LOGISTICS_PER_OBJECTIVE
+    const maxLogistics = BASE_LOGISTICS_FLOOR + (objectivesHeld * LOGISTICS_PER_OBJECTIVE)
     const logisticsUsed = ownShips.reduce((sum, s) => sum + getShipLogisticsCost(s.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }

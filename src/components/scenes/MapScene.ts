@@ -8,6 +8,7 @@ import { drawSightRadii } from "../../common/SightRadius";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
+    DOUBLE_CLICK_MS,
     TRACER_LIFETIME_MS,
     ATD_BLAST_RADIUS_PX,
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
@@ -101,6 +102,10 @@ export default class MapScene extends Scene {
     dragSelectStart: { x:number, y:number } | null = null
     dragSelectCurrent: { x:number, y:number } | null = null
     pointerDownWorld: { x:number, y:number } | null = null
+    // Tracks the last single ship clicked (and when) so handleClick can tell a genuine double-click
+    // (same ship, within DOUBLE_CLICK_MS) apart from two unrelated single clicks.
+    lastClickShipId: string | null = null
+    lastClickAtMs: number = 0
     tracers: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
     impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
@@ -230,6 +235,7 @@ export default class MapScene extends Scene {
         this.moveShips(time, delta)
         this.updateMlrs(time)
         this.updateArmor(time)
+        this.updateDrn(time)
         this.updateHarvesters(delta)
         this.updateHarvesterSupport(time)
         this.updateObjectives(time)
@@ -987,6 +993,31 @@ export default class MapScene extends Scene {
         setShips(this.applyShipDamage(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship), damageByTarget))
     }
 
+    // Each DRN, on cooldown, spends one unit of its own ammo (4 total — same ammo/ammoRemaining stat
+    // every other ammo-limited ship uses, so it's refilled by a nearby GAIN via updateHarvesterSupport
+    // exactly the same way SPR's is) to spawn a KKZ near itself. Once its ammo is fully spent it stops
+    // producing until resupplied, same as SPR runs dry — there's no separate lifetime cap beyond that.
+    updateDrn = (time:number) => {
+        const { ships, setShips } = useAppStore.getState()
+        const producerIds = new Set<string>()
+
+        ships.forEach(ship => {
+            if(ship.type !== ShipType.DRN) return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.DRN].cooldownMs) return
+            if(!ship.ammoRemaining) return
+
+            producerIds.add(ship.id)
+            this.spawnShip(ship, ShipType.KKZ)
+        })
+
+        if(producerIds.size === 0) return
+
+        // Re-read after spawning — spawnShip already committed the new KKZ ship(s) straight to the
+        // store, so mapping over the pre-spawn `ships` snapshot here would silently drop them.
+        const latest = useAppStore.getState().ships
+        setShips(latest.map(ship => producerIds.has(ship.id) ? { ...ship, lastFiredAtMs:time, ammoRemaining:ship.ammoRemaining-1 } : ship))
+    }
+
     updateHarvesterMiningTargets = () => {
         const { ships, resourceNodes } = useAppStore.getState()
         this.harvesterMiningTarget.clear()
@@ -1371,6 +1402,20 @@ export default class MapScene extends Scene {
 
         const clicked = this.findOwnShipAt(worldX, worldY)
         if(clicked){
+            const now = this.time.now
+            const isDoubleClick = this.lastClickShipId === clicked.id && now - this.lastClickAtMs <= DOUBLE_CLICK_MS
+            this.lastClickShipId = clicked.id
+            this.lastClickAtMs = now
+
+            if(isDoubleClick){
+                // Select every one of the player's own ships of the same type, not just this one.
+                const sameTypeIds = ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
+                setSelectedShipIds(sameTypeIds)
+                // A third click right after shouldn't chain into yet another double-click.
+                this.lastClickShipId = null
+                return
+            }
+
             setSelectedShipIds([clicked.id])
             return
         }

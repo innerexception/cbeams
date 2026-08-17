@@ -25,5 +25,7 @@ export const resources:Array<PhaserResource> = [
     { key: ShipType.CATH, resource: require('./img/ships/baseA.png'), type: 'image' },
     { key: ShipType.SPR, resource: require('./img/ships/DD.png'), type: 'image' },
     { key: ShipType.BOM, resource: require('./img/ships/SSG-icon.png'), type: 'image' },
+    { key: ShipType.DRN, resource: require('./img/ships/CV.png'), type: 'image' },
+    { key: ShipType.PDF, resource: require('./img/ships/FL.png'), type: 'image' },
     { key: 'base_enemy', resource: require('./img/ships/baseB.png'), type: 'image' },
 ]

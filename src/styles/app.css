@@ -71,8 +71,10 @@ textarea:focus, input:focus{
   min-height: 0;
   max-width: 20em;
   min-width: 160px;
-  color: #000;
-  background: transparent;
-  /* border: 2px solid #edd8aa; */
-
+  padding: 6px 8px;
+  color: #55ff55;
+  background: #000;
+  border: 1px solid #55ff55;
+  font-family: 'Body';
+  font-size: 13px;
 }

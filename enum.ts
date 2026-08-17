@@ -45,7 +45,8 @@ export enum ObjectiveSpriteIndex {
 }
 
 export enum ShipType {
-    KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN'
+    KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
+    DRN='DRN', PDF='PDF', 
 }
 
 // A ship-type spawn marker on the map's entities layer (see MapScene's spawnEntitiesFromMap) — a tile
@@ -62,11 +63,31 @@ export enum ShipTypeSpriteIndexEnemy {
 }
 
 export const ShipData:Record<ShipType, ShipStats> = {
-    [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, sizeHex:0.4, productionTimeMs:5000, logisticsCost:1 },
-    [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, sizeHex:0.6, productionTimeMs:10000, logisticsCost:1 },
-    [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:1500, rangePx:350, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10 },
-    [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, logisticsCost:3 },
-    [ShipType.ZEL]: { name:'Zealot', speed:12, sightRadius:50, armor:2, hp:25, damage:10, cooldownMs:5000, rangePx:200, sizeHex:1, productionTimeMs:10000, logisticsCost:2 },
-    [ShipType.CATH]: { name:'Cathedral', speed:0, sightRadius:300, armor:0, hp:80, damage:0, cooldownMs:0, rangePx:0, sizeHex:2, productionTimeMs:0, logisticsCost:0 },
-    [ShipType.GAIN]: { name:'Mater', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, logisticsCost:1 },
+    [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, sizeHex:0.3, productionTimeMs:5000, logisticsCost:0,
+        description: 'Single use blessings built by DRN. Contact fuse.'
+     },
+    [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, sizeHex:0.6, productionTimeMs:10000, logisticsCost:1,
+        description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
+     },
+    [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:1500, rangePx:350, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10,
+        description: 'Missile carrier, needs replenishment.'
+     },
+    [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, logisticsCost:3,
+        description: 'A great eye.'
+     },
+    [ShipType.ZEL]: { name:'Zealot', speed:12, sightRadius:50, armor:2, hp:25, damage:10, cooldownMs:5000, rangePx:200, sizeHex:1, productionTimeMs:10000, logisticsCost:2,
+        description: 'Carries one mad cypher-preist, opener of doors and master of machine speak.'
+     },
+    [ShipType.CATH]: { name:'Cathedral', speed:0, sightRadius:300, armor:0, hp:80, damage:0, cooldownMs:0, rangePx:0, sizeHex:2, productionTimeMs:0, logisticsCost:0,
+        description: 'Home'
+     },
+    [ShipType.GAIN]: { name:'Mater', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, logisticsCost:1,
+        description: 'Replenishment of the fleet, digests debris into fuel and parts.'
+     },
+     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:0, cooldownMs:500, rangePx:200, sizeHex:0.7, productionTimeMs:8000, logisticsCost:2,
+        description: 'A thousand needles rise up in defense.'
+     },
+     [ShipType.DRN]: { name:'Center', speed:8, sightRadius:200, armor:0, hp:20, damage:0, cooldownMs:2500, rangePx:0, sizeHex:1, productionTimeMs:18000, logisticsCost:5, ammo:4,
+        description: "Manufactors KKZ from Mater's metals"
+     },
 }
