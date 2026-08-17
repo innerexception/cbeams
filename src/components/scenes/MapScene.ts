@@ -225,13 +225,6 @@ export default class MapScene extends Scene {
             g.fillCircle(cx, cy, 2.5)
         })
 
-        // Every ship's own art is baked in the game's exact 4-color palette (black outline, green hull,
-        // yellow highlight) — setTint can't recolor an enemy copy of that without breaking straight out
-        // of the palette, since it multiplies the tint against whatever's already there (green*red isn't
-        // red, it's an off-palette olive/brown) rather than replacing it. So instead of tinting at
-        // render time, this bakes a real enemy-colored texture once here: an exact pixel swap of hull
-        // green for RED_HEX, black/yellow left alone, registered under key+'_enemy'. CATH (Base) already
-        // has its own bespoke enemy texture (base_enemy, baseB.png) so it's skipped here.
         Object.values(ShipType).filter(type => type !== ShipType.CATH).forEach(type => this.generateHostileShipTexture(type))
     }
 
