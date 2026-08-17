@@ -911,7 +911,7 @@ export default class MapScene extends Scene {
         this.destroyShipSprite(drone.id)
         this.syncShipSummaries()
 
-        if(drone.type === ShipType.KKZ && primary?.active){
+        if(drone.type === ShipType.KKZ && primary){
             if(primary.takeDamage(damage)) this.killIfDead(primary)
         }
         else if(drone.type === ShipType.BOM){
@@ -920,7 +920,7 @@ export default class MapScene extends Scene {
                 const obj = (body as Physics.Arcade.Body).gameObject
                 if(obj.getData('kind') !== 'ship') return
                 const hitShip = this.getShipEntry(obj as Phaser.Types.Physics.Arcade.GameObjectWithBody)
-                if(hitShip?.active && hitShip.faction !== drone.faction){
+                if(hitShip && hitShip.faction !== drone.faction){
                     if(hitShip.takeDamage(damage)) this.killIfDead(hitShip)
                 }
             })
@@ -931,7 +931,7 @@ export default class MapScene extends Scene {
         const missile = missileObj as Physics.Arcade.Sprite
         if(!missile.active) return
         const ship = this.getShipEntry(shipObj)
-        if(!ship?.active) return
+        if(!ship) return
 
         const time = this.time.now
         const x = missile.x, y = missile.y, damage = missile.getData('damage')
@@ -1242,8 +1242,28 @@ export default class MapScene extends Scene {
             const rawProgress = legDurationMs > 0 ? (time-legStartAt) / legDurationMs : 1
 
             if(rawProgress > 1){
+                const faction:Faction = child.getData('faction')
+                const damage = child.getData('damage')
                 child.destroy()
-                this.impactFlashes.push({ x:legTargetX, y:legTargetY, createdAt:time, damage:child.getData('damage') })
+                this.impactFlashes.push({ x:legTargetX, y:legTargetY, createdAt:time, damage })
+
+                // The overlap callback (onMissileShipContact) only ever catches a hostile ship the
+                // missile physically grazes mid-flight. A missile that simply runs out its leg — its
+                // target moved off the aim point it was locked onto, or just frame timing — would
+                // otherwise vanish here with nothing but a cosmetic flash and no damage at all. Resolve
+                // that case explicitly: anything hostile still standing in the blast at the impact point
+                // takes the hit, using the same radius the flash is actually drawn at (see
+                // drawMissileImpacts) so this always matches what the player sees connect.
+                const blastRadius = MISSILE_IMPACT_MIN_RADIUS_PX + damage*MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX
+                const hits = this.physics.overlapCirc(legTargetX, legTargetY, blastRadius, true, false)
+                hits.forEach(body => {
+                    const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
+                    if(!obj.active || obj.getData('kind') !== 'ship') return
+                    const hitShip = this.getShipEntry(obj)
+                    if(!hitShip || hitShip.faction === faction) return
+                    if(hitShip.takeDamage(damage)) this.killIfDead(hitShip)
+                })
+
                 return true
             }
 
