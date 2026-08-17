@@ -697,7 +697,7 @@ export default class MapScene extends Scene {
             const ownWaypoints = ship.waypoints || []
             const waypoints = ship.type === ShipType.BOM ? ownWaypoints.slice(0, 1) : ownWaypoints
             const pathIndex = ship.pathIndex ?? 0
-            const speed = ShipData[ship.type].speed
+            const speed = ship.orderSpeedPxS ?? ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
             const movementLocked = ship.type === ShipType.EYE && !!ship.movementLocked

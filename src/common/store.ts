@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, ShipType } from '../../enum';
+import { Modal, ShipType, ShipData } from '../../enum';
 import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld } from './Constants';
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
@@ -16,6 +16,13 @@ const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x
   }
   return bestIndex;
 };
+
+// A group ordered together moves together — every ship given this order gets stamped with the slowest
+// member's own top speed (see MapScene's moveShips, which reads this instead of ShipData[type].speed
+// whenever it's set), rather than each ship racing ahead at its own pace and arriving piecemeal. Ordering
+// a single ship alone still works out to that ship's own natural speed, since it's its own group's minimum.
+const groupSpeedPxS = (ships: Array<ShipData>, shipIds: Array<string>) =>
+  Math.min(...ships.filter((s) => shipIds.includes(s.id)).map((s) => ShipData[s.type].speed));
 
 export interface AppState {
   activeModal: Modal | null;
@@ -82,22 +89,28 @@ export const useAppStore = create<AppState>((set) => ({
   // ships (a Base itself is never included; MapScene's handleClick filters it out before calling this,
   // since it never actually moves and doesn't hand orders down to newly produced ships anymore either —
   // see spawnShip). Each ship keeps whatever progress it's already made; this only adds on.
-  addShipWaypoints: (shipIds, x, y) => set((state) => ({
-    ships: state.ships.map((s) => {
-      if(!shipIds.includes(s.id)) return s;
-      const waypoints = s.waypoints || [];
-      if(waypoints.length >= MAX_WAYPOINTS) return s;
-      // A new order overrides ARMOR's own Objective-latch the same way it overrides anything else it
-      // was doing — see ShipData's latchedObjectiveId/objectiveAttached.
-      return { ...s, waypoints: [...waypoints, { x, y }], latchedObjectiveId: undefined, objectiveAttached: undefined };
-    }),
-  })),
+  addShipWaypoints: (shipIds, x, y) => set((state) => {
+    const speed = groupSpeedPxS(state.ships, shipIds);
+    return {
+      ships: state.ships.map((s) => {
+        if(!shipIds.includes(s.id)) return s;
+        const waypoints = s.waypoints || [];
+        if(waypoints.length >= MAX_WAYPOINTS) return s;
+        // A new order overrides ARMOR's own Objective-latch the same way it overrides anything else it
+        // was doing — see ShipData's latchedObjectiveId/objectiveAttached.
+        return { ...s, waypoints: [...waypoints, { x, y }], latchedObjectiveId: undefined, objectiveAttached: undefined, orderSpeedPxS: speed };
+      }),
+    };
+  }),
   // A plain (non-shift) order-giving click — wipes whatever route a ship already had and replaces it
   // outright with this one single waypoint, rather than appending onto it (see addShipWaypoints, used
   // instead when shift is held). Same latch-clearing as any other new order.
-  setShipWaypoints: (shipIds, x, y) => set((state) => ({
-    ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [{ x, y }], pathIndex: 0, latchedObjectiveId: undefined, objectiveAttached: undefined } : s)),
-  })),
+  setShipWaypoints: (shipIds, x, y) => set((state) => {
+    const speed = groupSpeedPxS(state.ships, shipIds);
+    return {
+      ships: state.ships.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [{ x, y }], pathIndex: 0, latchedObjectiveId: undefined, objectiveAttached: undefined, orderSpeedPxS: speed } : s)),
+    };
+  }),
   // Clicking an existing waypoint marker for a selection removes it from every selected ship that
   // actually has a waypoint there (not just the one whose marker was clicked), same click-to-remove
   // gesture as adding is a bulk operation. Ships with no matching waypoint are left untouched; each ship

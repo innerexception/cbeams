@@ -99,6 +99,12 @@ interface ShipData {
     // MapScene's handleClick won't let one be selected for order-giving in the first place.
     waypoints?: Array<{ x:number, y:number }>
     pathIndex?: number
+    // Set whenever an order (setShipWaypoints/addShipWaypoints, see store.ts) is given to this ship as
+    // part of a group — the slowest member's own ShipData speed at that moment, so the whole group
+    // arrives together instead of faster ships pulling ahead. MapScene's moveShips uses this instead of
+    // ShipData[type].speed whenever it's set. Ordering a ship on its own works out to its own natural
+    // speed regardless (a group of one has itself as its slowest member), so this never needs clearing.
+    orderSpeedPxS?: number
     // ARMOR only — the Objective (ObjectiveData.id) it's currently latched onto, having come within
     // OBJECTIVE_CAPTURE_RADIUS_PX of it (see MapScene's moveShips). Overrides its normal route entirely
     // while set: it moves straight to that Objective's own edge and sits there instead of continuing on
