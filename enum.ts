@@ -52,7 +52,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, sizeHex:0.6, productionTimeMs:10000, logisticsCost:1,
         description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
      },
-    [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:1500, rangePx:250, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10,
+    [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:3000, rangePx:250, sizeHex:1, productionTimeMs:12000, logisticsCost:2, ammo:10,
         description: 'Missile carrier, needs replenishment.'
      },
     [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, logisticsCost:3,
