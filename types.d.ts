@@ -6,21 +6,14 @@ interface PhaserResource {
 }
 
 interface SaveFile {
-    
-}
 
-interface BaseData {
-    faction: import('./enum').Faction
-    x: number
-    y: number
 }
 
 // A minimal subset of a Tiled (mapeditor.org) JSON map export — just enough to read tile GIDs back out
 // of a hand-authored, annotated map file. Only the plain array/CSV `data` layer format is supported
-// (not Tiled's base64/compressed export options). See MapGenerator's parseTiledMap for how a raw
-// exported JSON object gets turned into this, and MapScene's drawTerrain for how it's actually drawn —
-// a plain wireframe outline per occupied tile, not real tileset artwork, since this game has no tile
-// image assets, only vector Graphics.
+// (not Tiled's base64/compressed export options). See MapScene's drawTerrain for how it's actually
+// drawn — a plain wireframe outline per occupied tile, not real tileset artwork, since this game has no
+// tile image assets, only vector Graphics.
 interface TiledLayer {
     name: string
     width: number
@@ -37,9 +30,9 @@ interface TiledMap {
 }
 
 // A capturable map feature's fixed identity — where it sits and which of the 3 possible sprites it
-// renders as, decided once at map generation (see MapGenerator) and never changed after. Its live,
-// mutable half (who currently owns it) lives on ObjectiveData instead, in the store, the same split
-// BaseData/BuildingData use for a faction's Base.
+// renders as, decided once (read off the loaded map file's entities layer — see MapScene's
+// spawnEntitiesFromMap) and never changed after. Its live, mutable half (who currently owns it) lives
+// on ObjectiveData instead, in the store.
 interface ObjectiveSpawn {
     id: string
     x: number
@@ -50,7 +43,6 @@ interface ObjectiveSpawn {
 interface MapData {
     width: number
     height: number
-    bases: Array<BaseData>
     objectives: Array<ObjectiveSpawn>
     // No procedurally-generated terrain anymore — this is either null (the default: an empty map,
     // until a real Tiled file exists and is passed to generateMap) or a parsed Tiled JSON export.
@@ -60,12 +52,11 @@ interface MapData {
 // The live half of a capturable Objective — see ObjectiveSpawn for its fixed id/position/sprite (never
 // duplicated here). owner is null until some faction actually captures it, which takes a full
 // OBJECTIVE_CAPTURE_TIME_MS of that faction holding it uncontested (ARMOR of that faction within
-// OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile ship or building also within that radius) — see
-// MapScene's updateObjectives for the live tracking of that hold via capturingFaction/
-// captureStartedAtMs. owner never reverts to null on its own once captured — only the other faction
-// completing that same hold changes it. capturingFaction/captureStartedAtMs reset to null the instant
-// the hold breaks (ARMOR leaves/dies, or an enemy shows up), even mid-count — no partial credit carries
-// over to a later attempt.
+// OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile ship also within that radius) — see MapScene's
+// updateObjectives for the live tracking of that hold via capturingFaction/captureStartedAtMs. owner
+// never reverts to null on its own once captured — only the other faction completing that same hold
+// changes it. capturingFaction/captureStartedAtMs reset to null the instant the hold breaks (ARMOR
+// leaves/dies, or an enemy shows up), even mid-count — no partial credit carries over to a later attempt.
 interface ObjectiveData {
     id: string
     owner: import('./enum').Faction | null
@@ -75,38 +66,11 @@ interface ObjectiveData {
 
 interface ProductionQueueItem {
     id: string
-    type: import('./enum').VehicleType
+    type: import('./enum').ShipType
     startedAt: number | null
 }
 
-interface BuildingMetaData {
-    maxHp:number
-    cooldownMs:number
-    damage:number
-    rangePx:number
-    buildingPoints:number
-    ammo?:number
-    sightRadius?:number
-    spriteIndex:number
-}
-
-interface BuildingData {
-    id: string
-    x: number
-    y: number
-    kind: import('./enum').BuildingType
-    faction: import('./enum').Faction
-    queue?: Array<ProductionQueueItem>
-    waypoints?: Array<{ x:number, y:number }>
-    hp: number
-    lastFiredAtMs?: number
-    // Only present for a kind whose BuildingMetaData sets `ammo` (BLM/THADD) — set to that value when
-    // the building's spawned, decremented per missile actually launched. Once it hits 0 the building
-    // can't fire again, ever (missiles are a spendable stockpile, not a cooldown-gated resource).
-    ammoRemaining?: number
-}
-
-interface VehicleStats {
+interface ShipStats {
     name: string
     speed: number
     sightRadius: number
@@ -117,33 +81,37 @@ interface VehicleStats {
     rangePx: number
     sizeHex: number
     productionTimeMs: number
-    targetType: import('./enum').TargetType
     logisticsCost: number
-    // Missiles an MLRS can ever launch, total, over its whole lifetime — undefined for every other
-    // vehicle (none of them fire missiles). See VehicleData's ammoRemaining for the live count.
+    description:string
     ammo?:number
 }
 
-interface VehicleData {
+// A ship's own real, high-frequency simulation state (hp, position, cooldowns, route, ...) lives on
+// ShipSprite (src/components/sprites/ShipSprite.ts) now, mutated directly every frame — never in the
+// Zustand store. This is the low-frequency summary MapScene pushes into the store instead, purely for
+// React (ResourceHUD, FactoryToolbar) to render from: just enough to show a ship's type/description, tell
+// factions apart, and drive a Base's production panel. Pushed on the rare discrete events that actually
+// change one of these fields — a ship spawns, dies, or its queue changes — never on a physics tick.
+interface ShipSummary {
     id: string
     faction: import('./enum').Faction
-    type: import('./enum').VehicleType
-    shipyardId: string
+    type: import('./enum').ShipType
+    // Only ever populated on a Base (see ShipType.CATH) — see ShipSprite's own queue field.
+    queue?: Array<ProductionQueueItem>
+}
+
+// A gatherable Asteroid — spawned at world coordinates converted once from an AsteroidSpriteIndexesLarge
+// tile's grid cell on the map's entities layer (see MapScene's spawnEntitiesFromMap), same as a ship;
+// there's no live link back to that tile afterward, unlike ObjectiveSpawn which keeps its grid (x,y)
+// around. metal is the live remaining stockpile a nearby Harvester draws down (see MapScene's
+// updateHarvesters); maxMetal is what it started with, kept around purely so its sprite can be scaled
+// down proportionally as it depletes.
+interface ResourceNodeData {
+    id: string
     x: number
     y: number
-    // A vehicle's own route, followed in order (see MapScene's moveShips) then orbited at the last
-    // point — copied from its shipyard's route at spawn time (see spawnShip) and independently
-    // editable afterwards, either by editing that shipyard's route (addWaypoint, which also pushes the
-    // update onto every ship already spawned from it) or by drag-selecting the ship directly and giving
-    // it orders (addShipWaypoints).
-    waypoints?: Array<{ x:number, y:number }>
-    pathIndex?: number
-    orbitAnchor?: { x:number, y:number }
-    lastFiredAtMs?: number
-    hp: number
-    // Only present for a vehicle whose VehicleStats sets `ammo` (MLRS) — set to that value when the
-    // ship's spawned, decremented per missile actually launched. Once it hits 0 it can't fire again.
-    ammoRemaining?: number
+    metal?: number
+    maxMetal?: number
 }
 
 interface RState {

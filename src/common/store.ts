@@ -1,23 +1,6 @@
 import { create } from 'zustand';
-import { v4 } from 'uuid';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, BuildingType, VehicleType, Faction } from '../../enum';
-import { MAX_WAYPOINTS, MAX_QUEUE, gridToWorld, BUILDING_POINTS_BUDGET } from './Constants';
-
-// Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever
-// the ship already is without ever sending it back to a waypoint it has already passed.
-const nearestWaypointIndex = (shipX: number, shipY: number, waypoints: Array<{ x: number, y: number }>, minIndex = 0) => {
-  let bestIndex = Math.min(minIndex, waypoints.length-1);
-  let bestDistSq = Infinity;
-  for(let i = minIndex; i < waypoints.length; i++){
-    const p = gridToWorld(waypoints[i].x, waypoints[i].y);
-    const distSq = (p.x-shipX)**2 + (p.y-shipY)**2;
-    if(distSq < bestDistSq){ bestDistSq = distSq; bestIndex = i; }
-  }
-  return bestIndex;
-};
-
-export type GamePhase = 'placement' | 'building' | 'combat';
+import { Modal, ShipType } from '../../enum';
 
 export interface AppState {
   activeModal: Modal | null;
@@ -25,52 +8,43 @@ export interface AppState {
   scene: MapScene | null;
   mySave: SaveFile | null;
   activeMap: MapData | null;
-  buildings: Array<BuildingData>;
-  vehicles: Array<VehicleData>;
+  // A low-frequency summary of every ship in the match, both factions' — see ShipSummary's own doc
+  // comment (types.d.ts) for why this isn't the real ship data. Pushed by MapScene's
+  // syncShipSummaries, never mutated directly here.
+  ships: Array<ShipSummary>;
   // The live (owner) half of every Objective on the map — see ObjectiveSpawn (in mapData/activeMap)
   // for each one's fixed id/position/sprite, decided once at generation and never duplicated here.
   objectives: Array<ObjectiveData>;
-  placingFactory: BuildingType | null;
-  selectedFactoryId: string | null;
-  // Vehicles currently drag-selected by the player (see MapScene's drag-select box) — mutually
-  // exclusive with selectedFactoryId/placingFactory, same as those are exclusive with each other.
-  // Clicking the map while this is non-empty adds a waypoint to every selected ship's own route
-  // (addShipWaypoints) instead of editing a shipyard's.
+  // Every Asteroid currently on the map (see MapScene's spawnEntitiesFromMap) — removed from this array
+  // outright once a Harvester drains its metal to 0 (see updateHarvesters). There's no faction-wide
+  // metal stockpile anymore — a GAIN ship carries what it mines itself (see ShipSprite's metalCarried).
+  resourceNodes: Array<ResourceNodeData>;
+  // The player's currently selected ship(s) — either a drag-selected group of combat ships (see
+  // MapScene's drag-select box) taking move orders, or a single clicked Base opening its production
+  // panel (see FactoryToolbar). Both go through this same field/setter; there's no separate
+  // "selected building" concept anymore.
   selectedShipIds: Array<string>;
-  // 'placement': the player is placing their 3 starting LogisticsCenters before the match goes live —
-  // the opposing faction's buildings/ships stay hidden and the AI holds off attacking until this ends.
-  // 'building': every other building kind unlocks, spendable against buildingPoints (see
-  // BUILDING_POINTS_BUDGET) until it hits zero.
-  // 'combat': the real-time match — see MapScene's startCombatPhase for the building->combat handoff.
-  phase: GamePhase;
-  // Each faction's remaining 'building' phase budget — see BUILDING_POINTS_BUDGET/BuildingData's
-  // per-kind buildingPoints cost. Spent by the player through handleBonusBuildingPlacementClick and by
-  // the AI (all at once) through AIPlayers' spendEnemyBuildingPoints.
-  buildingPoints: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
   setSave: (save: SaveFile | null) => void;
   setLoaded: (loaded: boolean) => void;
   setActiveMap: (map: MapData | null) => void;
-  addFactory: (factory: BuildingData) => void;
-  setFactories: (factories: Array<BuildingData>) => void;
-  setPlacingBuilding: (kind: BuildingType | null) => void;
-  setSelectedBuildingId: (id: string | null) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
-  addWaypoint: (shipyardId: string, x: number, y: number) => void;
-  removeWaypoint: (shipyardId: string, index: number) => void;
-  clearWaypoints: (shipyardId: string) => void;
+  // Every one of these actually mutates a real ShipSprite instance on the scene (see MapScene's own
+  // methods of the same name) — none of it lives in this store. Kept here purely as the stable,
+  // store-shaped API surface React components (FactoryToolbar) and MapScene's own AI helpers
+  // (AIPlayers.ts) already call through, same as any other store action.
   addShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
+  setShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   removeShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   clearShipWaypoints: (shipIds: Array<string>) => void;
-  queueShip: (shipyardId: string, type: VehicleType) => void;
-  completeQueueItem: (shipyardId: string) => void;
-  addShip: (ship: VehicleData) => void;
-  setShips: (ships: Array<VehicleData>) => void;
-  setPhase: (phase: GamePhase) => void;
-  spendBuildingPoints: (faction: Faction, amount: number) => void;
+  queueShip: (baseId: string, type: ShipType) => void;
+  completeQueueItem: (baseId: string) => void;
+  setShips: (ships: Array<ShipSummary>) => void;
   addObjective: (objective: ObjectiveData) => void;
   setObjectives: (objectives: Array<ObjectiveData>) => void;
+  addResourceNode: (node: ResourceNodeData) => void;
+  setResourceNodes: (nodes: Array<ResourceNodeData>) => void;
 }
 
 const initialState = {
@@ -79,150 +53,29 @@ const initialState = {
   scene: null as MapScene | null,
   mySave: null as SaveFile | null,
   activeMap: null as MapData | null,
-  buildings: [] as Array<BuildingData>,
-  vehicles: [] as Array<VehicleData>,
+  ships: [] as Array<ShipSummary>,
   objectives: [] as Array<ObjectiveData>,
-  placingFactory: null as BuildingType | null,
-  selectedFactoryId: null as string | null,
+  resourceNodes: [] as Array<ResourceNodeData>,
   selectedShipIds: [] as Array<string>,
-  phase: 'placement' as GamePhase,
-  buildingPoints: { [Faction.Player]: BUILDING_POINTS_BUDGET, [Faction.Enemy]: BUILDING_POINTS_BUDGET } as Record<Faction, number>,
 };
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   ...initialState,
   setModal: (modal) => set({ activeModal: modal }),
   setScene: (scene) => set({ scene }),
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMap: (activeMap) => set({ activeMap }),
-  addFactory: (factory) => set((state) => ({ buildings: [...state.buildings, factory] })),
-  setFactories: (factories) => set({ buildings: factories }),
-  setPlacingBuilding: (placingFactory) => set((state) => ({
-    placingFactory,
-    selectedFactoryId: placingFactory ? null : state.selectedFactoryId,
-    selectedShipIds: placingFactory ? [] : state.selectedShipIds,
-  })),
-  setSelectedBuildingId: (selectedFactoryId) => set((state) => ({
-    selectedFactoryId,
-    placingFactory: selectedFactoryId ? null : state.placingFactory,
-    selectedShipIds: selectedFactoryId ? [] : state.selectedShipIds,
-  })),
-  // Drag-selecting a group of units (see MapScene's drag-select box) is mutually exclusive with a
-  // selected/placing building, same as those are exclusive with each other.
-  setSelectedShipIds: (selectedShipIds) => set((state) => ({
-    selectedShipIds,
-    selectedFactoryId: selectedShipIds.length > 0 ? null : state.selectedFactoryId,
-    placingFactory: selectedShipIds.length > 0 ? null : state.placingFactory,
-  })),
-  // The shipyard's own waypoints field is now just the template newly-spawned ships copy at spawn time
-  // (see spawnShip) — but editing it still steers every ship already spawned from it too, same as
-  // before, by pushing the updated route onto each such ship's own waypoints (not just its pathIndex),
-  // resuming from whichever waypoint is nearest to where each ship currently is rather than starting over.
-  addWaypoint: (shipyardId, x, y) => set((state) => {
-    let newWaypoints: Array<{ x: number, y: number }> | null = null;
-    const factories = state.buildings.map((f) => {
-      if(f.id !== shipyardId) return f;
-      const waypoints = f.waypoints || [];
-      if(waypoints.length >= MAX_WAYPOINTS) return f;
-      newWaypoints = [...waypoints, { x, y }];
-      return { ...f, waypoints: newWaypoints };
-    });
-    if(!newWaypoints) return { buildings: factories };
-    const waypoints = newWaypoints;
-    return {
-      buildings: factories,
-      vehicles: state.vehicles.map((s) => (s.shipyardId === shipyardId ? { ...s, waypoints, pathIndex: nearestWaypointIndex(s.x, s.y, waypoints, s.pathIndex ?? 0), orbitAnchor: undefined } : s)),
-    };
-  }),
-  // Removing one waypoint shifts every later index down by one, so each ship's progress is carried
-  // over onto the same physical point it was already heading for (or the nearest one after it).
-  removeWaypoint: (shipyardId, index) => set((state) => {
-    let newWaypoints: Array<{ x: number, y: number }> | null = null;
-    const factories = state.buildings.map((f) => {
-      if(f.id !== shipyardId) return f;
-      const waypoints = f.waypoints || [];
-      if(index < 0 || index >= waypoints.length) return f;
-      newWaypoints = waypoints.filter((_, i) => i !== index);
-      return { ...f, waypoints: newWaypoints };
-    });
-    if(!newWaypoints) return { buildings: factories };
-    const waypoints = newWaypoints;
-    return {
-      buildings: factories,
-      vehicles: state.vehicles.map((s) => {
-        if(s.shipyardId !== shipyardId) return s;
-        const p = s.pathIndex ?? 0;
-        const minIndex = p > index ? p-1 : p;
-        const pathIndex = minIndex >= waypoints.length ? waypoints.length : nearestWaypointIndex(s.x, s.y, waypoints, minIndex);
-        return { ...s, waypoints, pathIndex, orbitAnchor: undefined };
-      }),
-    };
-  }),
-  // Ships from this shipyard drop their route and loiter in place (orbiting wherever they currently
-  // are) until new orders are given; orbitAnchor is cleared so movement re-anchors on their position now.
-  clearWaypoints: (shipyardId) => set((state) => ({
-    buildings: state.buildings.map((f) => (f.id === shipyardId ? { ...f, waypoints: [] } : f)),
-    vehicles: state.vehicles.map((s) => (s.shipyardId === shipyardId ? { ...s, waypoints: [], pathIndex: 0, orbitAnchor: undefined } : s)),
-  })),
-  // Direct unit orders: appends one waypoint onto each drag-selected ship's own route (see MapScene's
-  // drag-select box / setSelectedShipIds) — entirely independent of whichever shipyard spawned them,
-  // unlike addWaypoint above. Each ship keeps whatever progress it's already made; this only adds on.
-  addShipWaypoints: (shipIds, x, y) => set((state) => ({
-    vehicles: state.vehicles.map((s) => {
-      if(!shipIds.includes(s.id)) return s;
-      const waypoints = s.waypoints || [];
-      if(waypoints.length >= MAX_WAYPOINTS) return s;
-      return { ...s, waypoints: [...waypoints, { x, y }] };
-    }),
-  })),
-  // Drag-selected ships drop their route and loiter in place, same as clearWaypoints does for a whole
-  // shipyard's ships.
-  clearShipWaypoints: (shipIds) => set((state) => ({
-    vehicles: state.vehicles.map((s) => (shipIds.includes(s.id) ? { ...s, waypoints: [], pathIndex: 0, orbitAnchor: undefined } : s)),
-  })),
-  // Clicking an existing waypoint marker for a drag-selected group removes it from every selected ship
-  // that actually has a waypoint there (not just the one whose marker was clicked) — same
-  // click-to-remove gesture as a selected shipyard's route (removeWaypoint), just applied across the
-  // whole selection at once since addShipWaypoints itself is already a bulk operation. Ships with no
-  // matching waypoint are left untouched; each ship that does have one keeps its own progress otherwise,
-  // resuming from whichever waypoint is nearest to where it currently is.
-  removeShipWaypoints: (shipIds, x, y) => set((state) => ({
-    vehicles: state.vehicles.map((s) => {
-      if(!shipIds.includes(s.id)) return s;
-      const waypoints = s.waypoints || [];
-      const index = waypoints.findIndex((w) => w.x === x && w.y === y);
-      if(index < 0) return s;
-      const newWaypoints = waypoints.filter((_, i) => i !== index);
-      const p = s.pathIndex ?? 0;
-      const minIndex = p > index ? p-1 : p;
-      const pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(s.x, s.y, newWaypoints, minIndex);
-      return { ...s, waypoints: newWaypoints, pathIndex, orbitAnchor: undefined };
-    }),
-  })),
-  queueShip: (shipyardId, type) => set((state) => ({
-    buildings: state.buildings.map((f) => {
-      if(f.id !== shipyardId) return f;
-      const queue = f.queue || [];
-      if(queue.length >= MAX_QUEUE) return f;
-      const item: ProductionQueueItem = { id: v4(), type, startedAt: queue.length === 0 ? Date.now() : null };
-      return { ...f, queue: [...queue, item] };
-    }),
-  })),
-  completeQueueItem: (shipyardId) => set((state) => ({
-    buildings: state.buildings.map((f) => {
-      if(f.id !== shipyardId) return f;
-      const [, ...rest] = f.queue || [];
-      if(rest.length > 0) rest[0] = { ...rest[0], startedAt: Date.now() };
-      return { ...f, queue: rest };
-    }),
-  })),
-  addShip: (ship) => set((state) => ({ vehicles: [...state.vehicles, ship] })),
-  setShips: (ships) => set({ vehicles: ships }),
-  setPhase: (phase) => set({ phase }),
-  spendBuildingPoints: (faction, amount) => set((state) => ({
-    buildingPoints: { ...state.buildingPoints, [faction]: Math.max(0, state.buildingPoints[faction] - amount) },
-  })),
+  setSelectedShipIds: (selectedShipIds) => set({ selectedShipIds }),
+  addShipWaypoints: (shipIds, x, y) => get().scene?.addShipWaypoints(shipIds, x, y),
+  setShipWaypoints: (shipIds, x, y) => get().scene?.setShipWaypoints(shipIds, x, y),
+  removeShipWaypoints: (shipIds, x, y) => get().scene?.removeShipWaypoints(shipIds, x, y),
+  clearShipWaypoints: (shipIds) => get().scene?.clearShipWaypoints(shipIds),
+  queueShip: (baseId, type) => get().scene?.queueShip(baseId, type),
+  completeQueueItem: (baseId) => get().scene?.completeQueueItem(baseId),
+  setShips: (ships) => set({ ships }),
   addObjective: (objective) => set((state) => ({ objectives: [...state.objectives, objective] })),
   setObjectives: (objectives) => set({ objectives }),
+  addResourceNode: (node) => set((state) => ({ resourceNodes: [...state.resourceNodes, node] })),
+  setResourceNodes: (resourceNodes) => set({ resourceNodes }),
 }));

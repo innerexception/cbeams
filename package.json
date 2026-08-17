@@ -6,7 +6,6 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",
     "electron": "^27.0.3",
-    "milsymbol": "^3.0.4",
     "phaser": "^3.90.0",
     "rc-tooltip": "^5.1.1",
     "react": "^17.0.2",

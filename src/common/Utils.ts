@@ -1,13 +1,17 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
-import { Layers, Faction, BuildingType, BuildingData, VehicleType, VehicleData } from "../../enum"
-import { SAVE_NAME } from "./Constants"
+import { Faction, ShipType, ShipData } from "../../enum"
+import { SAVE_NAME, BASE_LOGISTICS_FLOOR, LOGISTICS_PER_OBJECTIVE } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
+// Tolerates a missing/non-string seed (falls back to '', still fully deterministic) rather than
+// throwing — every caller here derives its seed from a ship/entity id that should always be a real
+// string, but this stays defensive against whatever stale/malformed data slips through regardless.
 export const seededRandom = (seed:string) => {
     let h = 0
-    for(let i=0; i<seed.length; i++) h = (h*31 + seed.charCodeAt(i)) | 0
+    const s = seed ?? ''
+    for(let i=0; i<s.length; i++) h = (h*31 + s.charCodeAt(i)) | 0
     return () => {
         h = (h*1664525 + 1013904223) | 0
         return ((h >>> 0) / 0xffffffff)
@@ -25,17 +29,20 @@ export const tryLoadFile = async () => {
     //}
 }
 
-// Each vehicle kind's own logistics upkeep.
-export const getVehicleLogisticsCost = (type:VehicleType) => VehicleData[type].logisticsCost
+// Each ship kind's own logistics upkeep.
+export const getShipLogisticsCost = (type:ShipType) => ShipData[type].logisticsCost
 
-// Shared by the HUD, building placement, and ship production so all three agree on remaining
-// logistics capacity — buildings and deployed vehicles alike draw against the same shared budget.
+// Shared by the HUD and ship production so both agree on remaining logistics capacity — every deployed
+// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same
+// BASE_LOGISTICS_FLOOR budget, raised by LOGISTICS_PER_OBJECTIVE for every Objective the faction
+// currently owns (see updateObjectives).
 export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
-    const { buildings, vehicles } = useAppStore.getState()
-    const ownFactories = buildings.filter(f => f.faction === faction)
-    const ownVehicles = vehicles.filter(v => v.faction === faction)
-    const maxLogistics = ownFactories.filter(b=>b.kind === BuildingType.LogisticsCenter).length*10
-    const logisticsUsed = ownVehicles.reduce((sum, v) => sum + getVehicleLogisticsCost(v.type), 0)
+    const { ships, objectives } = useAppStore.getState()
+    const ownShips = ships.filter(s => s.faction === faction)
+    const objectivesHeld = objectives.filter(o => o.owner === faction).length
+
+    const maxLogistics = BASE_LOGISTICS_FLOOR + (objectivesHeld * LOGISTICS_PER_OBJECTIVE)
+    const logisticsUsed = ownShips.reduce((sum, s) => sum + getShipLogisticsCost(s.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }
 }

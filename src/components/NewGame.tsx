@@ -21,10 +21,10 @@ export default () => {
 
     const startNewGame = () => {
         const { setActiveMap, scene } = useAppStore.getState()
-        // Everything real (grid size, buildings, objectives) gets filled in from the loaded map file
-        // itself once MapScene's create() runs (see spawnEntitiesFromMap and its width/height read-off
-        // right before it) — this is just a placeholder shell so activeMap is non-null in the meantime.
-        setActiveMap({ width:MAP_SIZE, height:MAP_SIZE, bases:[], objectives:[], terrain:null })
+        // Everything real (grid size, ships, objectives) gets filled in from the loaded map file itself
+        // once MapScene's create() runs (see spawnEntitiesFromMap and its width/height read-off right
+        // before it) — this is just a placeholder shell so activeMap is non-null in the meantime.
+        setActiveMap({ width:MAP_SIZE, height:MAP_SIZE, objectives:[], terrain:null })
         onShowModal(null)
         scene?.scene.start(SceneNames.Main)
     }
@@ -36,7 +36,7 @@ export default () => {
                 <ToolButton onClick={startNewGame}>New</ToolButton>
                 <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
             </div>
-            {!saveFile && <div style={{ color:colors.lGreen, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
+            {!saveFile && <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
         </div>
     )
 }
