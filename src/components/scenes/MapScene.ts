@@ -1,38 +1,28 @@
-import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
+import { Scene, Physics } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain } from "../../common/AIPlayers";
-import { drawSightRadii } from "../../common/SightRadius";
 import ShipSprite from "../sprites/ShipSprite";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
     MAX_QUEUE, MAX_WAYPOINTS,
-    DOUBLE_CLICK_MS,
     BULLET_SPEED_PX_S, BULLET_MAX_LIFETIME_MS,
     ATD_BLAST_RADIUS_PX,
     MISSILE_SALVO_SIZE, MISSILE_SPEED_PX_S, MISSILE_MAX_LIFETIME_MS, SALVO_STAGGER_MS,
     MISSILE_ARC_HEIGHT_PX, CONTRAIL_INTERVAL_MS, CONTRAIL_LIFETIME_MS,
     MISSILE_IMPACT_LIFETIME_MS, MISSILE_IMPACT_MIN_RADIUS_PX, MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX,
-    SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S,
     HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
-    GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
+    GREEN_HEX, YELLOW_HEX, RED_HEX,
 } from "../../common/Constants";
-import { colors } from "../../styles/AppStyles";
 
 const TWO_PI = Math.PI*2
-
-const ZOOM_LEVELS = [1, 2]
-
-const SHIP_LABEL_GAP_PX = 10
-
-const AMMO_LABEL_GAP_PX = 4
 
 const IDLE_TURN_RATE_PER_MS = 0.002
 const MOVE_TURN_RATE_PER_MS = 0.001
@@ -71,23 +61,15 @@ const BASE_SPRITE_INDEX:Record<Faction, number> = { [Faction.Enemy]: 13, [Factio
 
 type BodyKind = 'ship' | 'missile' | 'bullet'
 
+// The game's simulation. Phaser runs this headless (see Viewport.tsx) — there is no Phaser renderer, no
+// camera, no canvas. Every visual concern now belongs to the Three.js renderer (src/render3d/Scene3D.ts),
+// which reads this scene's state each frame and draws it. What stays here is everything that decides
+// what's *true* in the match: movement, combat, capture, harvesting, production, fog of war.
+//
+// Anything below that looks visual (a ship's `visible` flag, an asteroid's sprite frame, mining-beam
+// flicker timing) is state the simulation owns and the renderer merely obeys — kept here so both
+// renderers, and the game rules themselves, agree on one answer.
 export default class MapScene extends Scene {
-
-    g: GameObjects.Graphics
-    rangeG: GameObjects.Graphics
-    rangeShadeBrush: GameObjects.Graphics
-    rangeShadeRT: GameObjects.RenderTexture
-    selectionG: GameObjects.Graphics
-    progressG: GameObjects.Graphics
-    healthG: GameObjects.Graphics
-    harvesterMetalG: GameObjects.Graphics
-    ordersG: GameObjects.Graphics
-    missileImpactG: GameObjects.Graphics
-    trailG: GameObjects.Graphics
-    objectiveRangeG: GameObjects.Graphics
-    harvesterBeamG: GameObjects.Graphics
-    starfield: GameObjects.TileSprite
-    dragSelectG: GameObjects.Graphics
 
     shipsGroup: Physics.Arcade.Group
     missilesGroup: Physics.Arcade.Group
@@ -100,34 +82,26 @@ export default class MapScene extends Scene {
     // Iterate via `this.ships` (a fresh array snapshot) rather than this Map directly wherever a system
     // might spawn/destroy ships mid-iteration.
     shipSprites: Map<string, ShipSprite> = new Map()
-    shipLabels: Map<string, GameObjects.Text> = new Map()
-    ammoLabels: Map<string, GameObjects.Text> = new Map()
-    objectiveSprites: Map<string, GameObjects.Image> = new Map()
-    objectiveLabels: Map<string, GameObjects.Text> = new Map()
-    resourceNodeSprites: Map<string, GameObjects.Image> = new Map()
+    // Which tiles.png frame each Asteroid currently shows. A node's art steps down through the size tiers
+    // as it's mined out (see asteroidTier), and that choice is the sim's — the renderer just draws
+    // whichever frame is recorded here rather than re-deriving the tier thresholds itself.
+    resourceNodeFrames: Map<string, number> = new Map()
 
-    orderLabels: Array<GameObjects.Text> = []
-    lastOrdersKey: string = ''
-    shiftDown: boolean = false
-    dragSelectStart: { x:number, y:number } | null = null
-    dragSelectCurrent: { x:number, y:number } | null = null
-    pointerDownWorld: { x:number, y:number } | null = null
-    // Tracks the last single ship clicked (and when) so handleClick can tell a genuine double-click
-    // (same ship, within DOUBLE_CLICK_MS) apart from two unrelated single clicks.
-    lastClickShipId: string | null = null
-    lastClickAtMs: number = 0
+    // Transient effects the renderer draws and the sim owns the lifetime of: a flash where a missile
+    // landed, and the fading dots tracing each missile's flight. Pruned by age in update().
     impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
 
     harvesterMiningTarget: Map<string, string> = new Map()
+    // Whether each mining beam is currently lit, and when it next flips. Purely cosmetic flicker, but it
+    // has to be stable frame to frame (rolling fresh randomness per frame would strobe), so it's state
+    // rather than something the renderer can derive on the fly.
     harvesterBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
 
     enemyBaseId: string
     enemyRaidLaunched: boolean = false
     gameOver: boolean = false
     mapData: MapData
-    origDragPoint: Phaser.Math.Vector2
-    hoveredCell: {x:number, y:number}
     unsubscribe: () => void
 
     constructor(config){
@@ -144,27 +118,7 @@ export default class MapScene extends Scene {
     }
 
     create = () => {
-        this.cameras.main.setBackgroundColor('#000000')
-        this.input.mouse.disableContextMenu()
-        this.g = this.add.graphics()
-        this.rangeG = this.add.graphics()
-        this.rangeShadeBrush = this.make.graphics({}, false)
-        this.rangeShadeRT = this.add.renderTexture(0, 0, MAP_SIZE*CELL_SIZE, MAP_SIZE*CELL_SIZE).setOrigin(0, 0).setAlpha(0.12)
-        this.selectionG = this.add.graphics()
-        this.progressG = this.add.graphics()
-        this.healthG = this.add.graphics()
-        this.harvesterMetalG = this.add.graphics()
-        this.ordersG = this.add.graphics()
-        this.missileImpactG = this.add.graphics()
-        this.trailG = this.add.graphics()
-        this.objectiveRangeG = this.add.graphics()
-        this.dragSelectG = this.add.graphics()
-        this.harvesterBeamG = this.add.graphics()
-
-        this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
-        this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
-
-        this.generateTextures()
+        this.generateProjectileTextures()
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
         this.bulletsGroup = this.physics.add.group()
@@ -180,16 +134,7 @@ export default class MapScene extends Scene {
             this.mapData.height = tiledMap.height
         }
 
-        this.cameras.main.setZoom(1)
-        this.centerCameraBounds()
-
-        const bounds = this.cameras.main.getBounds()
-        this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-1000).setScrollFactor(0.5)
-
         this.spawnEntitiesFromMap()
-        this.drawMap()
-        this.enableCameraControls()
-        this.enableSelectionControls()
 
         spawnEnemyRaid(this)
 
@@ -206,48 +151,30 @@ export default class MapScene extends Scene {
         useAppStore.getState().setLoaded(true)
     }
 
-    generateTextures = () => {
-        const tmp = this.add.graphics()
-        const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
-            tmp.clear()
-            draw(tmp, size/2, size/2)
-            tmp.generateTexture(key, size, size)
+    // A missile/bullet is a real physics body, and a body takes its default size from its texture — so
+    // these still need to exist even though nothing here draws them anymore (the renderer draws its own
+    // dots). Built on a plain 2D canvas via addCanvas rather than Graphics.generateTexture: the latter
+    // needs a live renderer to rasterize through, and there isn't one in headless mode.
+    generateProjectileTextures = () => {
+        const bake = (key:string, size:number, draw:(ctx:CanvasRenderingContext2D, c:number) => void) => {
+            if(this.textures.exists(key)) return
+            const canvas = document.createElement('canvas')
+            canvas.width = size
+            canvas.height = size
+            draw(canvas.getContext('2d'), size/2)
+            this.textures.addCanvas(key, canvas)
         }
 
-        bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
-        // Bigger/brighter than missile_dot, with a soft glow ring — a bullet only lives up to
-        // BULLET_MAX_LIFETIME_MS and covers its whole (short) range in well under a second, so it needs
-        // to read clearly at a glance or PDF actually firing is easy to miss entirely.
-        bake('bullet_dot', 10, (g, cx, cy) => {
-            g.fillStyle(YELLOW_HEX, 0.35)
-            g.fillCircle(cx, cy, 5)
-            g.fillStyle(YELLOW_HEX, 1)
-            g.fillCircle(cx, cy, 2.5)
+        bake('missile_dot', 8, (ctx, c) => {
+            ctx.fillStyle = 'rgba(85,255,85,0.9)'
+            ctx.beginPath(); ctx.arc(c, c, 2, 0, Math.PI*2); ctx.fill()
         })
-
-        Object.values(ShipType).filter(type => type !== ShipType.CATH).forEach(type => this.generateHostileShipTexture(type))
-    }
-
-    generateHostileShipTexture = (key:string) => {
-        const source = this.textures.get(key).getSourceImage() as HTMLImageElement | HTMLCanvasElement
-        const w = source.width, h = source.height
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(source as CanvasImageSource, 0, 0)
-
-        const imageData = ctx.getImageData(0, 0, w, h)
-        const data = imageData.data
-        for(let i=0; i<data.length; i += 4){
-            if(data[i+3] === 0) continue
-            if(data[i] === 0x55 && data[i+1] === 0xff && data[i+2] === 0x55){
-                data[i] = 0xff; data[i+1] = 0x55; data[i+2] = 0x55
-            }
-        }
-        ctx.putImageData(imageData, 0, 0)
-
-        this.textures.addCanvas(key+'_enemy', canvas)
+        bake('bullet_dot', 10, (ctx, c) => {
+            ctx.fillStyle = 'rgba(255,255,85,0.35)'
+            ctx.beginPath(); ctx.arc(c, c, 5, 0, Math.PI*2); ctx.fill()
+            ctx.fillStyle = 'rgba(255,255,85,1)'
+            ctx.beginPath(); ctx.arc(c, c, 2.5, 0, Math.PI*2); ctx.fill()
+        })
     }
 
     update = (time:number, delta:number) => {
@@ -265,128 +192,35 @@ export default class MapScene extends Scene {
         updateEnemyZel(this)
         updateEnemyGain(this)
         this.updateFogOfWar()
-        this.updateShipLabels()
-        drawSightRadii(this.rangeG, this.ships)
-        this.drawObjectiveCaptureProgress(time)
+        this.updateHarvesterBeamFlicker(time)
+        this.expireEffects(time)
+    }
 
-        this.drawProductionProgress()
-        this.drawShipHealth()
-        this.drawHarvesterMetalGauge()
-        this.updateAmmoLabels()
-        this.drawOrders()
-        this.drawHarvesterBeams(time)
-        this.drawMissileImpacts(time)
-        this.drawMissileTrails(time)
-
-        this.selectionG.clear()
-        const { selectedShipIds } = useAppStore.getState()
-        selectedShipIds.forEach(id => {
-            const ship = this.shipSprites.get(id)
-            if(!ship) return
-            this.drawSelectionRing(ship.x, ship.y, ShipData[ship.type].sizeHex * CELL_SIZE * 0.7, time)
+    // Advances each active mining beam's own on/off flicker. Cosmetic, but it lives here rather than in
+    // the renderer because it has to persist across frames — re-rolling the timing every frame would
+    // strobe rather than flicker. Beams for harvesters that stopped mining are dropped outright.
+    updateHarvesterBeamFlicker = (time:number) => {
+        this.harvesterBeamState.forEach((_, id) => {
+            if(!this.harvesterMiningTarget.has(id)) this.harvesterBeamState.delete(id)
+        })
+        this.harvesterMiningTarget.forEach((_, harvesterId) => {
+            let state = this.harvesterBeamState.get(harvesterId)
+            if(!state){
+                state = { on:true, nextToggleAt: time + this.randomFlickerIntervalMs() }
+                this.harvesterBeamState.set(harvesterId, state)
+            }
+            if(time < state.nextToggleAt) return
+            state.on = !state.on
+            state.nextToggleAt = time + this.randomFlickerIntervalMs()
         })
     }
 
-    drawSelectionRing = (x:number, y:number, baseRadius:number, time:number) => {
-        const pulse = 0.85 + Math.sin(time*0.006)*0.15
-        const r = baseRadius * pulse
-        const points = []
-        for(let i=0; i<8; i++){
-            const angle = (i/8)*Math.PI*2 + Math.PI/8
-            points.push(new Phaser.Math.Vector2(x + Math.cos(angle)*r, y + Math.sin(angle)*r))
-        }
-        this.selectionG.lineStyle(2, GREEN_HEX, 1)
-        this.selectionG.strokePoints(points, true, true)
-    }
-
-    drawProductionProgress = () => {
-        const g = this.progressG
-        g.clear()
-
-        this.ships.forEach(s => {
-            const item = s.queue[0]
-            if(!item?.startedAt) return
-            if(!s.visible) return
-
-            const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / ShipData[item.type].productionTimeMs, 0, 1)
-            const w = CELL_SIZE * 1.6, h = 4
-            const barX = s.x - w/2, barY = s.y - CELL_SIZE*2 - h
-
-            g.lineStyle(1, GREEN_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
-        })
-    }
-
-    drawShipHealth = () => {
-        const g = this.healthG
-        g.clear()
-
-        this.ships.forEach(s => {
-            const maxHp = ShipData[s.type].hp
-            if(s.hp >= maxHp) return
-            if(!s.visible) return
-
-            const percent = PhaserMath.Clamp(s.hp / maxHp, 0, 1)
-            const w = CELL_SIZE * 1.4, h = 4
-            const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
-            const barX = s.x - w/2, barY = s.y + footprint + h
-
-            g.lineStyle(1, GREEN_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
-        })
-    }
-
-    // How full a GAIN ship's carried metal is (see ShipSprite's metalCarried/HARVESTER_METAL_CAPACITY) —
-    // always shown, not just when partially empty like drawShipHealth's HP bar, since "currently empty"
-    // is itself useful info here rather than clutter to hide. Drawn on its own row below the HP bar's
-    // (offset an extra bar-height further out) so a damaged, partially-full Harvester can show both at
-    // once without them overlapping.
-    drawHarvesterMetalGauge = () => {
-        const g = this.harvesterMetalG
-        g.clear()
-
-        this.ships.forEach(s => {
-            if(s.type !== ShipType.GAIN) return
-            if(!s.visible) return
-
-            const percent = PhaserMath.Clamp((s.metalCarried ?? 0) / HARVESTER_METAL_CAPACITY, 0, 1)
-            const w = CELL_SIZE * 1.4, h = 4
-            const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
-            const barX = s.x - w/2, barY = s.y + footprint + h*2 + 2
-
-            g.lineStyle(1, YELLOW_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(YELLOW_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
-        })
-    }
-
-    updateAmmoLabels = () => {
-        this.ships.forEach(ship => {
-            const label = this.ammoLabels.get(ship.id)
-            if(!label) return
-            const visible = ship.visible
-            label.setVisible(visible)
-            if(!visible) return
-
-            label.setText(String(ship.ammoRemaining ?? 0))
-            label.setPosition(ship.x - ship.displayWidth/2 - AMMO_LABEL_GAP_PX, ship.y + ship.displayHeight/2 + AMMO_LABEL_GAP_PX)
-        })
-    }
-
-    floatText = (gridX:number, gridY:number, text:string) => {
-        const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.green }).setOrigin(0.5).setDepth(5)
-        this.tweens.add({
-            targets: label,
-            y: y-20,
-            duration: 2000,
-            onComplete: () => label.destroy()
-        })
+    // Impact flashes and contrails are spawned by combat and simply age out. The pruning used to happen
+    // inside the draw passes that consumed them; with drawing gone it has to happen here, or they'd grow
+    // without bound whether or not anything was looking at them.
+    expireEffects = (time:number) => {
+        this.impactFlashes = this.impactFlashes.filter(f => time - f.createdAt < MISSILE_IMPACT_LIFETIME_MS)
+        this.contrails = this.contrails.filter(c => time - c.createdAt < CONTRAIL_LIFETIME_MS)
     }
 
     tickProduction = () => {
@@ -462,7 +296,7 @@ export default class MapScene extends Scene {
                     const metal = Math.round(ASTEROID_AVG_METAL + (Math.random()*2-1)*ASTEROID_METAL_VARIANCE)
                     const node:ResourceNodeData = { id:v4(), x, y, metal, maxMetal:metal }
                     useAppStore.getState().addResourceNode(node)
-                    this.createResourceNodeSprite(node)
+                    this.assignResourceNodeFrame(node)
                     continue
                 }
 
@@ -473,7 +307,6 @@ export default class MapScene extends Scene {
                 this.mapData.objectives.push(spawn)
                 const objective:ObjectiveData = { id:spawn.id, owner:null, capturingFaction:null, captureStartedAtMs:null }
                 useAppStore.getState().addObjective(objective)
-                this.createObjectiveSprite(spawn)
             }
         }
 
@@ -482,38 +315,20 @@ export default class MapScene extends Scene {
         this.syncShipSummaries()
     }
 
-    createResourceNodeSprite = (node:ResourceNodeData) => {
+    // Which of its tier's frames a node shows is rolled once, at spawn, and again only when it actually
+    // drops a tier — rolling per frame would make an asteroid visibly churn through variants as it's mined.
+    assignResourceNodeFrame = (node:ResourceNodeData) => {
         const frames = ASTEROID_TIER_FRAMES[asteroidTier(node)]
-        const sprite = this.add.image(node.x, node.y, 'tiles', frames[Math.floor(Math.random()*frames.length)]).setDepth(1)
-        sprite.setData('asteroidTier', asteroidTier(node))
-        this.resourceNodeSprites.set(node.id, sprite)
+        this.resourceNodeFrames.set(node.id, frames[Math.floor(Math.random()*frames.length)])
     }
 
-    updateResourceNodeSprite = (node:ResourceNodeData) => {
-        const sprite = this.resourceNodeSprites.get(node.id)
-        if(!sprite) return
-        const tier = asteroidTier(node)
-        if(sprite.getData('asteroidTier') === tier) return
-        sprite.setData('asteroidTier', tier)
-        const frames = ASTEROID_TIER_FRAMES[tier]
-        sprite.setFrame(frames[Math.floor(Math.random()*frames.length)])
-    }
-
-    destroyResourceNodeSprite = (id:string) => {
-        this.resourceNodeSprites.get(id)?.destroy()
-        this.resourceNodeSprites.delete(id)
+    updateResourceNodeFrame = (node:ResourceNodeData) => {
+        const frames = ASTEROID_TIER_FRAMES[asteroidTier(node)]
+        if(frames.includes(this.resourceNodeFrames.get(node.id))) return
+        this.resourceNodeFrames.set(node.id, frames[Math.floor(Math.random()*frames.length)])
     }
 
     getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? RED_HEX : YELLOW_HEX
-
-    createObjectiveSprite = (spawn:ObjectiveSpawn) => {
-        const { x, y } = this.toWorld(spawn.x, spawn.y)
-        const sprite = this.add.image(x, y, 'tiles', ObjectiveSpriteIndex[spawn.sprite]).setDepth(2)
-        this.objectiveSprites.set(spawn.id, sprite)
-
-        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
-        this.objectiveLabels.set(spawn.id, label)
-    }
 
     updateObjectives = (time:number) => {
         const { objectives, setObjectives } = useAppStore.getState()
@@ -545,7 +360,6 @@ export default class MapScene extends Scene {
             if(time - objective.captureStartedAtMs < OBJECTIVE_CAPTURE_TIME_MS) return objective
 
             changed = true
-            this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(contestingFaction))
             return { ...objective, owner: contestingFaction }
         })
 
@@ -562,28 +376,6 @@ export default class MapScene extends Scene {
         onShowModal(faction === Faction.Player ? Modal.Victory : Modal.Defeat)
     }
 
-    drawObjectiveCaptureProgress = (time:number) => {
-        const g = this.objectiveRangeG
-        g.clear()
-
-        useAppStore.getState().objectives.forEach(objective => {
-            const spawn = this.mapData.objectives.find(o => o.id === objective.id)
-            if(!spawn) return
-            const { x, y } = this.toWorld(spawn.x, spawn.y)
-
-            if(objective.capturingFaction === null || objective.captureStartedAtMs === null) return
-            const percent = PhaserMath.Clamp((time-objective.captureStartedAtMs) / OBJECTIVE_CAPTURE_TIME_MS, 0, 1)
-            const color = this.getObjectiveOwnerColor(objective.capturingFaction)
-            const w = OBJECTIVE_ICON_SIZE, h = 4
-            const barX = x - w/2, barY = y + OBJECTIVE_ICON_SIZE*0.5 + 20
-
-            g.lineStyle(1, color, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(color, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
-        })
-    }
-
     handleBaseDestroyed = (faction:Faction) => {
         if(this.gameOver) return
         this.gameOver = true
@@ -597,26 +389,16 @@ export default class MapScene extends Scene {
         })
     }
 
-    updateShipLabels = () => {
-        const { selectedShipIds } = useAppStore.getState()
-        this.shipLabels.forEach((label, id) => {
-            label.setVisible(selectedShipIds.includes(id) && !!this.shipSprites.get(id)?.visible)
-        })
-    }
-
     // --- Physics sprite lifecycle -------------------------------------------------------------------
     // Every ShipSprite is created exactly once (spawnShip; spawnEntitiesFromMap for a faction's Base
     // and every map-placed starting ship), and destroyed exactly once, the instant damage actually
     // drops its hp to 0 (killIfDead/detonateDrone).
 
     createShipSprite = (id:string, faction:Faction, type:ShipType, x:number, y:number):ShipSprite => {
-        const isFriend = faction === Faction.Player
-        // A real baked enemy-colored texture (see generateHostileShipTexture), not a tint — setTint
-        // multiplies against whatever colors are already in the art, which for a sprite already using
-        // more than one palette color (black outline, green hull, yellow highlight) produces off-palette
-        // blends rather than a clean recolor. CATH (Base) has its own bespoke enemy texture instead.
-        const textureKey = isFriend ? type : (type === ShipType.CATH ? 'base_enemy' : type+'_enemy')
-        const ship = new ShipSprite(this, x, y, textureKey, id, faction, type)
+        // The texture here is only what gives the physics body its size — which faction's art actually
+        // gets drawn is the renderer's business (see Assets3D's getShipTexture). Both factions' art for a
+        // type is the same dimensions, so the player's is used for sizing regardless of faction.
+        const ship = new ShipSprite(this, x, y, type, id, faction, type)
         this.add.existing(ship)
         this.physics.add.existing(ship)
         this.centerCircleBody(ship)
@@ -625,82 +407,14 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(ship)
         this.shipSprites.set(id, ship)
 
-        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
-        this.shipLabels.set(id, label)
-
-        if(ShipData[type].ammo){
-            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false)
-            this.ammoLabels.set(id, ammoLabel)
-        }
-
-        if(!isFriend) ship.setVisible(false)
+        // Enemy ships start hidden and are revealed only by fog of war (updateFogOfWar).
+        if(faction !== Faction.Player) ship.setVisible(false)
         return ship
     }
-
-    shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
 
     destroyShipSprite = (id:string) => {
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
-        this.shipLabels.get(id)?.destroy()
-        this.shipLabels.delete(id)
-        this.ammoLabels.get(id)?.destroy()
-        this.ammoLabels.delete(id)
-    }
-
-    spawnDeathFragments = (sprite:Physics.Arcade.Sprite) => {
-        const w = sprite.width, h = sprite.height
-        if(w <= 0 || h <= 0) return
-
-        const cutAcrossWidth = w <= h
-        const segments = 4
-        const sweepHalf = cutAcrossWidth ? w/2 : h/2
-        const tiltHalf = cutAcrossWidth ? h/2 : w/2
-        const startTilt = (Math.random()-0.5) * tiltHalf*0.6
-        const endTilt = (Math.random()-0.5) * tiltHalf*0.6
-        const jaggedPoints:Array<{x:number,y:number}> = []
-        for(let i=0; i<=segments; i++){
-            const t = i/segments
-            const sweep = -sweepHalf + sweepHalf*2*t
-            const jitter = (i===0 || i===segments) ? 0 : (Math.random()-0.5) * tiltHalf*0.6
-            const tilt = startTilt+(endTilt-startTilt)*t + jitter
-            jaggedPoints.push(cutAcrossWidth ? { x:sweep, y:tilt } : { x:tilt, y:sweep })
-        }
-
-        const topLeft = { x:-w/2, y:-h/2 }, topRight = { x:w/2, y:-h/2 }
-        const bottomLeft = { x:-w/2, y:h/2 }, bottomRight = { x:w/2, y:h/2 }
-        const pieceAPolygon = cutAcrossWidth ? [topLeft, ...jaggedPoints, topRight] : [topLeft, ...jaggedPoints, bottomLeft]
-        const pieceBPolygon = cutAcrossWidth ? [bottomLeft, ...[...jaggedPoints].reverse(), bottomRight] : [topRight, ...[...jaggedPoints].reverse(), bottomRight]
-        const pieceALocalDir = cutAcrossWidth ? { x:0, y:-1 } : { x:-1, y:0 }
-        const pieceBLocalDir = cutAcrossWidth ? { x:0, y:1 } : { x:1, y:0 }
-
-        ;[
-            { polygon:pieceAPolygon, localDir:pieceALocalDir, spinSign:-1 },
-            { polygon:pieceBPolygon, localDir:pieceBLocalDir, spinSign:1 },
-        ].forEach(({ polygon, localDir, spinSign }) => {
-            const piece = this.add.image(sprite.x, sprite.y, sprite.texture.key, sprite.frame.name)
-                .setOrigin(0.5).setRotation(sprite.rotation).setScale(sprite.scaleX, sprite.scaleY).setDepth(sprite.depth)
-
-            const mask = this.make.graphics({}, false)
-                .setPosition(sprite.x, sprite.y).setRotation(sprite.rotation).setScale(sprite.scaleX, sprite.scaleY)
-            mask.fillStyle(0xFFFFFF).fillPoints(polygon, true)
-            piece.setMask(mask.createGeometryMask())
-
-            const distance = SHIP_FRAGMENT_MIN_DISTANCE_PX + Math.random()*(SHIP_FRAGMENT_MAX_DISTANCE_PX-SHIP_FRAGMENT_MIN_DISTANCE_PX)
-            const worldDx = (localDir.x*Math.cos(sprite.rotation) - localDir.y*Math.sin(sprite.rotation)) * distance
-            const worldDy = (localDir.x*Math.sin(sprite.rotation) + localDir.y*Math.cos(sprite.rotation)) * distance
-            const spin = spinSign * (0.3 + Math.random()*0.5)
-
-            this.tweens.add({
-                targets: [piece, mask],
-                x: sprite.x+worldDx,
-                y: sprite.y+worldDy,
-                rotation: sprite.rotation+spin,
-                duration: SHIP_FRAGMENT_LIFETIME_MS,
-                ease: 'Cubic.Out',
-                onComplete: () => { piece.destroy(); mask.destroy() },
-            })
-        })
     }
 
     centerCircleBody = (sprite:Physics.Arcade.Sprite) => {
@@ -715,7 +429,6 @@ export default class MapScene extends Scene {
     // *drone's own* death separately (it gets an impact flash, not fragments — it's the one detonating).
     killIfDead = (ship:ShipSprite) => {
         if(ship.isAlive()) return false
-        this.spawnDeathFragments(ship)
         const wasBase = ship.type === ShipType.CATH
         const faction = ship.faction
         this.destroyShipSprite(ship.id)
@@ -811,7 +524,6 @@ export default class MapScene extends Scene {
                 ship.setRotation(Phaser.Math.Angle.RotateTo(ship.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
             }
 
-            this.shipLabels.get(ship.id)?.setPosition(ship.x, ship.y-this.shipLabelOffsetPx(ship))
 
             if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedBoms.push(ship)
 
@@ -1047,6 +759,9 @@ export default class MapScene extends Scene {
     spawnBullet = (faction:Faction, x:number, y:number, damage:number, aimX:number, aimY:number) => {
         const bullet = this.physics.add.sprite(x, y, 'bullet_dot')
         bullet.setData('kind', 'bullet' as BodyKind)
+        // Stable identity for the renderer, so a bullet's dot follows the same projectile frame to frame
+        // instead of being rebuilt from scratch (same reason missiles carry one).
+        bullet.setData('id', v4())
         bullet.setData('faction', faction)
         bullet.setData('damage', damage)
         bullet.setData('createdAt', this.time.now)
@@ -1133,10 +848,10 @@ export default class MapScene extends Scene {
         }).filter(n => n !== null)
 
         setResourceNodes(updated)
-        depletedIds.forEach(id => this.destroyResourceNodeSprite(id))
+        depletedIds.forEach(id => this.resourceNodeFrames.delete(id))
         drawdown.forEach((_, id) => {
             if(depletedIds.includes(id)) return
-            this.updateResourceNodeSprite(updated.find(n => n.id === id))
+            this.updateResourceNodeFrame(updated.find(n => n.id === id))
         })
     }
 
@@ -1278,141 +993,41 @@ export default class MapScene extends Scene {
         })
     }
 
-    drawHarvesterBeams = (time:number) => {
-        const g = this.harvesterBeamG
-        g.clear()
-
-        this.harvesterBeamState.forEach((_, id) => {
-            if(!this.harvesterMiningTarget.has(id)) this.harvesterBeamState.delete(id)
-        })
-
-        const { resourceNodes } = useAppStore.getState()
-        this.harvesterMiningTarget.forEach((nodeId, harvesterId) => {
-            const sprite = this.shipSprites.get(harvesterId)
-            const node = resourceNodes.find(n => n.id === nodeId)
-            if(!sprite || !node) return
-
-            let state = this.harvesterBeamState.get(harvesterId)
-            if(!state){
-                state = { on:true, nextToggleAt: time + this.randomFlickerIntervalMs() }
-                this.harvesterBeamState.set(harvesterId, state)
-            }
-            if(time >= state.nextToggleAt){
-                state.on = !state.on
-                state.nextToggleAt = time + this.randomFlickerIntervalMs()
-            }
-            if(!state.on) return
-
-            g.lineStyle(1, YELLOW_HEX)
-            g.lineBetween(sprite.x, sprite.y, node.x, node.y)
-        })
-    }
-
     randomFlickerIntervalMs = () => HARVESTER_BEAM_FLICKER_MIN_MS + Math.random()*(HARVESTER_BEAM_FLICKER_MAX_MS-HARVESTER_BEAM_FLICKER_MIN_MS)
-
-    drawMissileImpacts = (time:number) => {
-        const g = this.missileImpactG
-        g.clear()
-
-        this.impactFlashes = this.impactFlashes.filter(f => time - f.createdAt < MISSILE_IMPACT_LIFETIME_MS)
-        this.impactFlashes.forEach(f => {
-            const progress = (time - f.createdAt) / MISSILE_IMPACT_LIFETIME_MS
-            const radius = MISSILE_IMPACT_MIN_RADIUS_PX + f.damage*MISSILE_IMPACT_RADIUS_PER_DAMAGE_PX
-            g.fillStyle(YELLOW_HEX, 1-progress)
-            g.fillCircle(f.x, f.y, radius)
-        })
-    }
-
-    drawMissileTrails = (time:number) => {
-        const g = this.trailG
-        g.clear()
-
-        this.contrails = this.contrails.filter(c => time - c.createdAt < CONTRAIL_LIFETIME_MS)
-
-        const byMissile = new Map<string, Array<{ x:number, y:number, createdAt:number }>>()
-        this.contrails.forEach(c => {
-            const points = byMissile.get(c.missileId) || []
-            points.push(c)
-            byMissile.set(c.missileId, points)
-        })
-
-        byMissile.forEach(points => {
-            points.sort((a, b) => a.createdAt - b.createdAt)
-            for(let i=1; i<points.length; i++){
-                const prev = points[i-1], cur = points[i]
-                const alpha = (1 - (time-cur.createdAt)/CONTRAIL_LIFETIME_MS) * 0.5
-                g.lineStyle(1.5, GREEN_HEX, alpha)
-                g.lineBetween(prev.x, prev.y, cur.x, cur.y)
-            }
-        })
-    }
 
     toWorld = gridToWorld
     toGrid = worldToGrid
-
-    drawMap = () => {
-        const g = this.g
-        g.clear()
-
-        const worldSize = this.mapData.width * CELL_SIZE
-
-        for(let i=0; i<=this.mapData.width; i++){
-            const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
-            g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldSize)
-            g.lineBetween(0, i*CELL_SIZE, worldSize, i*CELL_SIZE)
-        }
-
-        this.drawTerrain()
-    }
-
-    drawTerrain = () => {
-
-
-    }
-
-    drawOrders = () => {
-        const { selectedShipIds } = useAppStore.getState()
-
-        this.lastOrdersKey = ''
-        const g = this.ordersG
-        g.clear()
-        this.orderLabels.forEach(label => label.destroy())
-        this.orderLabels = []
-
-        selectedShipIds.forEach(id => {
-            const ship = this.shipSprites.get(id)
-            if(!ship || ship.waypoints.length === 0) return
-            this.drawRouteAndMarkers(g, { x:ship.x, y:ship.y }, ship.waypoints)
-        })
-    }
-
-    drawRouteAndMarkers = (g:GameObjects.Graphics, originWorld:{x:number,y:number}, waypoints:Array<{x:number,y:number}>) => {
-        const points = [originWorld, ...waypoints.map(w => this.toWorld(w.x, w.y))]
-        g.lineStyle(1.5, GREEN_HEX, 0.5)
-        for(let i=0; i<points.length-1; i++) g.lineBetween(points[i].x, points[i].y, points[i+1].x, points[i+1].y)
-
-        waypoints.forEach((w, i) => {
-            const { x, y } = this.toWorld(w.x, w.y)
-            g.fillStyle(GREEN_HEX, 0.9)
-            g.fillCircle(x, y, 5)
-            g.lineStyle(1, GREEN_HEX, 1)
-            g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5).setDepth(5)
-            this.orderLabels.push(label)
-        })
-    }
 
     isWithinFactionSightRange = (worldX:number, worldY:number, faction:Faction) => {
         return this.ships.some(s => s.faction === faction && Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= ShipData[s.type].sightRadius)
     }
 
-    findOwnShipAt = (worldX:number, worldY:number) => {
-        return this.ships.find(s => {
-            if(s.faction !== Faction.Player || s.type === ShipType.CATH) return false
-            const r = Math.max(ShipData[s.type].sizeHex * CELL_SIZE/2, 10)
-            return Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= r
-        })
+    // The order half of what used to be handleClick. Picking which ship (if any) was clicked is now the
+    // renderer's job — it owns the camera and therefore the only correct answer about what's under the
+    // cursor — but the decision of what an order actually *means* stays here, where the rules live.
+    // `additive` is the shift-held variant: append to the route rather than replace it.
+    orderSelectedTo = (gridX:number, gridY:number, additive:boolean) => {
+        if(gridX < 0 || gridY < 0 || gridX >= this.mapData.width || gridY >= this.mapData.height) return
+
+        const { selectedShipIds } = useAppStore.getState()
+        const orderableIds = this.ships
+            .filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked)
+            .map(s => s.id)
+        if(orderableIds.length === 0) return
+
+        // Clicking an existing waypoint marker always removes it — from every selected ship that has one
+        // there, not just whichever ship's marker was drawn on top — and takes priority over shift's
+        // usual replace-vs-append behaviour.
+        const clickedExisting = this.ships
+            .filter(s => orderableIds.includes(s.id))
+            .some(s => s.waypoints.some(w => w.x === gridX && w.y === gridY))
+        if(clickedExisting){
+            this.removeShipWaypoints(orderableIds, gridX, gridY)
+            return
+        }
+
+        if(additive) this.addShipWaypoints(orderableIds, gridX, gridY)
+        else this.setShipWaypoints(orderableIds, gridX, gridY)
     }
 
     // --- Store-delegated ship orders/production ------------------------------------------------------
@@ -1514,159 +1129,6 @@ export default class MapScene extends Scene {
         if(rest.length > 0) rest[0] = { ...rest[0], startedAt: Date.now() }
         base.queue = rest
         this.syncShipSummaries()
-    }
-
-    enableSelectionControls = () => {
-        this.input.on('pointerdown', (pointer:Phaser.Input.Pointer) => {
-            if(!this.hoveredCell) return
-            if(!pointer.leftButtonDown()) return
-
-            const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
-            this.pointerDownWorld = { x:worldPoint.x, y:worldPoint.y }
-
-            if(!this.shiftDown){
-                this.dragSelectStart = { x:worldPoint.x, y:worldPoint.y }
-                this.dragSelectCurrent = this.dragSelectStart
-            }
-        })
-
-        this.input.keyboard.on('keydown-ESC', () => {
-            useAppStore.getState().setSelectedShipIds([])
-        })
-    }
-
-    handleClick = (worldX:number, worldY:number) => {
-        if(!this.hoveredCell) return
-        const { selectedShipIds, setSelectedShipIds } = useAppStore.getState()
-
-        const clicked = this.findOwnShipAt(worldX, worldY)
-        if(clicked){
-            const now = this.time.now
-            const isDoubleClick = this.lastClickShipId === clicked.id && now - this.lastClickAtMs <= DOUBLE_CLICK_MS
-            this.lastClickShipId = clicked.id
-            this.lastClickAtMs = now
-
-            if(isDoubleClick){
-                // Select every one of the player's own ships of the same type, not just this one.
-                const sameTypeIds = this.ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
-                setSelectedShipIds(sameTypeIds)
-                // A third click right after shouldn't chain into yet another double-click.
-                this.lastClickShipId = null
-                return
-            }
-
-            setSelectedShipIds([clicked.id])
-            return
-        }
-
-        if(selectedShipIds.length > 0){
-            const { x, y } = this.hoveredCell
-            if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
-            if(orderableIds.length === 0) return
-
-            // Clicking directly on an existing waypoint marker always removes it — for every selected
-            // ship that actually has one there, not just whichever ship's marker happens to render on
-            // top — regardless of shift, taking priority over shift's usual replace-vs-append order-giving.
-            const selectedShips = this.ships.filter(s => orderableIds.includes(s.id))
-            const clickedExisting = selectedShips.some(s => s.waypoints.some(w => w.x === x && w.y === y))
-            if(clickedExisting){
-                this.removeShipWaypoints(orderableIds, x, y)
-                return
-            }
-
-            if(!this.shiftDown){
-                this.setShipWaypoints(orderableIds, x, y)
-                return
-            }
-            this.addShipWaypoints(orderableIds, x, y)
-            return
-        }
-
-        setSelectedShipIds([])
-    }
-
-    centerCameraBounds = () => {
-        const cam = this.cameras.main
-        const worldSize = this.mapData.width * CELL_SIZE
-        const boundsW = Math.max(worldSize, cam.width)
-        const boundsH = Math.max(worldSize, cam.height)
-        cam.setBounds((worldSize-boundsW)/2, (worldSize-boundsH)/2, boundsW, boundsH)
-        cam.centerOn(worldSize/2, worldSize/2)
-    }
-
-    enableCameraControls = () => {
-        this.input.on('pointermove', () => {
-            const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
-            this.hoveredCell = this.toGrid(worldPoint.x, worldPoint.y)
-
-            if(this.dragSelectStart){
-                this.dragSelectCurrent = { x:worldPoint.x, y:worldPoint.y }
-                this.drawDragSelectBox()
-                return
-            }
-
-            const pointer = this.input.activePointer
-            if(pointer.rightButtonDown() || pointer.leftButtonDown()){
-                if(this.origDragPoint){
-                    this.cameras.main.scrollX += (this.origDragPoint.x - pointer.position.x) / this.cameras.main.zoom
-                    this.cameras.main.scrollY += (this.origDragPoint.y - pointer.position.y) / this.cameras.main.zoom
-                }
-                this.origDragPoint = pointer.position.clone()
-            }
-            else {
-                this.origDragPoint = null
-            }
-        })
-
-        this.input.on('pointerup', () => {
-            const pointer = this.input.activePointer
-            const isClick = Phaser.Math.Distance.Between(pointer.downX, pointer.downY, pointer.upX, pointer.upY) < 6
-
-            if(!this.dragSelectStart){
-                if(this.pointerDownWorld && isClick) this.handleClick(this.pointerDownWorld.x, this.pointerDownWorld.y)
-                this.pointerDownWorld = null
-                return
-            }
-
-            const start = this.dragSelectStart
-            const end = this.dragSelectCurrent || start
-            this.dragSelectStart = null
-            this.dragSelectCurrent = null
-            this.pointerDownWorld = null
-            this.dragSelectG.clear()
-
-            if(isClick){
-                this.handleClick(start.x, start.y)
-                return
-            }
-
-            const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x)
-            const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y)
-
-            const hitIds = this.ships
-                .filter(s => s.faction === Faction.Player && s.type !== ShipType.CATH && s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY)
-                .map(s => s.id)
-            useAppStore.getState().setSelectedShipIds(hitIds)
-        })
-
-        this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
-            this.cameras.main.setZoom(dy < 0 ? ZOOM_LEVELS[ZOOM_LEVELS.length-1] : ZOOM_LEVELS[0])
-        })
-    }
-
-    drawDragSelectBox = () => {
-        const g = this.dragSelectG
-        g.clear()
-        if(!this.dragSelectStart || !this.dragSelectCurrent) return
-        const { x:sx, y:sy } = this.dragSelectStart
-        const { x:ex, y:ey } = this.dragSelectCurrent
-        const x = Math.min(sx, ex), y = Math.min(sy, ey)
-        const w = Math.abs(ex-sx), h = Math.abs(ey-sy)
-        g.fillStyle(GREEN_HEX, 0.08)
-        g.fillRect(x, y, w, h)
-        g.lineStyle(1, GREEN_HEX, 0.8)
-        g.strokeRect(x, y, w, h)
     }
 
     onTransitionIn = () => {
