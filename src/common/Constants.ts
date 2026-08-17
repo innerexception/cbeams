@@ -119,15 +119,20 @@ export const HARVESTER_ORBIT_ANGULAR_SPEED = 0.0001 // radians per ms
 export const HARVESTER_COLLECTION_RATE_PER_S = 1
 // A Harvester no longer deposits what it mines into a shared faction stockpile — there is no faction
 // stockpile anymore — it just carries the metal itself, up to this cap (see MapScene's updateHarvesters/
-// drawHarvesterMetalGauge for the gather side, updateAmmoResupply for what it's actually spent on).
+// drawHarvesterMetalGauge for the gather side, updateHarvesterSupport for what it's actually spent on).
 export const HARVESTER_METAL_CAPACITY = 50
 // Any ship within this range of a Harvester (any type, not just ones that fire — see MapScene's
-// updateAmmoResupply) has its own ammoRemaining topped up from that Harvester's carried metal, one
+// updateHarvesterSupport) has its own ammoRemaining topped up from that Harvester's carried metal, one
 // whole unit (1 metal for 1 ammo) at a time every HARVESTER_RESUPPLY_INTERVAL_MS — a discrete tick
 // rather than a continuous per-second rate, since ammoRemaining is a whole-number "shots left" stat and
 // transferring in fractional amounts would leave it (and metalCarried) drifting off whole numbers.
 export const HARVESTER_RESUPPLY_RANGE_PX = 100
 export const HARVESTER_RESUPPLY_INTERVAL_MS = 1000
+// A Harvester within range of a damaged friendly ship (hp below its ShipStats max) repairs it instead,
+// 1 whole hp at a time on the same per-tick cadence/cooldown as ammo resupply, but at this steeper metal
+// cost per hp — see MapScene's updateHarvesterSupport, which tries an ammo-short target first and only
+// falls back to a repair target if none was found (or there wasn't enough metal left for one).
+export const HARVESTER_REPAIR_METAL_COST = 2
 export const RESOURCE_ASTEROID_COUNT = 14
 // An Asteroid's starting metal stockpile is ASTEROID_AVG_METAL +/- a random amount up to
 // ASTEROID_METAL_VARIANCE, so nodes vary in size without ever straying too far from the stated average.

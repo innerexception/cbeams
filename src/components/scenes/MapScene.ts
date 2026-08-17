@@ -16,7 +16,7 @@ import {
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S, RESOURCE_ASTEROID_COUNT,
-    HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS,
+    HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE, RESOURCE_NODE_MIN_SPACING_PX,
     GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX,
@@ -232,7 +232,7 @@ export default class MapScene extends Scene {
         this.updateMlrs(time)
         this.updateArmor(time)
         this.updateHarvesters(delta)
-        this.updateAmmoResupply(time)
+        this.updateHarvesterSupport(time)
         this.updateObjectives(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
@@ -1009,7 +1009,7 @@ export default class MapScene extends Scene {
 
     // A Harvester no longer deposits what it mines into a shared faction stockpile — it carries the
     // metal itself (see ShipData's metalCarried), capped at HARVESTER_METAL_CAPACITY, spent later
-    // refilling ammo (see updateAmmoResupply). Stops drawing from its target the instant it's full,
+    // refilling ammo/repairing hp (see updateHarvesterSupport). Stops drawing from its target the instant it's full,
     // same as updateHarvesterMiningTargets already refuses to assign one a target once it is.
     updateHarvesters = (deltaMs:number) => {
         const { ships, resourceNodes, setShips, setResourceNodes } = useAppStore.getState()
@@ -1059,12 +1059,14 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Any ship within HARVESTER_RESUPPLY_RANGE_PX of a Harvester has its own ammoRemaining topped up
-    // from that Harvester's carried metal, 1-for-1, one whole unit at a time every
-    // HARVESTER_RESUPPLY_INTERVAL_MS (gated by lastResupplyAtMs, the same cooldown-timestamp pattern
-    // lastFiredAtMs uses) rather than a continuous per-second rate, so neither ammoRemaining nor
-    // metalCarried ever drifts off a whole number.
-    updateAmmoResupply = (time:number) => {
+    // Any friendly ship within HARVESTER_RESUPPLY_RANGE_PX of a Harvester gets supported from that
+    // Harvester's carried metal, one whole unit at a time every HARVESTER_RESUPPLY_INTERVAL_MS (gated by
+    // lastResupplyAtMs, the same cooldown-timestamp pattern lastFiredAtMs uses) rather than a continuous
+    // per-second rate, so ammoRemaining/hp/metalCarried never drift off whole numbers. Each Harvester
+    // does at most one thing per tick: it prefers topping up an ammo-short target 1-for-1, and only falls
+    // back to repairing a damaged target (1 hp for HARVESTER_REPAIR_METAL_COST metal) if no ammo-short
+    // target was in range, or it couldn't fully afford one anyway.
+    updateHarvesterSupport = (time:number) => {
         const { ships, setShips } = useAppStore.getState()
         const harvesters = ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1
             && (!s.lastResupplyAtMs || time - s.lastResupplyAtMs >= HARVESTER_RESUPPLY_INTERVAL_MS))
@@ -1072,30 +1074,43 @@ export default class MapScene extends Scene {
 
         const metalSpent = new Map<string, number>() // harvester id -> metal spent this tick
         const ammoGained = new Map<string, number>() // ship id -> ammo gained this tick
-        const resuppliedHarvesterIds = new Set<string>()
+        const hpGained = new Map<string, number>() // ship id -> hp gained this tick
+        const supportedHarvesterIds = new Set<string>()
+
+        const inRange = (harvester:ShipData, t:ShipData) => t.faction === harvester.faction
+            && Phaser.Math.Distance.Between(harvester.x, harvester.y, t.x, t.y) <= HARVESTER_RESUPPLY_RANGE_PX
 
         harvesters.forEach(harvester => {
-            const target = ships.find(t => t.faction === harvester.faction
-                && ShipData[t.type].ammo
-                && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo
-                && Phaser.Math.Distance.Between(harvester.x, harvester.y, t.x, t.y) <= HARVESTER_RESUPPLY_RANGE_PX)
-            if(!target) return
+            const ammoTarget = ships.find(t => inRange(harvester, t)
+                && ShipData[t.type].ammo && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo)
+            if(ammoTarget){
+                metalSpent.set(harvester.id, 1)
+                ammoGained.set(ammoTarget.id, (ammoGained.get(ammoTarget.id) || 0) + 1)
+                supportedHarvesterIds.add(harvester.id)
+                return
+            }
 
-            metalSpent.set(harvester.id, 1)
-            ammoGained.set(target.id, (ammoGained.get(target.id) || 0) + 1)
-            resuppliedHarvesterIds.add(harvester.id)
+            if((harvester.metalCarried ?? 0) < HARVESTER_REPAIR_METAL_COST) return
+            const repairTarget = ships.find(t => inRange(harvester, t) && t.hp < ShipData[t.type].hp)
+            if(!repairTarget) return
+
+            metalSpent.set(harvester.id, HARVESTER_REPAIR_METAL_COST)
+            hpGained.set(repairTarget.id, (hpGained.get(repairTarget.id) || 0) + 1)
+            supportedHarvesterIds.add(harvester.id)
         })
 
-        if(resuppliedHarvesterIds.size === 0) return
+        if(supportedHarvesterIds.size === 0) return
 
         setShips(ships.map(s => {
             const spent = metalSpent.get(s.id)
-            const gained = ammoGained.get(s.id)
-            if(!spent && !gained) return s
+            const ammoAdd = ammoGained.get(s.id)
+            const hpAdd = hpGained.get(s.id)
+            if(!spent && !ammoAdd && !hpAdd) return s
             return {
                 ...s,
                 metalCarried: spent ? (s.metalCarried ?? 0) - spent : s.metalCarried,
-                ammoRemaining: gained ? (s.ammoRemaining ?? 0) + gained : s.ammoRemaining,
+                ammoRemaining: ammoAdd ? Math.min(ShipData[s.type].ammo, (s.ammoRemaining ?? 0) + ammoAdd) : s.ammoRemaining,
+                hp: hpAdd ? Math.min(ShipData[s.type].hp, s.hp + hpAdd) : s.hp,
                 lastResupplyAtMs: spent ? time : s.lastResupplyAtMs,
             }
         }))
