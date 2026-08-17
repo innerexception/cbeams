@@ -1,7 +1,7 @@
 import { GameObjects, Geom, Scene, Tilemaps } from "phaser"
 import { useAppStore } from './store';
 import { Faction, ShipType, ShipData } from "../../enum"
-import { SAVE_NAME, BASE_LOGISTICS_FLOOR } from "./Constants"
+import { SAVE_NAME, BASE_LOGISTICS_FLOOR, LOGISTICS_PER_OBJECTIVE } from "./Constants"
 
 // Simple deterministic PRNG so a shape derived from a stable id (a resource node, a piece of ship
 // wreckage, ...) redraws identically frame to frame instead of jittering with fresh randomness.
@@ -33,13 +33,15 @@ export const tryLoadFile = async () => {
 export const getShipLogisticsCost = (type:ShipType) => ShipData[type].logisticsCost
 
 // Shared by the HUD and ship production so both agree on remaining logistics capacity — every deployed
-// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same flat
-// BASE_LOGISTICS_FLOOR budget.
+// ship (a faction's Base included, though its own logisticsCost is 0) draws against the same
+// BASE_LOGISTICS_FLOOR budget, raised by LOGISTICS_PER_OBJECTIVE for every Objective the faction
+// currently owns (see updateObjectives).
 export const getLogisticsStatus = (faction:Faction = Faction.Player) => {
-    const { ships } = useAppStore.getState()
+    const { ships, objectives } = useAppStore.getState()
     const ownShips = ships.filter(s => s.faction === faction)
+    const objectivesHeld = objectives.filter(o => o.owner === faction).length
 
-    const maxLogistics = BASE_LOGISTICS_FLOOR
+    const maxLogistics = BASE_LOGISTICS_FLOOR + objectivesHeld * LOGISTICS_PER_OBJECTIVE
     const logisticsUsed = ownShips.reduce((sum, s) => sum + getShipLogisticsCost(s.type), 0)
     const logisticsRemaining = maxLogistics - logisticsUsed
     return { maxLogistics, logisticsUsed, logisticsRemaining }

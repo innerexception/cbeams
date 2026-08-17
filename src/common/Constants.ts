@@ -27,11 +27,15 @@ export const SAVE_NAME = 'xeno3_save'
 // There are no buildings in this game — every ship (including a faction's own Base) queues and orders
 // through the same fields (see ShipData in types.d.ts). MAX_QUEUE/MAX_WAYPOINTS bound a Base's own queue
 // and any ship's own route respectively.
-export const MAX_QUEUE = 3
+export const MAX_QUEUE = 1
 export const MAX_WAYPOINTS = 5
 // A faction's logistics cap (see Utils' getLogisticsStatus) — the flat ceiling on how large a fleet it
-// can field at once.
+// can field at once, before any Objectives it holds raise it further.
 export const BASE_LOGISTICS_FLOOR = 10
+// Each Objective a faction currently owns (see updateObjectives) raises its logistics cap by this much,
+// live off however many it holds right now rather than an accumulated one-off bonus — so losing one back
+// to the other faction lowers the cap again immediately, the same as gaining one raises it.
+export const LOGISTICS_PER_OBJECTIVE = 1
 
 // --- Kamikaze drones (KK, ATD) ---
 // Both now detonate against any hostile ship they touch (there's nothing else left to touch — see

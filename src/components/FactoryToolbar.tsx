@@ -40,20 +40,17 @@ export default () => {
 
                 return (
                     <div>
-                        <div style={{ display:'flex' }}>
+                        <div style={{ display:'flex', flexDirection:'column' }}>
                             {Object.values(ShipType).filter(type => type !== ShipType.CATH).map(type => (
                                 <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name}</ToolButton>
                             ))}
-                        </div>
-                        <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>
-                            New ships wait by the Base until given their own orders.
                         </div>
                         <div style={{ marginTop:8, display:'flex', gap:8 }}>
                             {Array.from({ length: MAX_QUEUE }).map((_, i) => {
                                 const item = queue[i]
                                 const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
                                 return (
-                                    <div key={i} style={{ width:100, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
+                                    <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
                                         <div>{item ? ShipData[item.type].name : '—'}</div>
                                         <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
                                             {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
@@ -72,11 +69,7 @@ export default () => {
                 // the selection readout + bulk Clear Orders/Cancel.
                 <div>
                     <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
-                        {selectedShips.length} unit{selectedShips.length === 1 ? '' : 's'} selected — click the map to give orders
-                    </div>
-                    <div style={{ marginTop:8, display:'flex' }}>
-                        <ToolButton onClick={()=>clearShipWaypoints(selectedShipIds)}>Clear Orders</ToolButton>
-                        <ToolButton onClick={()=>setSelectedShipIds([])}>Cancel</ToolButton>
+                        {selectedShips.map(s=><div>{s.type}</div>)}
                     </div>
                 </div>
             ) : (

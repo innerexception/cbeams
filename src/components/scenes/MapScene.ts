@@ -1380,14 +1380,22 @@ export default class MapScene extends Scene {
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
             const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
             if(orderableIds.length === 0) return
+
+            // Clicking directly on an existing waypoint marker always removes it — for every selected
+            // ship that actually has one there, not just whichever ship's marker happens to render on
+            // top — regardless of shift, taking priority over shift's usual replace-vs-append order-giving.
+            const selectedShips = ships.filter(s => orderableIds.includes(s.id))
+            const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
+            if(clickedExisting){
+                removeShipWaypoints(orderableIds, x, y)
+                return
+            }
+
             if(!this.shiftDown){
                 setShipWaypoints(orderableIds, x, y)
                 return
             }
-            const selectedShips = ships.filter(s => orderableIds.includes(s.id))
-            const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
-            if(clickedExisting) removeShipWaypoints(orderableIds, x, y)
-            else addShipWaypoints(orderableIds, x, y)
+            addShipWaypoints(orderableIds, x, y)
             return
         }
 
