@@ -86,63 +86,17 @@ interface ShipStats {
     ammo?:number
 }
 
-interface ShipData {
+// A ship's own real, high-frequency simulation state (hp, position, cooldowns, route, ...) lives on
+// ShipSprite (src/components/sprites/ShipSprite.ts) now, mutated directly every frame — never in the
+// Zustand store. This is the low-frequency summary MapScene pushes into the store instead, purely for
+// React (ResourceHUD, FactoryToolbar) to render from: just enough to show a ship's type/description, tell
+// factions apart, and drive a Base's production panel. Pushed on the rare discrete events that actually
+// change one of these fields — a ship spawns, dies, or its queue changes — never on a physics tick.
+interface ShipSummary {
     id: string
     faction: import('./enum').Faction
     type: import('./enum').ShipType
-    x: number
-    y: number
-    // A ship's own route, followed in order (see MapScene's moveShips) then sat idle at the last point.
-    // A newly produced ship always starts with none — it just sits by its Base until given one (see
-    // spawnShip) — and a Base itself never has any of its own; it never actually moves (speed:0) and
-    // MapScene's handleClick won't let one be selected for order-giving in the first place.
-    waypoints?: Array<{ x:number, y:number }>
-    pathIndex?: number
-    // Set whenever an order (setShipWaypoints/addShipWaypoints, see store.ts) is given to this ship as
-    // part of a group — the slowest member's own ShipData speed at that moment, so the whole group
-    // arrives together instead of faster ships pulling ahead. MapScene's moveShips uses this instead of
-    // ShipData[type].speed whenever it's set. Ordering a ship on its own works out to its own natural
-    // speed regardless (a group of one has itself as its slowest member), so this never needs clearing.
-    orderSpeedPxS?: number
-    // ARMOR only — the Objective (ObjectiveData.id) it's currently latched onto, having come within
-    // OBJECTIVE_CAPTURE_RADIUS_PX of it (see MapScene's moveShips). Overrides its normal route entirely
-    // while set: it moves straight to that Objective's own edge and sits there instead of continuing on
-    // to its next waypoint. Set the instant it starts approaching — NOT the same instant as actually
-    // arriving there, see objectiveAttached for that. Cleared the instant that Objective is captured by
-    // its own faction, or the instant it's given any new order (see store's addShipWaypoints/
-    // removeShipWaypoints/clearShipWaypoints, all of which clear this same as they always have
-    // waypoints/pathIndex).
-    latchedObjectiveId?: string
-    // ARMOR only — true once it's actually reached the edge point latchedObjectiveId sends it to, not
-    // merely en route there. This, not latchedObjectiveId alone, is what updateObjectives requires before
-    // a capture even starts counting down — otherwise the timer would start the instant an ARMOR merely
-    // entered range, before it had actually attached to anything.
-    objectiveAttached?: boolean
-    // EYE only — set the instant it finishes its very first route and comes to a stop (see MapScene's
-    // moveShips). From then on it's permanently immobile: moveShips forces it idle regardless of any
-    // waypoints it might have, and MapScene's handleClick won't let it be given new orders at all — it
-    // just sits wherever it stopped until destroyed.
-    movementLocked?: boolean
-    lastFiredAtMs?: number
-    hp: number
-    // Only present for a ship whose ShipStats sets `ammo` (SPR) — set to that value when the ship's
-    // spawned, decremented per missile actually launched, or refilled by a nearby GAIN (see MapScene's
-    // updateHarvesterSupport). Once it hits 0 it can't fire again.
-    ammoRemaining?: number
-    // GAIN only — how much metal it's currently carrying, up to HARVESTER_METAL_CAPACITY. Gained by
-    // mining an Asteroid (see MapScene's updateHarvesters/drawHarvesterMetalGauge) and spent refilling
-    // ammo or repairing hp on any friendly ship within HARVESTER_RESUPPLY_RANGE_PX (see
-    // updateHarvesterSupport) — there's no faction-wide stockpile anymore, this carried amount is the
-    // only metal that exists.
-    metalCarried?: number
-    // GAIN only — when it last spent metal supporting another ship (ammo or repair) via
-    // updateHarvesterSupport, so that support stays gated to one action per HARVESTER_RESUPPLY_INTERVAL_MS
-    // instead of a continuous per-frame fractional rate (the same cooldown-timestamp pattern
-    // lastFiredAtMs uses for weapon cooldowns).
-    lastResupplyAtMs?: number
-    // Only ever set on a Base (see ShipType.CATH) — every other ship's own production queue, filled by
-    // queueShip/emptied by completeQueueItem/tickProduction, the same role the old shipyard building's
-    // own queue field used to play.
+    // Only ever populated on a Base (see ShipType.CATH) — see ShipSprite's own queue field.
     queue?: Array<ProductionQueueItem>
 }
 

@@ -5,9 +5,11 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
+import ShipSprite from "../sprites/ShipSprite";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
+    MAX_QUEUE, MAX_WAYPOINTS,
     DOUBLE_CLICK_MS,
     BULLET_SPEED_PX_S, BULLET_MAX_LIFETIME_MS,
     ATD_BLAST_RADIUS_PX,
@@ -52,17 +54,18 @@ const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
 
 const DRONE_TYPES = new Set<ShipType>([ShipType.KKZ, ShipType.BOM])
 
-const applyDamage = <T extends { id:string, hp:number }>(items:Array<T>, damageByTarget:Map<string, number>, onDeath?:(item:T) => void) =>
-    items.map(item => {
-        const damage = damageByTarget.get(item.id)
-        if(damage === undefined) return item
-        const hp = item.hp - damage
-        if(hp <= 0){
-            onDeath?.(item)
-            return null
-        }
-        return { ...item, hp }
-    }).filter(item => item !== null)
+// Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever the
+// ship already is without ever sending it back to a waypoint it has already passed.
+const nearestWaypointIndex = (shipX:number, shipY:number, waypoints:Array<{x:number,y:number}>, minIndex = 0) => {
+    let bestIndex = Math.min(minIndex, waypoints.length-1)
+    let bestDistSq = Infinity
+    for(let i=minIndex; i<waypoints.length; i++){
+        const p = gridToWorld(waypoints[i].x, waypoints[i].y)
+        const distSq = (p.x-shipX)**2 + (p.y-shipY)**2
+        if(distSq < bestDistSq){ bestDistSq = distSq; bestIndex = i }
+    }
+    return bestIndex
+}
 
 const BASE_SPRITE_INDEX:Record<Faction, number> = { [Faction.Enemy]: 13, [Faction.Player]: 0 }
 
@@ -92,7 +95,11 @@ export default class MapScene extends Scene {
     // group from missilesGroup: a bullet is a straight-line, non-homing shot with its own short
     // lifetime, not an offensive missile's arced/retargeting flight.
     bulletsGroup: Physics.Arcade.Group
-    shipSprites: Map<string, Physics.Arcade.Sprite> = new Map()
+    // The single source of truth for every ship, both factions' — see ShipSprite's own doc comment for
+    // why its high-frequency state lives entirely on the instance rather than in the Zustand store.
+    // Iterate via `this.ships` (a fresh array snapshot) rather than this Map directly wherever a system
+    // might spawn/destroy ships mid-iteration.
+    shipSprites: Map<string, ShipSprite> = new Map()
     shipLabels: Map<string, GameObjects.Text> = new Map()
     ammoLabels: Map<string, GameObjects.Text> = new Map()
     objectiveSprites: Map<string, GameObjects.Image> = new Map()
@@ -126,6 +133,14 @@ export default class MapScene extends Scene {
     constructor(config){
         super(config)
         onSetScene(this)
+    }
+
+    // A fresh array snapshot of every ship — safe to iterate even when the system doing so might spawn
+    // or destroy ships partway through (spawning appends to shipSprites but never to a snapshot already
+    // taken; destroying doesn't retroactively remove an entry from one either), unlike iterating
+    // shipSprites directly. Every per-frame system reads through this rather than the Map.
+    get ships():Array<ShipSprite> {
+        return Array.from(this.shipSprites.values())
     }
 
     create = () => {
@@ -256,7 +271,7 @@ export default class MapScene extends Scene {
         checkEnemyRaid(this)
         this.updateFogOfWar()
         this.updateShipLabels()
-        drawSightRadii(this.rangeG)
+        drawSightRadii(this.rangeG, this.ships)
         this.drawObjectiveCaptureProgress(time)
 
         this.drawProductionProgress()
@@ -269,9 +284,9 @@ export default class MapScene extends Scene {
         this.drawMissileTrails(time)
 
         this.selectionG.clear()
-        const { selectedShipIds, ships } = useAppStore.getState()
+        const { selectedShipIds } = useAppStore.getState()
         selectedShipIds.forEach(id => {
-            const ship = ships.find(s => s.id === id)
+            const ship = this.shipSprites.get(id)
             if(!ship) return
             this.drawSelectionRing(ship.x, ship.y, ShipData[ship.type].sizeHex * CELL_SIZE * 0.7, time)
         })
@@ -293,10 +308,10 @@ export default class MapScene extends Scene {
         const g = this.progressG
         g.clear()
 
-        useAppStore.getState().ships.forEach(s => {
-            const item = s.queue?.[0]
+        this.ships.forEach(s => {
+            const item = s.queue[0]
             if(!item?.startedAt) return
-            if(this.shipSprites.get(s.id)?.visible === false) return
+            if(!s.visible) return
 
             const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / ShipData[item.type].productionTimeMs, 0, 1)
             const w = CELL_SIZE * 1.6, h = 4
@@ -313,11 +328,10 @@ export default class MapScene extends Scene {
         const g = this.healthG
         g.clear()
 
-        useAppStore.getState().ships.forEach(s => {
+        this.ships.forEach(s => {
             const maxHp = ShipData[s.type].hp
             if(s.hp >= maxHp) return
-            const sprite = this.shipSprites.get(s.id)
-            if(!sprite || sprite.visible === false) return
+            if(!s.visible) return
 
             const percent = PhaserMath.Clamp(s.hp / maxHp, 0, 1)
             const w = CELL_SIZE * 1.4, h = 4
@@ -331,7 +345,7 @@ export default class MapScene extends Scene {
         })
     }
 
-    // How full a GAIN ship's carried metal is (see ShipData's metalCarried/HARVESTER_METAL_CAPACITY) —
+    // How full a GAIN ship's carried metal is (see ShipSprite's metalCarried/HARVESTER_METAL_CAPACITY) —
     // always shown, not just when partially empty like drawShipHealth's HP bar, since "currently empty"
     // is itself useful info here rather than clutter to hide. Drawn on its own row below the HP bar's
     // (offset an extra bar-height further out) so a damaged, partially-full Harvester can show both at
@@ -340,10 +354,9 @@ export default class MapScene extends Scene {
         const g = this.harvesterMetalG
         g.clear()
 
-        useAppStore.getState().ships.forEach(s => {
+        this.ships.forEach(s => {
             if(s.type !== ShipType.GAIN) return
-            const sprite = this.shipSprites.get(s.id)
-            if(!sprite || sprite.visible === false) return
+            if(!s.visible) return
 
             const percent = PhaserMath.Clamp((s.metalCarried ?? 0) / HARVESTER_METAL_CAPACITY, 0, 1)
             const w = CELL_SIZE * 1.4, h = 4
@@ -358,16 +371,15 @@ export default class MapScene extends Scene {
     }
 
     updateAmmoLabels = () => {
-        useAppStore.getState().ships.forEach(ship => {
+        this.ships.forEach(ship => {
             const label = this.ammoLabels.get(ship.id)
             if(!label) return
-            const sprite = this.shipSprites.get(ship.id)
-            const visible = !!sprite && sprite.visible
+            const visible = ship.visible
             label.setVisible(visible)
             if(!visible) return
 
             label.setText(String(ship.ammoRemaining ?? 0))
-            label.setPosition(sprite.x - sprite.displayWidth/2 - AMMO_LABEL_GAP_PX, sprite.y + sprite.displayHeight/2 + AMMO_LABEL_GAP_PX)
+            label.setPosition(ship.x - ship.displayWidth/2 - AMMO_LABEL_GAP_PX, ship.y + ship.displayHeight/2 + AMMO_LABEL_GAP_PX)
         })
     }
 
@@ -383,40 +395,40 @@ export default class MapScene extends Scene {
     }
 
     tickProduction = () => {
-        const { ships, completeQueueItem } = useAppStore.getState()
-
-        ships.forEach(s => {
-            const item = s.queue?.[0]
+        this.ships.forEach(ship => {
+            const item = ship.queue[0]
             if(!item?.startedAt || Date.now() - item.startedAt < ShipData[item.type].productionTimeMs) return
-            if(getLogisticsStatus(s.faction).logisticsRemaining - getShipLogisticsCost(item.type) < 0) return
+            if(getLogisticsStatus(ship.faction).logisticsRemaining - getShipLogisticsCost(item.type) < 0) return
 
-            completeQueueItem(s.id)
-            this.spawnShip(s, item.type)
+            this.completeQueueItem(ship.id)
+            this.spawnShip(ship, item.type)
         })
     }
 
-    spawnShip = (base:ShipData, type:ShipType) => {
+    // Places a newly completed ship near its Base (or DRN, for a KKZ), trying to avoid overlapping other
+    // loitering ships.
+    spawnShip = (base:ShipSprite, type:ShipType) => {
         const center = { x:base.x, y:base.y }
         const size = ShipData[type].sizeHex * CELL_SIZE
-        const existingShips = useAppStore.getState().ships
         let pos = center
 
         for(let attempt=0; attempt<40; attempt++){
             const radius = CELL_SIZE*1.5 + attempt*4
             const angle = Math.random()*Math.PI*2
             const candidate = { x: center.x+Math.cos(angle)*radius, y: center.y+Math.sin(angle)*radius }
-            const overlapsShip = existingShips.some(s => {
+            const overlapsShip = this.ships.some(s => {
                 const minDist = (size + ShipData[s.type].sizeHex*CELL_SIZE)/2 + 12
                 return Phaser.Math.Distance.Between(candidate.x, candidate.y, s.x, s.y) < minDist
             })
             if(!overlapsShip){ pos = candidate; break }
         }
 
-        const ship:ShipData = { id:v4(), faction:base.faction, type, x:pos.x, y:pos.y, hp:ShipData[type].hp, ammoRemaining:ShipData[type].ammo }
-        useAppStore.getState().addShip(ship)
-        this.createShipSprite(ship)
+        this.createShipSprite(v4(), base.faction, type, pos.x, pos.y)
+        this.syncShipSummaries()
     }
 
+    // Every ship (both factions' Bases included) and every Objective/Asteroid comes straight off the
+    // loaded map file's own entities layer.
     spawnEntitiesFromMap = () => {
         const map = this.make.tilemap({ key: Maps.Sandbox })
         const layer = map.getLayer('entities')
@@ -433,9 +445,7 @@ export default class MapScene extends Scene {
                 const baseFaction = ([Faction.Player, Faction.Enemy] as Array<Faction>).find(f => BASE_SPRITE_INDEX[f] === localIndex)
                 if(baseFaction){
                     const { x, y } = this.toWorld(tx, ty)
-                    const base:ShipData = { id:v4(), faction:baseFaction, type:ShipType.CATH, x, y, hp:ShipData[ShipType.CATH].hp }
-                    useAppStore.getState().addShip(base)
-                    this.createShipSprite(base)
+                    const base = this.createShipSprite(v4(), baseFaction, ShipType.CATH, x, y)
                     if(baseFaction === Faction.Enemy) this.enemyBaseId = base.id
                     continue
                 }
@@ -448,9 +458,7 @@ export default class MapScene extends Scene {
                     const faction = ShipTypeSpriteIndex[localIndex] !== undefined ? Faction.Player : Faction.Enemy
                     const type = ShipType[shipTypeKey]
                     const { x, y } = this.toWorld(tx, ty)
-                    const ship:ShipData = { id:v4(), faction, type, x, y, hp:ShipData[type].hp, ammoRemaining:ShipData[type].ammo }
-                    useAppStore.getState().addShip(ship)
-                    this.createShipSprite(ship)
+                    this.createShipSprite(v4(), faction, type, x, y)
                     continue
                 }
 
@@ -473,6 +481,10 @@ export default class MapScene extends Scene {
                 this.createObjectiveSprite(spawn)
             }
         }
+
+        // One bulk sync at the end rather than one per entity — this runs once at match start with
+        // potentially dozens of ships, and nothing needs to see them appear one at a time.
+        this.syncShipSummaries()
     }
 
     createResourceNodeSprite = (node:ResourceNodeData) => {
@@ -509,8 +521,9 @@ export default class MapScene extends Scene {
     }
 
     updateObjectives = (time:number) => {
-        const { objectives, ships, setObjectives } = useAppStore.getState()
+        const { objectives, setObjectives } = useAppStore.getState()
         if(objectives.length === 0) return
+        const ships = this.ships
 
         let changed = false
         const updated = objectives.map(objective => {
@@ -584,11 +597,8 @@ export default class MapScene extends Scene {
     }
 
     updateFogOfWar = () => {
-        const { ships } = useAppStore.getState()
-
-        ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
-            const visible = this.isWithinFactionSightRange(s.x, s.y, Faction.Player)
-            this.shipSprites.get(s.id)?.setVisible(visible)
+        this.ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
+            s.setVisible(this.isWithinFactionSightRange(s.x, s.y, Faction.Player))
         })
     }
 
@@ -599,29 +609,37 @@ export default class MapScene extends Scene {
         })
     }
 
-    createShipSprite = (ship:ShipData) => {
-        const isFriend = ship.faction === Faction.Player
+    // --- Physics sprite lifecycle -------------------------------------------------------------------
+    // Every ShipSprite is created exactly once (spawnShip; spawnEntitiesFromMap for a faction's Base
+    // and every map-placed starting ship), and destroyed exactly once, the instant damage actually
+    // drops its hp to 0 (killIfDead/detonateDrone).
+
+    createShipSprite = (id:string, faction:Faction, type:ShipType, x:number, y:number):ShipSprite => {
+        const isFriend = faction === Faction.Player
         // A real baked enemy-colored texture (see generateHostileShipTexture), not a tint — setTint
         // multiplies against whatever colors are already in the art, which for a sprite already using
         // more than one palette color (black outline, green hull, yellow highlight) produces off-palette
         // blends rather than a clean recolor. CATH (Base) has its own bespoke enemy texture instead.
-        const textureKey = isFriend ? ship.type : (ship.type === ShipType.CATH ? 'base_enemy' : ship.type+'_enemy')
-        const sprite = this.physics.add.sprite(ship.x, ship.y, textureKey)
-        this.centerCircleBody(sprite)
-        sprite.setData('kind', 'ship' as BodyKind)
-        sprite.setData('id', ship.id)
-        this.shipsGroup.add(sprite)
-        this.shipSprites.set(ship.id, sprite)
+        const textureKey = isFriend ? type : (type === ShipType.CATH ? 'base_enemy' : type+'_enemy')
+        const ship = new ShipSprite(this, x, y, textureKey, id, faction, type)
+        this.add.existing(ship)
+        this.physics.add.existing(ship)
+        this.centerCircleBody(ship)
+        ship.setData('kind', 'ship' as BodyKind)
+        ship.setData('id', id)
+        this.shipsGroup.add(ship)
+        this.shipSprites.set(id, ship)
 
-        const label = this.add.text(ship.x, ship.y-this.shipLabelOffsetPx(sprite), ship.type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
-        this.shipLabels.set(ship.id, label)
+        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
+        this.shipLabels.set(id, label)
 
-        if(ShipData[ship.type].ammo){
-            const ammoLabel = this.add.text(ship.x, ship.y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false)
-            this.ammoLabels.set(ship.id, ammoLabel)
+        if(ShipData[type].ammo){
+            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false)
+            this.ammoLabels.set(id, ammoLabel)
         }
 
-        if(!isFriend) sprite.setVisible(false)
+        if(!isFriend) ship.setVisible(false)
+        return ship
     }
 
     shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
@@ -696,25 +714,41 @@ export default class MapScene extends Scene {
         body.setCircle(radius, sprite.width/2 - radius, sprite.height/2 - radius)
     }
 
-    applyShipDamage = (ships:Array<ShipData>, damageByTarget:Map<string,number>) =>
-        applyDamage(ships, damageByTarget, dead => {
-            const sprite = this.shipSprites.get(dead.id)
-            if(sprite) this.spawnDeathFragments(sprite)
-            this.destroyShipSprite(dead.id)
-            if(dead.type === ShipType.CATH) this.handleBaseDestroyed(dead.faction)
-        })
+    // Applies damage to a single ship and, if it dies, handles the shared "a ship just died" side
+    // effects (death fragments, sprite/label cleanup, ending the match if it was a Base, syncing the
+    // store's summary) — every ship-damage call site funnels through this. detonateDrone handles the
+    // *drone's own* death separately (it gets an impact flash, not fragments — it's the one detonating).
+    killIfDead = (ship:ShipSprite) => {
+        if(ship.isAlive()) return false
+        this.spawnDeathFragments(ship)
+        const wasBase = ship.type === ShipType.CATH
+        const faction = ship.faction
+        this.destroyShipSprite(ship.id)
+        this.syncShipSummaries()
+        if(wasBase) this.handleBaseDestroyed(faction)
+        return true
+    }
 
+    // Pushes a fresh low-frequency summary of every ship into the store — see ShipSummary's own doc
+    // comment for why this only ever happens on a discrete event (spawn/death/queue change), never on a
+    // physics tick.
+    syncShipSummaries = () => {
+        useAppStore.getState().setShips(this.ships.map(s => s.toSummary()))
+    }
+
+    // Advances every ship one step towards its own route (see ShipSprite's waypoints/pathIndex), then
+    // sits idle at the end of it — except ZEL, which instead heads for and latches onto a capturable
+    // Objective the instant it's in range (overriding its route entirely while latched), GAIN, which
+    // orbits whichever Asteroid updateHarvesterMiningTargets assigned it, and EYE, which permanently
+    // locks in place the moment it finishes its very first route.
     moveShips = (time:number, deltaMs:number) => {
-        const { ships, setShips, resourceNodes, objectives } = useAppStore.getState()
-        const arrivedAtds:Array<{ ship:ShipData, sprite:Physics.Arcade.Sprite }> = []
+        const { resourceNodes, objectives } = useAppStore.getState()
+        const arrivedBoms:Array<ShipSprite> = []
 
-        const updated = ships.map(ship => {
-            const sprite = this.shipSprites.get(ship.id)
-            if(!sprite) return ship
-
-            const ownWaypoints = ship.waypoints || []
+        this.ships.forEach(ship => {
+            const ownWaypoints = ship.waypoints
             const waypoints = ship.type === ShipType.BOM ? ownWaypoints.slice(0, 1) : ownWaypoints
-            const pathIndex = ship.pathIndex ?? 0
+            const pathIndex = ship.pathIndex
             const speed = ship.orderSpeedPxS ?? ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
@@ -735,7 +769,7 @@ export default class MapScene extends Scene {
                         const candidate = objectives.find(o => o.id === sp.id)
                         if(!candidate || candidate.owner === ship.faction) return false
                         const { x, y } = this.toWorld(sp.x, sp.y)
-                        return Phaser.Math.Distance.Between(sprite.x, sprite.y, x, y) <= OBJECTIVE_CAPTURE_RADIUS_PX
+                        return Phaser.Math.Distance.Between(ship.x, ship.y, x, y) <= OBJECTIVE_CAPTURE_RADIUS_PX
                     })
                     if(spawn) latchedObjectiveId = spawn.id
                 }
@@ -758,65 +792,63 @@ export default class MapScene extends Scene {
                 target = { x: miningNode.x+Math.cos(angle)*HARVESTER_ORBIT_RADIUS_PX, y: miningNode.y+Math.sin(angle)*HARVESTER_ORBIT_RADIUS_PX }
             }
             else {
-                target = idle ? { x:sprite.x, y:sprite.y } : this.toWorld(waypoints[pathIndex].x, waypoints[pathIndex].y)
+                target = idle ? { x:ship.x, y:ship.y } : this.toWorld(waypoints[pathIndex].x, waypoints[pathIndex].y)
             }
 
-            const prevX = sprite.x, prevY = sprite.y
+            const prevX = ship.x, prevY = ship.y
 
-            const dist = Phaser.Math.Distance.Between(sprite.x, sprite.y, target.x, target.y)
+            const dist = Phaser.Math.Distance.Between(ship.x, ship.y, target.x, target.y)
             const nextPathIndex = (!miningNode && !latchedObjectiveWorld && !movementLocked && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
             const arrivedAtRouteEnd = nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length
 
             if(dist <= step){
-                sprite.setPosition(target.x, target.y)
-                sprite.setVelocity(0, 0)
+                ship.setPosition(target.x, target.y)
+                ship.setVelocity(0, 0)
             }
             else {
-                this.physics.moveTo(sprite, target.x, target.y, speed)
+                this.physics.moveTo(ship, target.x, target.y, speed)
             }
 
             if(ship.type !== ShipType.CATH){
                 const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !idle
                 const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
                 const turnRatePerMs = hasDirectionalTarget ? MOVE_TURN_RATE_PER_MS : IDLE_TURN_RATE_PER_MS
-                sprite.setRotation(Phaser.Math.Angle.RotateTo(sprite.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
+                ship.setRotation(Phaser.Math.Angle.RotateTo(ship.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
             }
 
-            this.shipLabels.get(ship.id)?.setPosition(sprite.x, sprite.y-this.shipLabelOffsetPx(sprite))
+            this.shipLabels.get(ship.id)?.setPosition(ship.x, ship.y-this.shipLabelOffsetPx(ship))
 
-            if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedAtds.push({ ship, sprite })
+            if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedBoms.push(ship)
 
-            const objectiveAttached = !!latchedObjectiveWorld && dist <= step
-            const justLockedIn = ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && dist <= step
-
-            return { ...ship, x:sprite.x, y:sprite.y, pathIndex: dist <= step ? nextPathIndex : pathIndex, latchedObjectiveId, objectiveAttached, movementLocked: movementLocked || justLockedIn }
+            ship.objectiveAttached = !!latchedObjectiveWorld && dist <= step
+            ship.latchedObjectiveId = latchedObjectiveId
+            ship.pathIndex = dist <= step ? nextPathIndex : pathIndex
+            if(ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && dist <= step) ship.movementLocked = true
         })
 
-        this.applyShipSeparation(updated)
-
-        setShips(updated)
-        arrivedAtds.forEach(({ ship, sprite }) => this.detonateDrone(ship, sprite, null))
+        this.applyShipSeparation()
+        arrivedBoms.forEach(ship => this.detonateDrone(ship, null))
     }
 
-    applyShipSeparation = (updated:Array<ShipData>) => {
-        for(let i=0; i<updated.length; i++){
-            const a = updated[i]
-            const spriteA = this.shipSprites.get(a.id)
-            if(!spriteA) continue
-            const bodyA = spriteA.body as Physics.Arcade.Body
+    // Minimum gap kept between any two ship bodies, every frame, on top of whatever movement decision
+    // each one already made this frame — this is what makes a pile of ships arriving at the same
+    // waypoint spread out instead of stacking exactly on top of each other.
+    applyShipSeparation = () => {
+        const ships = this.ships
+        for(let i=0; i<ships.length; i++){
+            const a = ships[i]
+            const bodyA = a.body as Physics.Arcade.Body
             const immovableA = ShipData[a.type].speed === 0
 
-            for(let j=i+1; j<updated.length; j++){
-                const b = updated[j]
-                const spriteB = this.shipSprites.get(b.id)
-                if(!spriteB) continue
-                const bodyB = spriteB.body as Physics.Arcade.Body
+            for(let j=i+1; j<ships.length; j++){
+                const b = ships[j]
+                const bodyB = b.body as Physics.Arcade.Body
                 const immovableB = ShipData[b.type].speed === 0
                 if(immovableA && immovableB) continue
 
                 const minDist = bodyA.halfWidth + bodyB.halfWidth + SHIP_SEPARATION_PX
-                const dx = spriteB.x - spriteA.x
-                const dy = spriteB.y - spriteA.y
+                const dx = b.x - a.x
+                const dy = b.y - a.y
                 let dist = Math.hypot(dx, dy)
                 if(dist >= minDist) continue
 
@@ -834,22 +866,13 @@ export default class MapScene extends Scene {
                 const shareA = immovableA ? 0 : (immovableB ? 1 : 0.5)
                 const shareB = immovableB ? 0 : (immovableA ? 1 : 0.5)
 
-                if(shareA > 0){
-                    spriteA.setPosition(spriteA.x - nx*overlap*shareA, spriteA.y - ny*overlap*shareA)
-                    a.x = spriteA.x; a.y = spriteA.y
-                }
-                if(shareB > 0){
-                    spriteB.setPosition(spriteB.x + nx*overlap*shareB, spriteB.y + ny*overlap*shareB)
-                    b.x = spriteB.x; b.y = spriteB.y
-                }
+                if(shareA > 0) a.setPosition(a.x - nx*overlap*shareA, a.y - ny*overlap*shareA)
+                if(shareB > 0) b.setPosition(b.x + nx*overlap*shareB, b.y + ny*overlap*shareB)
             }
         }
     }
 
-    getShipEntry = (sprite:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
-        const id = (sprite as any).getData('id')
-        return useAppStore.getState().ships.find(s => s.id === id)
-    }
+    getShipEntry = (obj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => obj as unknown as ShipSprite
 
     isHostileDroneShipPair = (a:Phaser.Types.Physics.Arcade.GameObjectWithBody, b:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         if(a === b) return false
@@ -866,63 +889,56 @@ export default class MapScene extends Scene {
     }
 
     onDroneShipContact = (a:Physics.Arcade.Sprite, b:Physics.Arcade.Sprite) => {
-        const spriteA = a as Physics.Arcade.Sprite
-        const spriteB = b as Physics.Arcade.Sprite
         const shipA = this.getShipEntry(a)
         const shipB = this.getShipEntry(b)
         if(!shipA || !shipB) return
 
-        if(DRONE_TYPES.has(shipA.type)) this.detonateDrone(shipA, spriteA, { id:shipB.id })
+        if(DRONE_TYPES.has(shipA.type)) this.detonateDrone(shipA, shipB)
 
-        const survivingShipB = this.shipSprites.has(shipB.id) ? this.getShipEntry(b) : null
-        if(survivingShipB && DRONE_TYPES.has(survivingShipB.type)) this.detonateDrone(survivingShipB, spriteB, { id:shipA.id })
+        if(shipB.active && DRONE_TYPES.has(shipB.type)) this.detonateDrone(shipB, shipA)
     }
 
-    detonateDrone = (drone:ShipData, sprite:Physics.Arcade.Sprite, primary:{ id:string } | null) => {
+    // A drone (KKZ/BOM) detonates: it always self-destructs — a flash at its own position, not the
+    // fragment-splitting wreckage a "shot down" ship gets (killIfDead), since it's the one detonating,
+    // not being hit — plus damages whatever it hit: a single primary target for KKZ, or an area blast
+    // (physics.overlapCirc — the same "who's nearby" query MLRS/ARMOR's own range check uses) for BOM,
+    // which ignores `primary` and just blasts everything hostile nearby.
+    detonateDrone = (drone:ShipSprite, primary:ShipSprite | null) => {
         const time = this.time.now
-        const shipDamage = new Map<string, number>([[drone.id, drone.hp]])
         const damage = ShipData[drone.type].damage
 
-        if(drone.type === ShipType.KKZ && primary){
-            shipDamage.set(primary.id, (shipDamage.get(primary.id) || 0) + damage)
+        this.impactFlashes.push({ x:drone.x, y:drone.y, createdAt:time, damage })
+        this.destroyShipSprite(drone.id)
+        this.syncShipSummaries()
+
+        if(drone.type === ShipType.KKZ && primary?.active){
+            if(primary.takeDamage(damage)) this.killIfDead(primary)
         }
         else if(drone.type === ShipType.BOM){
-            const hits = this.physics.overlapCirc(sprite.x, sprite.y, ATD_BLAST_RADIUS_PX, true, false)
+            const hits = this.physics.overlapCirc(drone.x, drone.y, ATD_BLAST_RADIUS_PX, true, false)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
                 if(obj.getData('kind') !== 'ship') return
                 const hitShip = this.getShipEntry(obj as Phaser.Types.Physics.Arcade.GameObjectWithBody)
-                if(hitShip && hitShip.faction !== drone.faction) shipDamage.set(hitShip.id, (shipDamage.get(hitShip.id) || 0) + damage)
+                if(hitShip?.active && hitShip.faction !== drone.faction){
+                    if(hitShip.takeDamage(damage)) this.killIfDead(hitShip)
+                }
             })
         }
-
-        const { ships, setShips } = useAppStore.getState()
-        setShips(applyDamage(ships, shipDamage, dead => {
-            if(dead.id === drone.id){
-                this.impactFlashes.push({ x:sprite.x, y:sprite.y, createdAt:time, damage })
-            }
-            else {
-                const deadSprite = this.shipSprites.get(dead.id)
-                if(deadSprite) this.spawnDeathFragments(deadSprite)
-            }
-            this.destroyShipSprite(dead.id)
-            if(dead.type === ShipType.CATH) this.handleBaseDestroyed(dead.faction)
-        }))
     }
 
     onMissileShipContact = (missileObj:Phaser.Types.Physics.Arcade.GameObjectWithBody, shipObj:Phaser.Types.Physics.Arcade.GameObjectWithBody) => {
         const missile = missileObj as Physics.Arcade.Sprite
         if(!missile.active) return
         const ship = this.getShipEntry(shipObj)
-        if(!ship) return
+        if(!ship?.active) return
 
         const time = this.time.now
         const x = missile.x, y = missile.y, damage = missile.getData('damage')
         missile.destroy()
         this.impactFlashes.push({ x, y, createdAt:time, damage })
 
-        const { ships, setShips } = useAppStore.getState()
-        setShips(this.applyShipDamage(ships, new Map([[ship.id, damage]])))
+        if(ship.takeDamage(damage)) this.killIfDead(ship)
     }
 
     // A PDF bullet is hostile to any missile of a different faction — same as an offensive missile is to
@@ -989,39 +1005,26 @@ export default class MapScene extends Scene {
     }
 
     updateMlrs = (time:number) => {
-        const { ships, setShips } = useAppStore.getState()
-        const shooterIds = new Set<string>()
-        const shotsFired = new Map<string, number>()
-
-        ships.forEach(ship => {
+        this.ships.forEach(ship => {
             if(ship.type !== ShipType.SPR) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.SPR].cooldownMs) return
             if(!ship.ammoRemaining) return
 
-            const sprite = this.shipSprites.get(ship.id)
-            if(!sprite) return
-
-            const targetShip = this.findNearestHostileShip(ship.faction, sprite.x, sprite.y, ShipData[ShipType.SPR].rangePx)
+            const targetShip = this.findNearestHostileShip(ship.faction, ship.x, ship.y, ShipData[ShipType.SPR].rangePx)
             if(!targetShip) return
 
             const shots = Math.min(MISSILE_SALVO_SIZE, ship.ammoRemaining)
-            shooterIds.add(ship.id)
-            shotsFired.set(ship.id, shots)
+            ship.lastFiredAtMs = time
+            ship.ammoRemaining -= shots
             const targetId = targetShip.getData('id')
             const aimX = targetShip.x, aimY = targetShip.y
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
-                    if(!sprite.active) return
-                    this.spawnMissile(ship.faction, sprite.x, sprite.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY)
+                    if(!ship.active) return
+                    this.spawnMissile(ship.faction, ship.x, ship.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY)
                 })
             }
         })
-
-        if(shooterIds.size > 0){
-            setShips(ships.map(ship => shooterIds.has(ship.id)
-                ? { ...ship, lastFiredAtMs:time, ammoRemaining:ship.ammoRemaining-shotsFired.get(ship.id) }
-                : ship))
-        }
     }
 
     // Each PDF, on cooldown, fires one real bullet (see spawnBullet) at whichever single hostile missile
@@ -1029,26 +1032,16 @@ export default class MapScene extends Scene {
     // multiple targets in the same shot. No damage is applied here — a bullet only does anything once it
     // actually travels there and connects (onBulletMissileContact).
     updatePdf = (time:number) => {
-        const { ships, setShips } = useAppStore.getState()
-        const shooterIds = new Set<string>()
-
-        ships.forEach(ship => {
+        this.ships.forEach(ship => {
             if(ship.type !== ShipType.PDF) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.PDF].cooldownMs) return
 
-            const sprite = this.shipSprites.get(ship.id)
-            if(!sprite) return
-
-            const target = this.findNearestThreat(ship.faction, sprite.x, sprite.y, ShipData[ShipType.PDF].rangePx)
+            const target = this.findNearestThreat(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].rangePx)
             if(!target) return
 
-            shooterIds.add(ship.id)
-            this.spawnBullet(ship.faction, sprite.x, sprite.y, ShipData[ShipType.PDF].damage, target.x, target.y)
+            ship.lastFiredAtMs = time
+            this.spawnBullet(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].damage, target.x, target.y)
         })
-
-        if(shooterIds.size === 0) return
-
-        setShips(ships.map(ship => shooterIds.has(ship.id) ? { ...ship, lastFiredAtMs:time } : ship))
     }
 
     // A real, non-homing projectile: launched once in a straight line at wherever the target was at the
@@ -1080,57 +1073,45 @@ export default class MapScene extends Scene {
     // exactly the same way SPR's is) to spawn a KKZ near itself. Once its ammo is fully spent it stops
     // producing until resupplied, same as SPR runs dry — there's no separate lifetime cap beyond that.
     updateDrn = (time:number) => {
-        const { ships, setShips } = useAppStore.getState()
-        const producerIds = new Set<string>()
-
-        ships.forEach(ship => {
+        this.ships.forEach(ship => {
             if(ship.type !== ShipType.DRN) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.DRN].cooldownMs) return
             if(!ship.ammoRemaining) return
 
-            producerIds.add(ship.id)
+            ship.lastFiredAtMs = time
+            ship.ammoRemaining -= 1
             this.spawnShip(ship, ShipType.KKZ)
         })
-
-        if(producerIds.size === 0) return
-
-        // Re-read after spawning — spawnShip already committed the new KKZ ship(s) straight to the
-        // store, so mapping over the pre-spawn `ships` snapshot here would silently drop them.
-        const latest = useAppStore.getState().ships
-        setShips(latest.map(ship => producerIds.has(ship.id) ? { ...ship, lastFiredAtMs:time, ammoRemaining:ship.ammoRemaining-1 } : ship))
     }
 
     updateHarvesterMiningTargets = () => {
-        const { ships, resourceNodes } = useAppStore.getState()
+        const { resourceNodes } = useAppStore.getState()
         this.harvesterMiningTarget.clear()
-        ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
+        this.ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             if((harvester.metalCarried ?? 0) >= HARVESTER_METAL_CAPACITY) return
-            const sprite = this.shipSprites.get(harvester.id)
-            if(!sprite) return
 
             let nearest:ResourceNodeData = null
             let nearestDist = Infinity
             resourceNodes.forEach(node => {
                 if((node.metal ?? 0) <= 0) return
-                const d = Phaser.Math.Distance.Between(sprite.x, sprite.y, node.x, node.y)
+                const d = Phaser.Math.Distance.Between(harvester.x, harvester.y, node.x, node.y)
                 if(d <= HARVESTER_RANGE_PX && d < nearestDist){ nearestDist = d; nearest = node }
             })
             if(nearest) this.harvesterMiningTarget.set(harvester.id, nearest.id)
         })
     }
 
-    // A Harvester no longer deposits what it mines into a shared faction stockpile — it carries the
-    // metal itself (see ShipData's metalCarried), capped at HARVESTER_METAL_CAPACITY, spent later
-    // refilling ammo/repairing hp (see updateHarvesterSupport). Stops drawing from its target the instant it's full,
-    // same as updateHarvesterMiningTargets already refuses to assign one a target once it is.
+    // A Harvester carries what it mines itself (see ShipSprite's metalCarried), capped at
+    // HARVESTER_METAL_CAPACITY, spent later refilling ammo/repairing hp (see updateHarvesterSupport).
+    // Stops drawing from its target the instant it's full, same as updateHarvesterMiningTargets already
+    // refuses to assign one a target once it is.
     updateHarvesters = (deltaMs:number) => {
-        const { ships, resourceNodes, setShips, setResourceNodes } = useAppStore.getState()
+        const { resourceNodes, setResourceNodes } = useAppStore.getState()
         if(this.harvesterMiningTarget.size === 0) return
 
         const drawdown = new Map<string, number>() // asteroid id -> metal drawn this frame so far
-        const metalGainedByShip = new Map<string, number>()
 
-        ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
+        this.ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             const nodeId = this.harvesterMiningTarget.get(harvester.id)
             if(!nodeId) return
             const node = resourceNodes.find(n => n.id === nodeId)
@@ -1142,17 +1123,10 @@ export default class MapScene extends Scene {
             if(remaining <= 0) return
             const gathered = Math.min(remaining, capacityLeft, HARVESTER_COLLECTION_RATE_PER_S * (deltaMs/1000))
             drawdown.set(node.id, (drawdown.get(node.id) || 0) + gathered)
-            metalGainedByShip.set(harvester.id, gathered)
+            harvester.metalCarried = (harvester.metalCarried ?? 0) + gathered
         })
 
         if(drawdown.size === 0) return
-
-        if(metalGainedByShip.size > 0){
-            setShips(ships.map(s => {
-                const gained = metalGainedByShip.get(s.id)
-                return gained ? { ...s, metalCarried: (s.metalCarried ?? 0) + gained } : s
-            }))
-        }
 
         const depletedIds:Array<string> = []
         const updated = resourceNodes.map(n => {
@@ -1179,26 +1153,21 @@ export default class MapScene extends Scene {
     // back to repairing a damaged target (1 hp for HARVESTER_REPAIR_METAL_COST metal) if no ammo-short
     // target was in range, or it couldn't fully afford one anyway.
     updateHarvesterSupport = (time:number) => {
-        const { ships, setShips } = useAppStore.getState()
+        const ships = this.ships
         const harvesters = ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1
             && (!s.lastResupplyAtMs || time - s.lastResupplyAtMs >= HARVESTER_RESUPPLY_INTERVAL_MS))
         if(harvesters.length === 0) return
 
-        const metalSpent = new Map<string, number>() // harvester id -> metal spent this tick
-        const ammoGained = new Map<string, number>() // ship id -> ammo gained this tick
-        const hpGained = new Map<string, number>() // ship id -> hp gained this tick
-        const supportedHarvesterIds = new Set<string>()
-
-        const inRange = (harvester:ShipData, t:ShipData) => t.faction === harvester.faction
+        const inRange = (harvester:ShipSprite, t:ShipSprite) => t.faction === harvester.faction
             && Phaser.Math.Distance.Between(harvester.x, harvester.y, t.x, t.y) <= HARVESTER_RESUPPLY_RANGE_PX
 
         harvesters.forEach(harvester => {
             const ammoTarget = ships.find(t => inRange(harvester, t)
                 && ShipData[t.type].ammo && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo)
             if(ammoTarget){
-                metalSpent.set(harvester.id, 1)
-                ammoGained.set(ammoTarget.id, (ammoGained.get(ammoTarget.id) || 0) + 1)
-                supportedHarvesterIds.add(harvester.id)
+                harvester.metalCarried = (harvester.metalCarried ?? 0) - 1
+                harvester.lastResupplyAtMs = time
+                ammoTarget.gainAmmo(1)
                 return
             }
 
@@ -1206,28 +1175,19 @@ export default class MapScene extends Scene {
             const repairTarget = ships.find(t => inRange(harvester, t) && t.hp < ShipData[t.type].hp)
             if(!repairTarget) return
 
-            metalSpent.set(harvester.id, HARVESTER_REPAIR_METAL_COST)
-            hpGained.set(repairTarget.id, (hpGained.get(repairTarget.id) || 0) + 1)
-            supportedHarvesterIds.add(harvester.id)
+            harvester.metalCarried = (harvester.metalCarried ?? 0) - HARVESTER_REPAIR_METAL_COST
+            harvester.lastResupplyAtMs = time
+            repairTarget.heal(1)
         })
-
-        if(supportedHarvesterIds.size === 0) return
-
-        setShips(ships.map(s => {
-            const spent = metalSpent.get(s.id)
-            const ammoAdd = ammoGained.get(s.id)
-            const hpAdd = hpGained.get(s.id)
-            if(!spent && !ammoAdd && !hpAdd) return s
-            return {
-                ...s,
-                metalCarried: spent ? (s.metalCarried ?? 0) - spent : s.metalCarried,
-                ammoRemaining: ammoAdd ? Math.min(ShipData[s.type].ammo, (s.ammoRemaining ?? 0) + ammoAdd) : s.ammoRemaining,
-                hp: hpAdd ? Math.min(ShipData[s.type].hp, s.hp + hpAdd) : s.hp,
-                lastResupplyAtMs: spent ? time : s.lastResupplyAtMs,
-            }
-        }))
     }
 
+    // `damage` is the firing ship's own damage stat (ShipData) — carried on the missile itself so
+    // onMissileShipContact doesn't need to look the firer back up (it may well be dead by the time the
+    // missile actually lands). `aimX`/`aimY` is the target's position at the moment the caller decided
+    // to fire — needed because a staggered salvo shot can spawn well after that (see SALVO_STAGGER_MS):
+    // if the target has since died and nothing else was there to retarget onto by spawn time, the live
+    // lookup below comes back empty and this is what it aims at instead, so it still launches off in a
+    // sensible direction.
     spawnMissile = (faction:Faction, x:number, y:number, targetId:string, damage:number, aimX:number, aimY:number) => {
         const missile = this.physics.add.sprite(x, y, 'missile_dot')
         missile.setData('kind', 'missile' as BodyKind)
@@ -1397,7 +1357,7 @@ export default class MapScene extends Scene {
     }
 
     drawOrders = () => {
-        const { selectedShipIds, ships } = useAppStore.getState()
+        const { selectedShipIds } = useAppStore.getState()
 
         this.lastOrdersKey = ''
         const g = this.ordersG
@@ -1406,8 +1366,8 @@ export default class MapScene extends Scene {
         this.orderLabels = []
 
         selectedShipIds.forEach(id => {
-            const ship = ships.find(s => s.id === id)
-            if(!ship || !ship.waypoints || ship.waypoints.length === 0) return
+            const ship = this.shipSprites.get(id)
+            if(!ship || ship.waypoints.length === 0) return
             this.drawRouteAndMarkers(g, { x:ship.x, y:ship.y }, ship.waypoints)
         })
     }
@@ -1429,16 +1389,116 @@ export default class MapScene extends Scene {
     }
 
     isWithinFactionSightRange = (worldX:number, worldY:number, faction:Faction) => {
-        const ownShips = useAppStore.getState().ships.filter(s => s.faction === faction)
-        return ownShips.some(s => Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= ShipData[s.type].sightRadius)
+        return this.ships.some(s => s.faction === faction && Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= ShipData[s.type].sightRadius)
     }
 
     findOwnShipAt = (worldX:number, worldY:number) => {
-        return useAppStore.getState().ships.find(s => {
+        return this.ships.find(s => {
             if(s.faction !== Faction.Player || s.type === ShipType.CATH) return false
             const r = Math.max(ShipData[s.type].sizeHex * CELL_SIZE/2, 10)
             return Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= r
         })
+    }
+
+    // --- Store-delegated ship orders/production ------------------------------------------------------
+    // store.ts's addShipWaypoints/setShipWaypoints/removeShipWaypoints/clearShipWaypoints/queueShip/
+    // completeQueueItem just call straight into these — every one of them mutates a real ShipSprite
+    // instance directly (see the class's own doc comment for why), never the store.
+
+    // A group ordered together moves together — every ship given this order gets stamped with the
+    // slowest member's own top speed (see moveShips, which reads this instead of ShipData[type].speed
+    // whenever it's set), rather than each ship racing ahead at its own pace and arriving piecemeal.
+    // Ordering a single ship alone still works out to that ship's own natural speed, since it's its own
+    // group's minimum.
+    groupSpeedPxS = (shipIds:Array<string>) => {
+        const speeds = shipIds.map(id => this.shipSprites.get(id)).filter(s => !!s).map(s => ShipData[s.type].speed)
+        return Math.min(...speeds)
+    }
+
+    // Appends one waypoint onto each selected ship's own route — used for a drag-selected group of
+    // combat ships (a Base itself is never included; MapScene's handleClick filters it out before
+    // calling this, since it never actually moves and doesn't hand orders down to newly produced ships
+    // anymore either — see spawnShip). Each ship keeps whatever progress it's already made; this only
+    // adds on.
+    addShipWaypoints = (shipIds:Array<string>, x:number, y:number) => {
+        const speed = this.groupSpeedPxS(shipIds)
+        shipIds.forEach(id => {
+            const ship = this.shipSprites.get(id)
+            if(!ship || ship.waypoints.length >= MAX_WAYPOINTS) return
+            // A new order overrides ZEL's own Objective-latch the same way it overrides anything else it
+            // was doing — see ShipSprite's latchedObjectiveId/objectiveAttached.
+            ship.waypoints = [...ship.waypoints, { x, y }]
+            ship.latchedObjectiveId = undefined
+            ship.objectiveAttached = undefined
+            ship.orderSpeedPxS = speed
+        })
+    }
+
+    // A plain (non-shift) order-giving click — wipes whatever route a ship already had and replaces it
+    // outright with this one single waypoint, rather than appending onto it. Same latch-clearing as any
+    // other new order.
+    setShipWaypoints = (shipIds:Array<string>, x:number, y:number) => {
+        const speed = this.groupSpeedPxS(shipIds)
+        shipIds.forEach(id => {
+            const ship = this.shipSprites.get(id)
+            if(!ship) return
+            ship.waypoints = [{ x, y }]
+            ship.pathIndex = 0
+            ship.latchedObjectiveId = undefined
+            ship.objectiveAttached = undefined
+            ship.orderSpeedPxS = speed
+        })
+    }
+
+    // Clicking an existing waypoint marker for a selection removes it from every selected ship that
+    // actually has a waypoint there (not just the one whose marker was clicked). Ships with no matching
+    // waypoint are left untouched; each ship that does have one keeps its own progress otherwise,
+    // resuming from whichever waypoint is nearest to where it currently is.
+    removeShipWaypoints = (shipIds:Array<string>, x:number, y:number) => {
+        shipIds.forEach(id => {
+            const ship = this.shipSprites.get(id)
+            if(!ship) return
+            const index = ship.waypoints.findIndex(w => w.x === x && w.y === y)
+            if(index < 0) return
+            const newWaypoints = ship.waypoints.filter((_, i) => i !== index)
+            const p = ship.pathIndex
+            const minIndex = p > index ? p-1 : p
+            ship.pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(ship.x, ship.y, newWaypoints, minIndex)
+            ship.waypoints = newWaypoints
+            ship.latchedObjectiveId = undefined
+            ship.objectiveAttached = undefined
+        })
+    }
+
+    // Selected ships drop their route and just sit wherever they currently are until new orders are given.
+    clearShipWaypoints = (shipIds:Array<string>) => {
+        shipIds.forEach(id => {
+            const ship = this.shipSprites.get(id)
+            if(!ship) return
+            ship.waypoints = []
+            ship.pathIndex = 0
+            ship.latchedObjectiveId = undefined
+            ship.objectiveAttached = undefined
+        })
+    }
+
+    // Refuses outright — no queue change — if the queue's already full (the Base's own, not necessarily
+    // the player: the enemy AI's own queueShip calls go through this exact same gate).
+    queueShip = (baseId:string, type:ShipType) => {
+        const base = this.shipSprites.get(baseId)
+        if(!base || base.queue.length >= MAX_QUEUE) return
+        const item:ProductionQueueItem = { id:v4(), type, startedAt: base.queue.length === 0 ? Date.now() : null }
+        base.queue = [...base.queue, item]
+        this.syncShipSummaries()
+    }
+
+    completeQueueItem = (baseId:string) => {
+        const base = this.shipSprites.get(baseId)
+        if(!base) return
+        const [, ...rest] = base.queue
+        if(rest.length > 0) rest[0] = { ...rest[0], startedAt: Date.now() }
+        base.queue = rest
+        this.syncShipSummaries()
     }
 
     enableSelectionControls = () => {
@@ -1462,7 +1522,7 @@ export default class MapScene extends Scene {
 
     handleClick = (worldX:number, worldY:number) => {
         if(!this.hoveredCell) return
-        const { ships, selectedShipIds, setSelectedShipIds, addShipWaypoints, setShipWaypoints, removeShipWaypoints } = useAppStore.getState()
+        const { selectedShipIds, setSelectedShipIds } = useAppStore.getState()
 
         const clicked = this.findOwnShipAt(worldX, worldY)
         if(clicked){
@@ -1473,7 +1533,7 @@ export default class MapScene extends Scene {
 
             if(isDoubleClick){
                 // Select every one of the player's own ships of the same type, not just this one.
-                const sameTypeIds = ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
+                const sameTypeIds = this.ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
                 setSelectedShipIds(sameTypeIds)
                 // A third click right after shouldn't chain into yet another double-click.
                 this.lastClickShipId = null
@@ -1487,24 +1547,24 @@ export default class MapScene extends Scene {
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
+            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
             if(orderableIds.length === 0) return
 
             // Clicking directly on an existing waypoint marker always removes it — for every selected
             // ship that actually has one there, not just whichever ship's marker happens to render on
             // top — regardless of shift, taking priority over shift's usual replace-vs-append order-giving.
-            const selectedShips = ships.filter(s => orderableIds.includes(s.id))
-            const clickedExisting = selectedShips.some(s => s.waypoints?.some(w => w.x === x && w.y === y))
+            const selectedShips = this.ships.filter(s => orderableIds.includes(s.id))
+            const clickedExisting = selectedShips.some(s => s.waypoints.some(w => w.x === x && w.y === y))
             if(clickedExisting){
-                removeShipWaypoints(orderableIds, x, y)
+                this.removeShipWaypoints(orderableIds, x, y)
                 return
             }
 
             if(!this.shiftDown){
-                setShipWaypoints(orderableIds, x, y)
+                this.setShipWaypoints(orderableIds, x, y)
                 return
             }
-            addShipWaypoints(orderableIds, x, y)
+            this.addShipWaypoints(orderableIds, x, y)
             return
         }
 
@@ -1569,11 +1629,10 @@ export default class MapScene extends Scene {
             const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x)
             const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y)
 
-            const { ships, setSelectedShipIds } = useAppStore.getState()
-            const hitIds = ships
+            const hitIds = this.ships
                 .filter(s => s.faction === Faction.Player && s.type !== ShipType.CATH && s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY)
                 .map(s => s.id)
-            setSelectedShipIds(hitIds)
+            useAppStore.getState().setSelectedShipIds(hitIds)
         })
 
         this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {

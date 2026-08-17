@@ -23,6 +23,14 @@ export const SHIP_SEPARATION_PX = 1
 // --- Save data ---
 export const SAVE_NAME = 'xeno3_save'
 
+// --- Store sync ---
+// How often MapScene pushes its own authoritative `ships` array into the Zustand store for React to
+// render from (see MapScene's `ships` field comment) — every physics-frame write would mean a
+// ResourceHUD/FactoryToolbar re-render fan-out up to 60x/sec regardless of ship count. Low enough that
+// nothing continuously-changing (hp bars, queue progress) reads as laggy; a real click still gets its
+// own immediate one-off sync on top of this from store.ts, so it never has to wait out this interval.
+export const SHIPS_SYNC_INTERVAL_MS = 150
+
 // --- Base production/orders ---
 // There are no buildings in this game — every ship (including a faction's own Base) queues and orders
 // through the same fields (see ShipData in types.d.ts). MAX_QUEUE/MAX_WAYPOINTS bound a Base's own queue

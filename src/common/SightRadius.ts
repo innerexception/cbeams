@@ -1,6 +1,5 @@
 import { GameObjects, Math as PhaserMath } from "phaser"
-import { useAppStore } from "./store"
-import { Faction, ShipData } from "../../enum"
+import { Faction, ShipType, ShipData } from "../../enum"
 import { GREEN_HEX } from "./Constants"
 
 const TWO_PI = Math.PI*2
@@ -96,10 +95,10 @@ const fillCircleOverlap = (g:GameObjects.Graphics, circle:{x:number,y:number,r:n
 // hidden instead of full — the player has no business seeing the full extent of an enemy's sight
 // radius, only the arcs of it that actually fall within the player's own sight radius get revealed.
 // The overlap itself is additionally communicated with a light fill over the lens-shaped intersection.
-export const drawSightRadii = (g:GameObjects.Graphics) => {
+export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y:number, type:ShipType, faction:Faction }>) => {
     g.clear()
 
-    const circles = useAppStore.getState().ships.map(s => ({ x: s.x, y: s.y, r: ShipData[s.type].sightRadius, faction: s.faction }))
+    const circles = ships.map(s => ({ x: s.x, y: s.y, r: ShipData[s.type].sightRadius, faction: s.faction }))
 
     g.lineStyle(1, GREEN_HEX, 0.25)
     circles.forEach((circle, i) => {

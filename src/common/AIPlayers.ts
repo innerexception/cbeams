@@ -1,19 +1,17 @@
 import type MapScene from "../components/scenes/MapScene"
-import { useAppStore } from "./store"
 import { Faction, ShipType } from "../../enum"
 import { ENEMY_RAID_SIZE } from "./Constants"
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
-// code. Each function takes the scene as its first argument and reaches back into it only for the
-// handful of things a decision actually needs — the small bit of AI state that lives on the scene
-// itself (enemyBaseId, enemyRaidLaunched) — the same primitives the player's own actions go through.
-// There are no buildings to place anymore — the enemy's Base (like the player's) comes entirely from
-// the loaded map file's own entities layer (see MapScene's spawnEntitiesFromMap); this file is left
-// with only the enemy's one reactive/opening behavior, the opening raid.
+// code. Each function takes the scene as its first argument and reads scene.ships directly (the real,
+// authoritative ship data — see ShipSprite's own doc comment) rather than the store's own low-frequency
+// summary, since position (needed here) doesn't exist on that summary at all. Ship-mutating decisions
+// still go through the exact same MapScene methods (queueShip/addShipWaypoints) the player's own clicks
+// and store.ts's delegated actions go through — the AI can never do anything the player couldn't.
 
 // Each faction's actual headquarters ship — wherever the map file's entities layer actually placed it —
 // used by checkEnemyRaid as its defensive fallback destination.
-const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.faction === faction && s.type === ShipType.CATH)
+const findBase = (scene:MapScene, faction:Faction) => scene.ships.find(s => s.faction === faction && s.type === ShipType.CATH)
 
 // One-time opening move: the enemy Base queues up a handful of kamikaze drones — going through the
 // same build queue/production timer as any player-built ship, rather than spawning them for free — and
@@ -21,9 +19,8 @@ const findBase = (faction:Faction) => useAppStore.getState().ships.find(s => s.f
 // if the map didn't actually place an enemy Base (enemyBaseId, set by spawnEntitiesFromMap onto it,
 // stays unset).
 export const spawnEnemyRaid = (scene:MapScene) => {
-    const { queueShip } = useAppStore.getState()
     if(!scene.enemyBaseId) return
-    for(let i=0; i<ENEMY_RAID_SIZE; i++) queueShip(scene.enemyBaseId, ShipType.KKZ)
+    for(let i=0; i<ENEMY_RAID_SIZE; i++) scene.queueShip(scene.enemyBaseId, ShipType.KKZ)
 }
 
 // Watches the enemy Base's own production output and, the moment it has massed a full raid's worth of
@@ -35,16 +32,15 @@ export const spawnEnemyRaid = (scene:MapScene) => {
 export const checkEnemyRaid = (scene:MapScene) => {
     if(scene.enemyRaidLaunched || !scene.enemyBaseId) return
 
-    const { ships, addShipWaypoints } = useAppStore.getState()
-    const raidShips = ships.filter(s => s.type === ShipType.KKZ && s.faction === Faction.Enemy)
+    const raidShips = scene.ships.filter(s => s.type === ShipType.KKZ && s.faction === Faction.Enemy)
     if(raidShips.length < ENEMY_RAID_SIZE) return
 
-    const playerBase = findBase(Faction.Player)
+    const playerBase = findBase(scene, Faction.Player)
     if(!playerBase) return
 
     // Direct orders straight onto the already-massed drones themselves — a Base never has orders of its
-    // own to give (see spawnShip/ShipData's waypoints), so this is the only way to actually move them.
+    // own to give (see spawnShip/ShipSprite's waypoints), so this is the only way to actually move them.
     const dest = scene.toGrid(playerBase.x, playerBase.y)
-    addShipWaypoints(raidShips.map(s => s.id), dest.x, dest.y)
+    scene.addShipWaypoints(raidShips.map(s => s.id), dest.x, dest.y)
     scene.enemyRaidLaunched = true
 }
