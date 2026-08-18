@@ -3,3 +3,20 @@ Individual units in the fleet may be veterans from a previous battle
 Veterancy increases stats and may grant a unique ability
 Building a new non-drone ship requires an AI core, which is lost on ship destruction
 New cores are gained when capturing objectives
+
+Heretic vessels:
+HUSK - hi hp low damage fodder
+STITCHER - creates HUSKS
+BEHOLDER - beam frigate, long range slow firing. retreats to max range.
+BLADE - fast, short range damage flanker. Can fire large dumb-fire missile.
+BOM - large fusion warhead on a stick
+
+Orthodox vessels:
+SPR - long range missile frigate
+PDF - point defense frigate
+STL - med range gunboat
+
+Both:
+GAIN - resupply
+ZEL - captures objectives
+KKZ - suicide drone

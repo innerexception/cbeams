@@ -26,7 +26,7 @@ export default () => {
 
     // Collapses the build panel down to just its toggle bar so it can be tucked away when the player
     // isn't actively queuing ships.
-    const [buildMenuMinimized, setBuildMenuMinimized] = React.useState(false)
+    const [buildMenuMinimized, setBuildMenuMinimized] = React.useState(true)
 
     // The Base is unselectable (see MapScene's findOwnShipAt/box-select) — its build panel is always up
     // instead of only appearing once it's been clicked, so it's found directly here rather than derived
@@ -91,6 +91,7 @@ export default () => {
                 // the selection readout + bulk Clear Orders/Cancel.
                 <div>
                     <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
+                        {selectedShips.length > 0 && <div>SELECTION</div>}
                         {selectedShips.map(s=>
                             <div key={s.id}>
                                 <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>

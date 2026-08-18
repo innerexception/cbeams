@@ -84,6 +84,13 @@ interface ShipStats {
     relicCost: number
     description:string
     ammo?:number
+    // Determines how this ship's attack is actually rendered — a real physics projectile (missile: the
+    // arced, retargeting kind SPR fires; bullet: PDF's straight-line, non-homing shot) or an instant-hit
+    // laser with no travel time at all (beam). Undefined for anything with no ranged weapon at all.
+    weaponType?: 'beam' | 'missile' | 'bullet'
+    // How many shots weaponType fires per single cooldownMs — a staggered burst rather than one shot,
+    // same idea as SPR's old fixed missile salvo. Undefined/1 means a single shot per cooldown.
+    burstSize?: number
 }
 
 // A ship's own real, high-frequency simulation state (hp, position, cooldowns, route, ...) lives on

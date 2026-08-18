@@ -53,6 +53,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
         description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
      },
     [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:3000, rangePx:250, sizeHex:1, productionTimeMs:12000, relicCost:2, ammo:10,
+        weaponType:'missile', burstSize:3,
         description: 'Missile carrier, needs replenishment.'
      },
     [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, sizeHex:1, productionTimeMs:12000, relicCost:3,
@@ -67,7 +68,8 @@ export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.GAIN]: { name:'Mater', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, relicCost:1,
         description: 'Replenishment of the fleet, digests debris into fuel and parts.'
      },
-     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:1000, rangePx:200, sizeHex:0.7, productionTimeMs:8000, relicCost:2,
+     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:200, sizeHex:0.7, productionTimeMs:8000, relicCost:2,
+        weaponType:'bullet', burstSize:1, ammo:20,
         description: 'A thousand needles rise up in defense.'
      },
      [ShipType.DRN]: { name:'Center', speed:8, sightRadius:200, armor:0, hp:20, damage:0, cooldownMs:2500, rangePx:0, sizeHex:1, productionTimeMs:18000, relicCost:5, ammo:4,
@@ -75,6 +77,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
      },
      [ShipType.HUSK]: {
         name:'Husk', speed:8, sightRadius:100, armor:0, hp:30, damage:1, cooldownMs:500, rangePx:40, sizeHex:1, productionTimeMs:8000, relicCost:1,
+        weaponType:'beam', burstSize:1,
         description: "Deranged machine made from random scraps"
      }
 }
