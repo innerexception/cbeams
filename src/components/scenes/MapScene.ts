@@ -1419,6 +1419,43 @@ export default class MapScene extends Scene {
         return Math.min(...speeds)
     }
 
+    // A group ordered to one destination lines up abreast there instead of all converging on the same
+    // point — each ship gets its own cell, evenly spaced along the axis perpendicular to the direction
+    // of travel, in whatever left-to-right order the group is already standing in (so nobody has to
+    // cross through the middle of the line to reach its spot). A single ship just gets the exact
+    // destination, same as before.
+    computeLineFormation = (shipIds:Array<string>, destX:number, destY:number):Map<string,{x:number,y:number}> => {
+        const ships = shipIds.map(id => this.shipSprites.get(id)).filter(s => !!s)
+        const formation = new Map<string,{x:number,y:number}>()
+        if(ships.length <= 1){
+            ships.forEach(s => formation.set(s.id, { x:destX, y:destY }))
+            return formation
+        }
+
+        const destWorld = this.toWorld(destX, destY)
+        const centroidX = ships.reduce((sum, s) => sum+s.x, 0) / ships.length
+        const centroidY = ships.reduce((sum, s) => sum+s.y, 0) / ships.length
+        const toDestX = destWorld.x-centroidX, toDestY = destWorld.y-centroidY
+        const dist = Math.hypot(toDestX, toDestY)
+        const dirX = dist > 0.001 ? toDestX/dist : 1, dirY = dist > 0.001 ? toDestY/dist : 0
+        const perpX = -dirY, perpY = dirX
+
+        const spacing = Math.max(...ships.map(s => ShipData[s.type].sizeHex)) * CELL_SIZE + SHIP_SEPARATION_PX
+        const ordered = [...ships].sort((a, b) =>
+            ((a.x-centroidX)*perpX + (a.y-centroidY)*perpY) - ((b.x-centroidX)*perpX + (b.y-centroidY)*perpY))
+
+        ordered.forEach((s, i) => {
+            const offset = (i - (ordered.length-1)/2) * spacing
+            const grid = this.toGrid(destWorld.x + perpX*offset, destWorld.y + perpY*offset)
+            formation.set(s.id, {
+                x: PhaserMath.Clamp(grid.x, 0, this.mapData.width-1),
+                y: PhaserMath.Clamp(grid.y, 0, this.mapData.height-1),
+            })
+        })
+
+        return formation
+    }
+
     // Appends one waypoint onto each selected ship's own route — used for a drag-selected group of
     // combat ships (a Base itself is never included; MapScene's handleClick filters it out before
     // calling this, since it never actually moves and doesn't hand orders down to newly produced ships
@@ -1426,12 +1463,13 @@ export default class MapScene extends Scene {
     // adds on.
     addShipWaypoints = (shipIds:Array<string>, x:number, y:number) => {
         const speed = this.groupSpeedPxS(shipIds)
+        const formation = this.computeLineFormation(shipIds, x, y)
         shipIds.forEach(id => {
             const ship = this.shipSprites.get(id)
             if(!ship || ship.waypoints.length >= MAX_WAYPOINTS) return
             // A new order overrides ZEL's own Objective-latch the same way it overrides anything else it
             // was doing — see ShipSprite's latchedObjectiveId/objectiveAttached.
-            ship.waypoints = [...ship.waypoints, { x, y }]
+            ship.waypoints = [...ship.waypoints, formation.get(id) ?? { x, y }]
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
             ship.orderSpeedPxS = speed
@@ -1443,10 +1481,11 @@ export default class MapScene extends Scene {
     // other new order.
     setShipWaypoints = (shipIds:Array<string>, x:number, y:number) => {
         const speed = this.groupSpeedPxS(shipIds)
+        const formation = this.computeLineFormation(shipIds, x, y)
         shipIds.forEach(id => {
             const ship = this.shipSprites.get(id)
             if(!ship) return
-            ship.waypoints = [{ x, y }]
+            ship.waypoints = [formation.get(id) ?? { x, y }]
             ship.pathIndex = 0
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
