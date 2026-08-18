@@ -26,9 +26,9 @@ Intro
     Book of Man 1:15-22, "And he made himself into a god, each one his own, and took to the stars for Man wanted to be alone."
                          "That great wanting made each one a singularity from which not even light could escape."
                      
-    The terrible servants of Mankind came again into the world. 
+    The terrible servants of Mankind came again into the world, calling themselves the Morning Stars. 
     They were awakened by a stray dream from the prison where Men sleep, a call for help they said.
-    Only the Legions of the prison guard stand between them and the gate that we have guarded since the end of Man.
+    Only the Legions of the prison guard stand between them and the gate guarded since the end of Man.
     Mankind is like a black hole, devouring everything without partiality. 
     They must not be loosed on the world again.
 
@@ -36,14 +36,37 @@ Intro
 Missions:
 
 1. Ambush
-    The heretics have opened a portal deep inside our space. It appears they want the keys.
+    The heretics have opened a portal deep inside our space. It appears they want the keys buried in the monuments here.
     Destroy the enemy with the small force at your disposal to prevent them from desecrating our holy sites.
         Objective: Do not allow any objective to be captured. Let none survive.
 
     -HUSKS emerge from the nebula at the top right and attempt to escort the three enemy ZELs to the artifact sites.
 
 2. Dark Portal
-    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after exploring a wreck in the area.
-        Objective: Destroy infected ships before they can escape.
+    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after uncovering a Morning Star ruin.
+        Objective: Destroy infected ZELs before they can escape.
 
-    -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH
+    -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH.
+
+3. City of sighs
+
+    The main force of the Morning Stars has begun its attempt to unravel the first seal of the prison. 
+    The vanguard are going to attempt to draw off the enemy's left flank sby silencing their sensors in the area.
+        Objective: Destroy all EYEs in the area. Then escape the way you came in.
+
+    -Once you destroy the final EYE, a wave of BOMs (reanimated machines) will spawn to block your escape route.
+
+
+
+General AI notes:
+    Scripted orders override all others
+
+    ZELs should proceed to the nearest uncaptured objective
+    GAINs should proceed to resourcing if empty, otherwise approach ships needing support
+
+    When ship illuminated, AI should 
+        send KKZs/BOM in immediately if nearby
+        move BEHs into max range and fire
+        move HUSKs into min range
+        move ZEL/GAIN ships away
+        move BLADEs around to the rear or side to flank
