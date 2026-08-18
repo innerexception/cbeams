@@ -12,10 +12,19 @@ export const invalidCursor = require('./img/invalid.png')
 export const atkCursor = require('./img/atk.png')
 export const iconSheet = require('./img/tiles.png')
 
+// Background parallax dressing (see MapScene's spawnNebulaLayer) — picked two at random per match, so
+// this is just the full pool of art they're drawn from, not anything tied to a specific ShipType/map key.
+export const NEBULA_KEYS = ['nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5']
+
 export const resources:Array<PhaserResource> = [
     { key: 'logo', resource: require('./logo.png'), type: 'image' },
     { key: 'tiles', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 32, frameHeight: 32 } },
     { key: 'starfield', resource: require('./img/starfield.png'), type: 'image' },
+    { key: 'nebula1', resource: require('./img/nebulas/nebula1.png'), type: 'image' },
+    { key: 'nebula2', resource: require('./img/nebulas/nebula2.png'), type: 'image' },
+    { key: 'nebula3', resource: require('./img/nebulas/nebula3.png'), type: 'image' },
+    { key: 'nebula4', resource: require('./img/nebulas/nebula4.png'), type: 'image' },
+    { key: 'nebula5', resource: require('./img/nebulas/nebula5.png'), type: 'image' },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
     { key: ShipType.GAIN, resource: require('./img/ships/Harvester.png'), type: 'image' },

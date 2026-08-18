@@ -5,8 +5,9 @@ import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getShipRelicCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
+import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource } from "../../../enum";
 import {
     MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
     MAX_QUEUE, MAX_WAYPOINTS,
@@ -23,6 +24,7 @@ import {
     HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
+    NEBULA_SIGHT_RADIUS_PX,
     GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX, CYAN_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
@@ -90,6 +92,7 @@ export default class MapScene extends Scene {
     harvesterSupportBeamG: GameObjects.Graphics
     beamG: GameObjects.Graphics
     starfield: GameObjects.TileSprite
+    nebulaSprites: Array<GameObjects.Image> = []
     dragSelectG: GameObjects.Graphics
 
     shipsGroup: Physics.Arcade.Group
@@ -204,7 +207,6 @@ export default class MapScene extends Scene {
 
         const bounds = this.cameras.main.getBounds()
         this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-1000).setScrollFactor(0.5)
-
         this.spawnEntitiesFromMap()
         this.drawMap()
         this.enableCameraControls()
@@ -224,6 +226,11 @@ export default class MapScene extends Scene {
 
         useAppStore.getState().setLoaded(true)
     }
+
+    isPointUnderNebulaSprite = (sprite:GameObjects.Image, worldX:number, worldY:number) => sprite.getBounds().contains(worldX,worldY)
+
+    isPointUnderNebula = (worldX:number, worldY:number) =>
+        this.nebulaSprites.some(sprite => this.isPointUnderNebulaSprite(sprite, worldX, worldY))
 
     generateTextures = () => {
         const tmp = this.add.graphics()
@@ -286,7 +293,10 @@ export default class MapScene extends Scene {
         updateEnemyGain(this)
         this.updateFogOfWar()
         this.updateShipLabels()
-        drawSightRadii(this.rangeG, this.ships)
+        drawSightRadii(this.rangeG, this.ships.map(s => ({
+            x: s.x, y: s.y, type: s.type, faction: s.faction,
+            sightRadiusOverride: this.isPointUnderNebula(s.x, s.y) ? NEBULA_SIGHT_RADIUS_PX : undefined,
+        })))
         this.drawObjectiveCaptureProgress(time)
 
         this.drawProductionProgress()
@@ -487,6 +497,11 @@ export default class MapScene extends Scene {
                     continue
                 }
 
+                if(NebulaResource[localIndex]){
+                    const { x, y } = this.toWorld(tx, ty)
+                    this.nebulaSprites.push(this.add.image(x,y,NebulaResource[localIndex]).setDepth(1))
+                }
+
                 const spriteName = ObjectiveSpriteIndex[localIndex] as ObjectiveSprite | undefined
                 if(!spriteName) continue
 
@@ -532,7 +547,7 @@ export default class MapScene extends Scene {
         const sprite = this.add.image(x, y, 'tiles', ObjectiveSpriteIndex[spawn.sprite]).setDepth(2)
         this.objectiveSprites.set(spawn.id, sprite)
 
-        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
+        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { stroke:'#000000', strokeThickness:8, fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
         this.objectiveLabels.set(spawn.id, label)
     }
 
@@ -1527,8 +1542,22 @@ export default class MapScene extends Scene {
         })
     }
 
+    // Shared by fog-of-war (updateFogOfWar) and every targeting/detection check (findNearestInRange, so
+    // this doubles as "can a weapon actually be aimed at this point" too) — a single definition of
+    // "in-sight" so a ship that can't be seen can't be shot at either. Nebula concealment lives here
+    // rather than as a separate stealth system: a point sitting inside a nebula's own silhouette can
+    // only be seen by a faction ship that's *also* inside a nebula right now (any nebula, not
+    // necessarily the same one — being in the cloud at all is what lets you spot something else in it),
+    // and every ship's own sight radius drops to NEBULA_SIGHT_RADIUS_PX while it's the one hiding in one.
     isWithinFactionSightRange = (worldX:number, worldY:number, faction:Faction) => {
-        return this.ships.some(s => s.faction === faction && Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= ShipData[s.type].sightRadius)
+        const targetHidden = this.isPointUnderNebula(worldX, worldY)
+        return this.ships.some(s => {
+            if(s.faction !== faction) return false
+            const observerHidden = this.isPointUnderNebula(s.x, s.y)
+            if(targetHidden && !observerHidden) return false
+            const sightRadius = observerHidden ? NEBULA_SIGHT_RADIUS_PX : ShipData[s.type].sightRadius
+            return Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= sightRadius
+        })
     }
 
     findOwnShipAt = (worldX:number, worldY:number) => {

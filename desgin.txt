@@ -21,6 +21,18 @@ GAIN - resupply
 ZEL - captures objectives / infiltrates enemy ships
 
 
+Intro
+
+    Book of Man 1:15-22, "And he made himself into a god, each one his own, and took to the stars for Man wanted to be alone."
+                         "That great wanting made each one a singularity from which not even light could escape."
+                     
+    The terrible servants of Mankind came again into the world. 
+    They were awakened by a stray dream from the prison where Men sleep, a call for help they said.
+    Only the Legions of the prison guard stand between them and the gate that we have guarded since the end of Man.
+    Mankind is like a black hole, devouring everything without partiality. 
+    They must not be loosed on the world again.
+
+
 Missions:
 
 1. Ambush
@@ -28,6 +40,10 @@ Missions:
     Destroy the enemy with the small force at your disposal to prevent them from desecrating our holy sites.
         Objective: Do not allow any objective to be captured. Let none survive.
 
+    -HUSKS emerge from the nebula at the top right and attempt to escort the three enemy ZELs to the artifact sites.
 
 2. Dark Portal
     In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after exploring a wreck in the area.
+        Objective: Destroy infected ships before they can escape.
+
+    -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH

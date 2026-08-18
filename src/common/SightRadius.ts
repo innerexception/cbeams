@@ -95,10 +95,13 @@ const fillCircleOverlap = (g:GameObjects.Graphics, circle:{x:number,y:number,r:n
 // hidden instead of full — the player has no business seeing the full extent of an enemy's sight
 // radius, only the arcs of it that actually fall within the player's own sight radius get revealed.
 // The overlap itself is additionally communicated with a light fill over the lens-shaped intersection.
-export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y:number, type:ShipType, faction:Faction }>) => {
+export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y:number, type:ShipType, faction:Faction, sightRadiusOverride?:number }>) => {
     g.clear()
 
-    const circles = ships.map(s => ({ x: s.x, y: s.y, r: ShipData[s.type].sightRadius, faction: s.faction }))
+    // sightRadiusOverride lets a caller shrink a specific ship's own circle (see MapScene's nebula
+    // concealment) without this needing any notion of nebulas itself — it just draws whatever radius
+    // it's handed, same as it always drew ShipData's own.
+    const circles = ships.map(s => ({ x: s.x, y: s.y, r: s.sightRadiusOverride ?? ShipData[s.type].sightRadius, faction: s.faction }))
 
     g.lineStyle(1, GREEN_HEX, 0.25)
     circles.forEach((circle, i) => {

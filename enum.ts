@@ -33,6 +33,12 @@ export enum ObjectiveSpriteIndex {
     Crypt=86,Shrine=87,NuclearReactor=88
 }
 
+export const NebulaResource = {
+    117:'nebula1',
+    118:'nebula2',
+    119:'nebula3'
+}
+
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
     DRN='DRN', PDF='PDF', HUSK='HUSK', STL='STL', BEH='BEH'
@@ -42,7 +48,7 @@ export enum ShipTypeSpriteIndex {
     KKZ=91, BOM=92, SPR=93, EYE=94, ZEL=95, CATH=96, GAIN=97, PDF=98, DRN=99, BEH=100, STL=101
 }
 export enum ShipTypeSpriteIndexEnemy {
-    KKZ=104, BOM=105, SPR=106, EYE=107, ZEL=108, CATH=109, GAIN=110, PDF=111, DRN=112, BEH=113, STL=114
+    KKZ=104, BOM=105, SPR=106, EYE=107, ZEL=108, CATH=109, GAIN=110, PDF=111, DRN=112, BEH=113, STL=114, HUSK=115
 }
 
 export const ShipData:Record<ShipType, ShipStats> = {

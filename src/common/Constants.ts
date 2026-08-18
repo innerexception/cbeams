@@ -44,6 +44,11 @@ export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 
 export const ENEMY_RAID_SIZE = 3
 
+// A ship sitting inside a nebula has its own sight cut down to this, and is only detectable by an enemy
+// ship that's also inside a nebula (see MapScene's isWithinFactionSightRange). "Inside a nebula" is a
+// convex-hull containment test against each nebula's precomputed boundary — see assets/NebulaHulls.ts.
+export const NEBULA_SIGHT_RADIUS_PX = 40
+
 export const HARVESTER_ORBIT_RADIUS_PX = 40
 export const HARVESTER_RANGE_PX = HARVESTER_ORBIT_RADIUS_PX + 30
 export const HARVESTER_ORBIT_ANGULAR_SPEED = 0.0001 // radians per ms
