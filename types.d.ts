@@ -81,7 +81,7 @@ interface ShipStats {
     rangePx: number
     sizeHex: number
     productionTimeMs: number
-    logisticsCost: number
+    relicCost: number
     description:string
     ammo?:number
 }

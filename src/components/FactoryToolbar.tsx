@@ -2,18 +2,19 @@ import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { Faction, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE } from '../common/Constants'
-import { getLogisticsStatus, getShipLogisticsCost } from '../common/Utils'
+import { getShipRelicCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 import Tooltip from 'rc-tooltip'
 
 export default () => {
-    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints } = useAppStore((state) => ({
+    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         setSelectedShipIds: state.setSelectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         clearShipWaypoints: state.clearShipWaypoints,
+        machineRelics: state.machineRelics,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -40,28 +41,28 @@ export default () => {
                 const queueFull = queue.length >= MAX_QUEUE
 
                 // Recomputed every render (this component already re-renders on its 200ms tick) so a
-                // button disables the instant the shared logistics budget can no longer fit that ship's cost.
-                const { logisticsRemaining } = getLogisticsStatus(playerBase.faction)
+                // button disables the instant the faction's Machine Relics can no longer cover that ship's cost.
+                const relicsAvailable = machineRelics[playerBase.faction] ?? 0
 
                 return (
                     <div>
                         <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
                             <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
-                            {buildMenuMinimized && logisticsRemaining > 0 && (
-                                // Hint badge so the player still knows there's unspent logistics capacity
+                            {buildMenuMinimized && relicsAvailable > 0 && (
+                                // Hint badge so the player still knows there's unspent Machine Relics
                                 // without having to reopen the panel.
                                 <div style={{
                                     width:20, height:20, borderRadius:'50%', background:colors.yellow,
                                     color:'#000', fontFamily:'Body', fontSize:11, fontWeight:'bold',
                                     display:'flex', alignItems:'center', justifyContent:'center',
-                                }}>{logisticsRemaining}</div>
+                                }}>{relicsAvailable}</div>
                             )}
                         </div>
                         {!buildMenuMinimized && (
                             <>
                                 <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
-                                    {Object.values(ShipType).filter(type => ShipData[type].logisticsCost).map(type => (
-                                        <ToolButton key={type} disabled={queueFull || logisticsRemaining < getShipLogisticsCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].logisticsCost})</ToolButton>
+                                    {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
+                                        <ToolButton key={type} disabled={queueFull || relicsAvailable < getShipRelicCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
                                     ))}
                                 </div>
                                 <div style={{ marginTop:8, display:'flex', gap:8 }}>

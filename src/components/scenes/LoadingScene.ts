@@ -38,7 +38,6 @@ export default class LoadingScene extends Scene {
     {
         this.add.image(this.cameras.main.centerX, this.cameras.main.centerY, 'logo').setScale(2)
         this.input.mouse.disableContextMenu()
-        //this.sound.volume = getVolume()
         Object.keys(SoundEffects).forEach(s=>{
             this.sound.add(s)
         })

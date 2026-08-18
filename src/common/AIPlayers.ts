@@ -59,21 +59,25 @@ const routeTowards = (scene:MapScene, ship:ShipSprite, worldX:number, worldY:num
     scene.setShipWaypoints([ship.id], dest.x, dest.y)
 }
 
-// The nearest Objective spawn this faction doesn't already own — the same eligibility moveShips' own
-// auto-latch uses (anything not owned by `faction`, including one the *other* faction currently holds, is
-// fair game to flip), just without the proximity requirement latching itself needs.
+// Shared "closest eligible item" scan, used by the three nearest-X searches below.
+const findNearest = <T>(items:Iterable<T>, worldX:number, worldY:number, pos:(item:T) => {x:number,y:number}, eligible:(item:T) => boolean) => {
+    let nearest:T = null
+    let nearestDist = Infinity
+    for(const item of items){
+        if(!eligible(item)) continue
+        const p = pos(item)
+        const d = Math.hypot(p.x-worldX, p.y-worldY)
+        if(d < nearestDist){ nearestDist = d; nearest = item }
+    }
+    return nearest
+}
+
+// Nearest Objective spawn this faction doesn't already own.
 const findNearestCapturableObjectiveSpawn = (scene:MapScene, faction:Faction, x:number, y:number) => {
     const { objectives } = useAppStore.getState()
-    let nearest:ObjectiveSpawn = null
-    let nearestDist = Infinity
-    scene.mapData.objectives.forEach(spawn => {
-        const data = objectives.find(o => o.id === spawn.id)
-        if(data?.owner === faction) return
-        const { x:wx, y:wy } = scene.toWorld(spawn.x, spawn.y)
-        const d = Math.hypot(wx-x, wy-y)
-        if(d < nearestDist){ nearestDist = d; nearest = spawn }
-    })
-    return nearest
+    return findNearest(scene.mapData.objectives, x, y,
+        spawn => scene.toWorld(spawn.x, spawn.y),
+        spawn => objectives.find(o => o.id === spawn.id)?.owner !== faction)
 }
 
 // ZEL: heads for and captures the nearest Objective it doesn't already own. The actual latch-on/capture
@@ -97,27 +101,13 @@ export const updateEnemyZel = (scene:MapScene) => {
 const needsSupport = (ship:ShipSprite) => ship.hp < ShipData[ship.type].hp
     || (!!ShipData[ship.type].ammo && (ship.ammoRemaining ?? 0) < ShipData[ship.type].ammo)
 
-const findNearestNeedyShip = (scene:MapScene, gain:ShipSprite) => {
-    let nearest:ShipSprite = null
-    let nearestDist = Infinity
-    scene.ships.forEach(s => {
-        if(s.id === gain.id || s.faction !== gain.faction || !needsSupport(s)) return
-        const d = Math.hypot(s.x-gain.x, s.y-gain.y)
-        if(d < nearestDist){ nearestDist = d; nearest = s }
-    })
-    return nearest
-}
+const findNearestNeedyShip = (scene:MapScene, gain:ShipSprite) =>
+    findNearest(scene.ships, gain.x, gain.y, s => s,
+        s => s.id !== gain.id && s.faction === gain.faction && needsSupport(s))
 
 const findNearestAsteroid = (x:number, y:number) => {
     const { resourceNodes } = useAppStore.getState()
-    let nearest:ResourceNodeData = null
-    let nearestDist = Infinity
-    resourceNodes.forEach(node => {
-        if((node.metal ?? 0) <= 0) return
-        const d = Math.hypot(node.x-x, node.y-y)
-        if(d < nearestDist){ nearestDist = d; nearest = node }
-    })
-    return nearest
+    return findNearest(resourceNodes, x, y, n => n, n => (n.metal ?? 0) > 0)
 }
 
 // GAIN: prefers heading for whichever friendly ship nearest it actually needs ammo or repairs — it has to

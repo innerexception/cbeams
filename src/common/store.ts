@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type MapScene from '../components/scenes/MapScene';
-import { Modal, ShipType } from '../../enum';
+import { Faction, Modal, ShipType } from '../../enum';
 
 export interface AppState {
   activeModal: Modal | null;
@@ -24,6 +24,11 @@ export interface AppState {
   // panel (see FactoryToolbar). Both go through this same field/setter; there's no separate
   // "selected building" concept anymore.
   selectedShipIds: Array<string>;
+  // Each faction's own running Machine Relics count — starts at zero, gains one every time that faction
+  // captures an Objective (see MapScene's updateObjectives), and is spent building ships (see MapScene's
+  // tickProduction/Utils' getShipRelicCost). A simple stockpile, not a per-ship-in-the-field upkeep cap
+  // the way logistics used to be — there's nothing that hands relics back once spent.
+  machineRelics: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
   setSave: (save: SaveFile | null) => void;
@@ -45,6 +50,9 @@ export interface AppState {
   setObjectives: (objectives: Array<ObjectiveData>) => void;
   addResourceNode: (node: ResourceNodeData) => void;
   setResourceNodes: (nodes: Array<ResourceNodeData>) => void;
+  // Positive to award (an Objective capture), negative to spend (a completed build) — either way just a
+  // delta against that faction's current total, never a replace.
+  addMachineRelics: (faction: Faction, amount: number) => void;
 }
 
 const initialState = {
@@ -57,6 +65,7 @@ const initialState = {
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,
   selectedShipIds: [] as Array<string>,
+  machineRelics: { [Faction.Player]: 0, [Faction.Enemy]: 0 } as Record<Faction, number>,
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -78,4 +87,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setObjectives: (objectives) => set({ objectives }),
   addResourceNode: (node) => set((state) => ({ resourceNodes: [...state.resourceNodes, node] })),
   setResourceNodes: (resourceNodes) => set({ resourceNodes }),
+  addMachineRelics: (faction, amount) => set((state) => ({
+    machineRelics: { ...state.machineRelics, [faction]: (state.machineRelics[faction] ?? 0) + amount },
+  })),
 }));

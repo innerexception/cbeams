@@ -2,7 +2,7 @@ import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
-import { getLogisticsStatus, getShipLogisticsCost } from "../../common/Utils";
+import { getShipRelicCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import ShipSprite from "../sprites/ShipSprite";
@@ -299,6 +299,14 @@ export default class MapScene extends Scene {
         this.selectionG.strokePoints(points, true, true)
     }
 
+    // Shared outline+fill bar draw, used by every progress/gauge readout below.
+    drawBar = (g:GameObjects.Graphics, barX:number, barY:number, w:number, h:number, percent:number, color:number) => {
+        g.lineStyle(1, color, 1)
+        g.strokeRect(barX, barY, w, h)
+        g.fillStyle(color, 0.9)
+        g.fillRect(barX, barY, w*percent, h)
+    }
+
     drawProductionProgress = () => {
         const g = this.progressG
         g.clear()
@@ -311,11 +319,7 @@ export default class MapScene extends Scene {
             const percent = PhaserMath.Clamp((Date.now()-item.startedAt) / ShipData[item.type].productionTimeMs, 0, 1)
             const w = CELL_SIZE * 1.6, h = 4
             const barX = s.x - w/2, barY = s.y - CELL_SIZE*2 - h
-
-            g.lineStyle(1, GREEN_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
+            this.drawBar(g, barX, barY, w, h, percent, GREEN_HEX)
         })
     }
 
@@ -332,11 +336,7 @@ export default class MapScene extends Scene {
             const w = CELL_SIZE * 1.4, h = 4
             const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
             const barX = s.x - w/2, barY = s.y + footprint + h
-
-            g.lineStyle(1, GREEN_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(GREEN_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
+            this.drawBar(g, barX, barY, w, h, percent, GREEN_HEX)
         })
     }
 
@@ -357,11 +357,7 @@ export default class MapScene extends Scene {
             const w = CELL_SIZE * 1.4, h = 4
             const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
             const barX = s.x - w/2, barY = s.y + footprint + h*2 + 2
-
-            g.lineStyle(1, YELLOW_HEX, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(YELLOW_HEX, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
+            this.drawBar(g, barX, barY, w, h, percent, YELLOW_HEX)
         })
     }
 
@@ -393,8 +389,11 @@ export default class MapScene extends Scene {
         this.ships.forEach(ship => {
             const item = ship.queue[0]
             if(!item?.startedAt || Date.now() - item.startedAt < ShipData[item.type].productionTimeMs) return
-            if(getLogisticsStatus(ship.faction).logisticsRemaining - getShipLogisticsCost(item.type) < 0) return
+            const relicCost = getShipRelicCost(item.type)
+            const relicsAvailable = useAppStore.getState().machineRelics[ship.faction] ?? 0
+            if(relicsAvailable < relicCost) return
 
+            useAppStore.getState().addMachineRelics(ship.faction, -relicCost)
             this.completeQueueItem(ship.id)
             this.spawnShip(ship, item.type)
         })
@@ -546,6 +545,8 @@ export default class MapScene extends Scene {
 
             changed = true
             this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(contestingFaction))
+            // The one and only source of Machine Relics — see store's machineRelics/addMachineRelics.
+            useAppStore.getState().addMachineRelics(contestingFaction, 1)
             return { ...objective, owner: contestingFaction }
         })
 
@@ -576,11 +577,7 @@ export default class MapScene extends Scene {
             const color = this.getObjectiveOwnerColor(objective.capturingFaction)
             const w = OBJECTIVE_ICON_SIZE, h = 4
             const barX = x - w/2, barY = y + OBJECTIVE_ICON_SIZE*0.5 + 20
-
-            g.lineStyle(1, color, 1)
-            g.strokeRect(barX, barY, w, h)
-            g.fillStyle(color, 0.9)
-            g.fillRect(barX, barY, w*percent, h)
+            this.drawBar(g, barX, barY, w, h, percent, color)
         })
     }
 
@@ -958,46 +955,38 @@ export default class MapScene extends Scene {
         this.impactFlashes.push({ x, y, createdAt:time, damage })
     }
 
-    findNearestHostileShip = (fromFaction:Faction, x:number, y:number, range:number) => {
+    // Shared by findNearestHostileShip/findNearestThreat below — nearest in-sight body matching `eligible`.
+    findNearestInRange = (fromFaction:Faction, x:number, y:number, range:number, eligible:(obj:Physics.Arcade.Sprite) => boolean) => {
         const hits = this.physics.overlapCirc(x, y, range, true, false)
-        let targetShip:Physics.Arcade.Sprite = null
-        let nearestShipDist = Infinity
-
-        hits.forEach(body => {
-            const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
-            if(!obj.active) return
-            if(obj.getData('kind') !== 'ship') return
-            if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
-            const ship = this.getShipEntry(obj)
-            const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
-            if(ship && ship.faction !== fromFaction && d < nearestShipDist){ nearestShipDist = d; targetShip = obj }
-        })
-
-        return targetShip
-    }
-
-    // Same shape as findNearestHostileShip, but for PDF's own targeting: the nearest hostile *missile*
-    // within range — never a ship, drones (KKZ/BOM) included, PDF is purely anti-missile point-defense.
-    // "One target at a time": this only ever returns a single nearest result, never a list, so a PDF
-    // ship's cooldown-gated shot (see updatePdf) always commits to just the one thing.
-    findNearestThreat = (fromFaction:Faction, x:number, y:number, range:number) => {
-        const hits = this.physics.overlapCirc(x, y, range, true, false)
-        let target:Physics.Arcade.Sprite = null
+        let nearest:Physics.Arcade.Sprite = null
         let nearestDist = Infinity
 
         hits.forEach(body => {
             const obj = (body as Physics.Arcade.Body).gameObject as Physics.Arcade.Sprite
             if(!obj.active) return
-            if(obj.getData('kind') !== 'missile') return
-            if(obj.getData('faction') === fromFaction) return
-
             if(!this.isWithinFactionSightRange(obj.x, obj.y, fromFaction)) return
+            if(!eligible(obj)) return
             const d = Phaser.Math.Distance.Between(x, y, obj.x, obj.y)
-            if(d < nearestDist){ nearestDist = d; target = obj }
+            if(d < nearestDist){ nearestDist = d; nearest = obj }
         })
 
-        return target
+        return nearest
     }
+
+    findNearestHostileShip = (fromFaction:Faction, x:number, y:number, range:number) =>
+        this.findNearestInRange(fromFaction, x, y, range, obj => {
+            if(obj.getData('kind') !== 'ship') return false
+            const ship = this.getShipEntry(obj)
+            return !!ship && ship.faction !== fromFaction
+        })
+
+    // Same shape as findNearestHostileShip, but for PDF's own targeting: the nearest hostile *missile*
+    // within range — never a ship, drones (KKZ/BOM) included, PDF is purely anti-missile point-defense.
+    // "One target at a time": this only ever returns a single nearest result, never a list, so a PDF
+    // ship's cooldown-gated shot (see updatePdf) always commits to just the one thing.
+    findNearestThreat = (fromFaction:Faction, x:number, y:number, range:number) =>
+        this.findNearestInRange(fromFaction, x, y, range, obj =>
+            obj.getData('kind') === 'missile' && obj.getData('faction') !== fromFaction)
 
     updateMlrs = (time:number) => {
         this.ships.forEach(ship => {
@@ -1667,8 +1656,5 @@ export default class MapScene extends Scene {
         g.fillRect(x, y, w, h)
         g.lineStyle(1, GREEN_HEX, 0.8)
         g.strokeRect(x, y, w, h)
-    }
-
-    onTransitionIn = () => {
     }
 }
