@@ -19,3 +19,15 @@ STL - med range gunboat
 Both:
 GAIN - resupply
 ZEL - captures objectives / infiltrates enemy ships
+
+
+Missions:
+
+1. Ambush
+    The heretics have opened a portal deep inside our space. It appears they want the keys.
+    Destroy the enemy with the small force at your disposal to prevent them from desecrating our holy sites.
+        Objective: Do not allow any objective to be captured. Let none survive.
+
+
+2. Dark Portal
+    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after exploring a wreck in the area.

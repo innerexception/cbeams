@@ -568,7 +568,10 @@ export default class MapScene extends Scene {
             changed = true
             this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(contestingFaction))
             // The one and only source of Machine Relics — see store's machineRelics/addMachineRelics.
-            useAppStore.getState().addMachineRelics(contestingFaction, 1)
+            // Only ever awarded once per Objective, to whichever faction captures it first (owner was
+            // still null) — a later recapture (the objective changing hands after that) doesn't pay out
+            // again, or fighting back and forth over one Objective would out-earn actually holding it.
+            if(objective.owner === null) useAppStore.getState().addMachineRelics(contestingFaction, 1)
             return { ...objective, owner: contestingFaction }
         })
 

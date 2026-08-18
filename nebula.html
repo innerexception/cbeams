@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nebula Generator</title>
+<style>
+    html, body {
+        margin: 0;
+        height: 100%;
+        background: #000000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        font-family: 'Courier New', monospace;
+        color: #55FF55;
+        gap: 12px;
+    }
+    canvas {
+        image-rendering: pixelated;
+        border: 1px solid #55FF55;
+        box-shadow: 0 0 16px rgba(85,255,85,0.35);
+        /* A checkerboard backdrop, the standard image-editor convention for "this is transparent, not
+           actually black" — the canvas itself has real per-pixel alpha (see ditherFloydSteinberg), this
+           is purely so it's visible in a plain HTML page rather than reading as an opaque black square. */
+        background-image:
+            linear-gradient(45deg, #222 25%, transparent 25%), linear-gradient(-45deg, #222 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #222 75%), linear-gradient(-45deg, transparent 75%, #222 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+        background-color: #000;
+    }
+    #controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+    }
+    input[type="number"] {
+        width: 64px;
+        background: #000;
+        color: #55FF55;
+        border: 1px solid #55FF55;
+        font-family: inherit;
+        padding: 2px 4px;
+    }
+    button {
+        background: #000;
+        color: #55FF55;
+        border: 1px solid #55FF55;
+        font-family: inherit;
+        padding: 4px 10px;
+        cursor: pointer;
+    }
+    button:hover {
+        background: #55FF55;
+        color: #000;
+    }
+    #status {
+        font-size: 11px;
+        opacity: 0.6;
+        min-height: 14px;
+    }
+</style>
+</head>
+<body>
+
+<canvas id="nebula"></canvas>
+<div id="controls">
+    <label>Size <input id="size" type="number" min="100" max="1000" value="400"></label>
+    <button id="regen">Regenerate</button>
+    <button id="download">Download PNG</button>
+</div>
+<div id="status"></div>
+
+<script>
+// The game's own 4-color palette (see src/common/Constants.ts): black background, green hull, yellow
+// highlight, red (the enemy-faction recolor of green). The final image uses exactly these four RGB
+// values and nothing in between — see the dithering pass below for how continuous shading gets
+// quantized down to that without banding.
+const PALETTE = [
+    { name: 'black',  rgb: [0x00, 0x00, 0x00] },
+    { name: 'green',  rgb: [0x55, 0xFF, 0x55] },
+    { name: 'yellow', rgb: [0xFF, 0xFF, 0x55] },
+    { name: 'red',    rgb: [0xFF, 0x55, 0x55] },
+]
+const CLOUD_COLORS = ['green', 'yellow', 'red']
+const colorRgb = name => PALETTE.find(p => p.name === name).rgb
+
+const canvas = document.getElementById('nebula')
+const ctx = canvas.getContext('2d')
+const statusEl = document.getElementById('status')
+
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+const lerp = (a, b, t) => a + (b-a)*t
+const mixColor = (c1, c2, t) => [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)]
+
+// --- Seedable PRNG (mulberry32) ---------------------------------------------------------------------
+// Deterministic per-generation seed so the permutation table below (and every random placement that
+// follows) comes from one reproducible stream rather than Math.random() scattered through the file.
+function mulberry32(seed){
+    return function(){
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed)
+        t = (t + Math.imul(t ^ t >>> 7, 61 | t)) ^ t
+        return ((t ^ t >>> 14) >>> 0) / 4294967296
+    }
+}
+
+// --- 2D Simplex noise (Gustavson/Ashima construction) -----------------------------------------------
+// Simplex rather than classic Perlin: it has no grid-axis bias (Perlin noise's square lattice tends to
+// show faint horizontal/vertical streaking at low octave counts, which reads as distinctly artificial
+// for something meant to look like a naturally-formed gas cloud), and it's cheaper per sample in 2D
+// (3 gradient contributions per point instead of Perlin's 4), which matters at up to 1000x1000 pixels
+// with several octaves and a domain-warp pass each needing their own samples.
+function makeSimplex2D(rng){
+    const grad3 = [
+        [1,1],[-1,1],[1,-1],[-1,-1],
+        [1,0],[-1,0],[1,0],[-1,0],
+        [0,1],[0,-1],[0,1],[0,-1],
+    ]
+    const p = new Uint8Array(256)
+    for(let i = 0; i < 256; i++) p[i] = i
+    for(let i = 255; i > 0; i--){
+        const j = Math.floor(rng() * (i+1))
+        ;[p[i], p[j]] = [p[j], p[i]]
+    }
+    const perm = new Uint8Array(512)
+    const permMod12 = new Uint8Array(512)
+    for(let i = 0; i < 512; i++){
+        perm[i] = p[i & 255]
+        permMod12[i] = perm[i] % 12
+    }
+
+    const F2 = 0.5 * (Math.sqrt(3) - 1)
+    const G2 = (3 - Math.sqrt(3)) / 6
+
+    return function noise2D(xin, yin){
+        const s = (xin + yin) * F2
+        const i = Math.floor(xin + s), j = Math.floor(yin + s)
+        const t = (i + j) * G2
+        const X0 = i - t, Y0 = j - t
+        const x0 = xin - X0, y0 = yin - Y0
+
+        const i1 = x0 > y0 ? 1 : 0, j1 = x0 > y0 ? 0 : 1
+
+        const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2
+        const x2 = x0 - 1 + 2*G2, y2 = y0 - 1 + 2*G2
+
+        const ii = i & 255, jj = j & 255
+        const gi0 = permMod12[ii + perm[jj]]
+        const gi1 = permMod12[ii + i1 + perm[jj + j1]]
+        const gi2 = permMod12[ii + 1 + perm[jj + 1]]
+
+        let n0 = 0, n1 = 0, n2 = 0
+
+        let t0 = 0.5 - x0*x0 - y0*y0
+        if(t0 >= 0){ t0 *= t0; const g = grad3[gi0]; n0 = t0*t0*(g[0]*x0 + g[1]*y0) }
+
+        let t1 = 0.5 - x1*x1 - y1*y1
+        if(t1 >= 0){ t1 *= t1; const g = grad3[gi1]; n1 = t1*t1*(g[0]*x1 + g[1]*y1) }
+
+        let t2 = 0.5 - x2*x2 - y2*y2
+        if(t2 >= 0){ t2 *= t2; const g = grad3[gi2]; n2 = t2*t2*(g[0]*x2 + g[1]*y2) }
+
+        // Scaled to land the result in [-1, 1].
+        return 70 * (n0 + n1 + n2)
+    }
+}
+
+// Fractal Brownian motion: several octaves of the same noise field, each higher frequency and lower
+// amplitude than the last, summed together. A single octave of simplex noise looks like smooth,
+// featureless blobs — stacking octaves is what actually produces the fine wispy detail layered over
+// broad structure that reads as a cloud rather than a lava-lamp blob.
+function fbm(noise2D, x, y, octaves, lacunarity, gain){
+    let amplitude = 0.5, frequency = 1, sum = 0, norm = 0
+    for(let o = 0; o < octaves; o++){
+        sum += amplitude * noise2D(x*frequency, y*frequency)
+        norm += amplitude
+        amplitude *= gain
+        frequency *= lacunarity
+    }
+    return sum / norm // roughly [-1, 1]
+}
+
+// Domain warping (Inigo Quilez's technique): instead of sampling the noise field directly at (x,y),
+// sample it at (x,y) *displaced* by another noise field's own output. Plain fBm is structurally
+// isotropic — its blobs never curl or stretch, which is exactly what real nebula gas (shaped by
+// turbulent flow) doesn't look like. Warping the sample coordinates through a second noise field is
+// what introduces that swirling, filamentary structure.
+function makeWarpedField(noise2D, warpStrength){
+    return function(x, y){
+        const wx = fbm(noise2D, x + 5.2, y + 1.3, 3, 2, 0.5)
+        const wy = fbm(noise2D, x + 9.2, y + 8.3, 3, 2, 0.5)
+        return fbm(noise2D, x + warpStrength*wx, y + warpStrength*wy, 5, 2, 0.5)
+    }
+}
+
+// --- Ordered/error-diffusion dithering --------------------------------------------------------------
+// Floyd-Steinberg error diffusion against the fixed 4-entry palette. The shading pass below produces
+// smooth, continuous RGB — quantizing that straight to the nearest of only 4 colors would band hard at
+// every density threshold. Diffusing each pixel's rounding error into its right/below neighbors is what
+// lets two adjacent flat colors blend into a stippled pattern that reads, at a glance, as the
+// in-between shade neither palette color actually has.
+function nearestPaletteColor(r, g, b){
+    let best = PALETTE[0], bestDist = Infinity
+    for(const entry of PALETTE){
+        const [pr, pg, pb] = entry.rgb
+        const dist = (r-pr)*(r-pr) + (g-pg)*(g-pg) + (b-pb)*(b-pb)
+        if(dist < bestDist){ bestDist = dist; best = entry }
+    }
+    return best.rgb
+}
+
+function ditherFloydSteinberg(width, height, continuous){
+    // continuous: Float32Array, RGB triples, one row-major buffer — mutated in place as error diffuses.
+    const out = new Uint8ClampedArray(width*height*4)
+
+    for(let y = 0; y < height; y++){
+        for(let x = 0; x < width; x++){
+            const i = (y*width + x) * 3
+            const oldR = continuous[i], oldG = continuous[i+1], oldB = continuous[i+2]
+            const [nr, ng, nb] = nearestPaletteColor(oldR, oldG, oldB)
+
+            // Black is standing in for "no nebula here" rather than being a color the nebula is actually
+            // drawn in — so it's the one palette entry written out fully transparent instead of opaque,
+            // which is what lets this act as a decal over anything else instead of always punching an
+            // opaque black square into whatever it's placed on.
+            const isBackground = nr === 0 && ng === 0 && nb === 0
+            const oi = (y*width + x) * 4
+            out[oi] = nr; out[oi+1] = ng; out[oi+2] = nb; out[oi+3] = isBackground ? 0 : 255
+
+            const errR = oldR - nr, errG = oldG - ng, errB = oldB - nb
+
+            const spread = (dx, dy, factor) => {
+                const nx = x+dx, ny = y+dy
+                if(nx < 0 || nx >= width || ny < 0 || ny >= height) return
+                const ni = (ny*width + nx) * 3
+                continuous[ni]   += errR * factor
+                continuous[ni+1] += errG * factor
+                continuous[ni+2] += errB * factor
+            }
+            spread(1, 0, 7/16)
+            spread(-1, 1, 3/16)
+            spread(0, 1, 5/16)
+            spread(1, 1, 1/16)
+        }
+    }
+
+    return out
+}
+
+function generate(size){
+    const t0 = performance.now()
+    canvas.width = size
+    canvas.height = size
+
+    const rng = mulberry32((Math.random()*0xFFFFFFFF) >>> 0)
+    const densityNoise = makeSimplex2D(rng)
+    const hueNoise = makeSimplex2D(rng)
+    const edgeNoise = makeSimplex2D(rng)
+
+    // Feature scale relative to canvas size so a 100px and a 1000px nebula show comparably-sized
+    // structures rather than the small canvas looking like a single zoomed-in fragment of the noise.
+    const scale = 4 / size
+    const density = makeWarpedField(densityNoise, 3.2)
+    // Hue is a coarse, unwarped, *continuous* fBm value in [0,1] — deliberately not quantized to
+    // "pick green, yellow, or red" here. A discrete pick-a-color-per-pixel step is exactly what produces
+    // hard-edged color blobs with a visible seam where one region's fill meets the next; the actual
+    // blending between colors is left entirely to the dither pass below; a pixel near a green/yellow
+    // boundary gets a target RGB partway between the two, and Floyd-Steinberg naturally renders "partway
+    // between two palette colors" as an interlaced stipple of both, i.e. a smooth dithered gradient
+    // rather than a seam.
+    const hue = (x, y) => (fbm(hueNoise, x*scale*0.4, y*scale*0.4, 3, 2, 0.5) + 1) / 2
+    const hueToRgb = h => h < 0.5
+        ? mixColor(colorRgb('green'), colorRgb('yellow'), h/0.5)
+        : mixColor(colorRgb('yellow'), colorRgb('red'), (h-0.5)/0.5)
+
+    // The organic silhouette: a soft, off-center, noise-perturbed radial falloff multiplied into density
+    // so the cloud thins out to nothing well inside the canvas instead of filling it edge to edge like a
+    // texture swatch. A plain circular vignette alone would still read as artificial (nothing in nature
+    // is a perfect circle) — perturbing the radius by angle-sampled noise is what gives the boundary its
+    // irregular bulges and recesses instead of a uniform disc.
+    const edgeCx = size * (0.38 + rng()*0.24)
+    const edgeCy = size * (0.38 + rng()*0.24)
+    const edgeBaseRadius = size * (0.3 + rng()*0.12)
+    const edgeMask = (x, y) => {
+        const dx = x-edgeCx, dy = y-edgeCy
+        const dist = Math.hypot(dx, dy)
+        const angle = Math.atan2(dy, dx)
+        const wobble = fbm(edgeNoise, Math.cos(angle)*1.6, Math.sin(angle)*1.6, 3, 2, 0.5)
+        const radius = edgeBaseRadius * (1 + wobble*0.5)
+        const t = clamp(1 - dist/radius, 0, 1)
+        return t*t*(3 - 2*t) // smoothstep — a soft edge rather than a hard-edged disc
+    }
+
+    // A couple of bright core knots layered on top via max() — pure fBm alone tends to stay fairly even
+    // in density; real nebula images usually have a few denser, brighter knots standing out of the haze.
+    const cores = []
+    CLOUD_COLORS.forEach(() => {
+        if(rng() > 0.75) return
+        cores.push({ x: rng()*size, y: rng()*size, r: size * (0.06 + rng()*0.1) })
+    })
+
+    const continuous = new Float32Array(size*size*3)
+
+    for(let y = 0; y < size; y++){
+        for(let x = 0; x < size; x++){
+            const mask = edgeMask(x, y)
+            let v = ((density(x*scale, y*scale) + 1) / 2) * mask // into [0, 1]
+
+            cores.forEach(core => {
+                const d = Math.hypot(x-core.x, y-core.y) / core.r
+                if(d < 1) v = Math.max(v, (1-d*d) * mask)
+            })
+
+            const glowT = Math.pow(clamp((v-0.34) / 0.5, 0, 1), 0.7)
+            const black = colorRgb('black')
+            const full = hueToRgb(hue(x, y))
+            const rgb = mixColor(black, full, glowT)
+
+            const i = (y*size + x) * 3
+            continuous[i] = rgb[0]; continuous[i+1] = rgb[1]; continuous[i+2] = rgb[2]
+        }
+    }
+
+    const dithered = ditherFloydSteinberg(size, size, continuous)
+    ctx.putImageData(new ImageData(dithered, size, size), 0, 0)
+
+    // A light star-scatter on top, outside the noise/dither pipeline entirely — real starfields are
+    // sparse point sources, not a shape a smooth noise field or its dithering would ever produce. Drawn
+    // fully opaque and strictly in-palette (no globalAlpha) — a translucent fill here would alpha-blend
+    // with whatever dithered pixel sits underneath and quietly reintroduce off-palette colors, undoing
+    // the whole point of dithering down to exactly four.
+    const starCount = Math.floor(size*size*0.0025)
+    for(let i = 0; i < starCount; i++){
+        const x = Math.floor(rng()*size), y = Math.floor(rng()*size)
+        const s = rng()
+        ctx.fillStyle = s < 0.7 ? '#55FF55' : s < 0.92 ? '#FFFF55' : '#FF5555'
+        ctx.fillRect(x, y, 1, 1)
+    }
+
+    statusEl.textContent = `${size}x${size} — generated in ${Math.round(performance.now()-t0)}ms`
+}
+
+const sizeInput = document.getElementById('size')
+document.getElementById('regen').addEventListener('click', () => {
+    const size = clamp(parseInt(sizeInput.value, 10) || 400, 100, 1000)
+    sizeInput.value = size
+    // Deferred a frame so the "generating..." status actually paints before the (synchronous, and at
+    // 1000x1000 not instant) generation work blocks the main thread.
+    statusEl.textContent = 'generating…'
+    requestAnimationFrame(() => requestAnimationFrame(() => generate(size)))
+})
+
+document.getElementById('download').addEventListener('click', () => {
+    // toDataURL/toBlob read the canvas's actual pixel buffer, alpha channel included — nothing extra
+    // needed here to carry the transparency through into the exported file.
+    const link = document.createElement('a')
+    link.download = `nebula-${canvas.width}x${canvas.height}.png`
+    link.href = canvas.toDataURL('image/png')
+    link.click()
+})
+
+generate(clamp(parseInt(sizeInput.value, 10) || 400, 100, 1000))
+</script>
+
+</body>
+</html>
