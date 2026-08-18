@@ -35,7 +35,7 @@ export enum ObjectiveSpriteIndex {
 
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
-    DRN='DRN', PDF='PDF', 
+    DRN='DRN', PDF='PDF', HUSK='HUSK'
 }
 
 export enum ShipTypeSpriteIndex {
@@ -73,4 +73,8 @@ export const ShipData:Record<ShipType, ShipStats> = {
      [ShipType.DRN]: { name:'Center', speed:8, sightRadius:200, armor:0, hp:20, damage:0, cooldownMs:2500, rangePx:0, sizeHex:1, productionTimeMs:18000, relicCost:5, ammo:4,
         description: "Manufactors KKZ from Mater's metals"
      },
+     [ShipType.HUSK]: {
+        name:'Husk', speed:8, sightRadius:100, armor:0, hp:30, damage:1, cooldownMs:500, rangePx:40, sizeHex:1, productionTimeMs:8000, relicCost:1,
+        description: "Deranged machine made from random scraps"
+     }
 }

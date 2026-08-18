@@ -86,6 +86,7 @@ export default class MapScene extends Scene {
     trailG: GameObjects.Graphics
     objectiveRangeG: GameObjects.Graphics
     harvesterBeamG: GameObjects.Graphics
+    harvesterSupportBeamG: GameObjects.Graphics
     starfield: GameObjects.TileSprite
     dragSelectG: GameObjects.Graphics
 
@@ -121,6 +122,11 @@ export default class MapScene extends Scene {
 
     harvesterMiningTarget: Map<string, string> = new Map()
     harvesterBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
+    // Whichever ship each GAIN is currently in range of and actively resupplying/repairing — recomputed
+    // every frame by updateHarvesterSupport regardless of its own spend cooldown, purely so
+    // drawHarvesterSupportBeams has something live to draw a beam to.
+    harvesterSupportTarget: Map<string, string> = new Map()
+    harvesterSupportBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
 
     enemyBaseId: string
     enemyRaidLaunched: boolean = false
@@ -160,6 +166,7 @@ export default class MapScene extends Scene {
         this.objectiveRangeG = this.add.graphics()
         this.dragSelectG = this.add.graphics()
         this.harvesterBeamG = this.add.graphics()
+        this.harvesterSupportBeamG = this.add.graphics()
 
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
@@ -275,6 +282,7 @@ export default class MapScene extends Scene {
         this.updateAmmoLabels()
         this.drawOrders()
         this.drawHarvesterBeams(time)
+        this.drawHarvesterSupportBeams(time)
         this.drawMissileImpacts(time)
         this.drawMissileTrails(time)
 
@@ -1138,30 +1146,34 @@ export default class MapScene extends Scene {
     // target was in range, or it couldn't fully afford one anyway.
     updateHarvesterSupport = (time:number) => {
         const ships = this.ships
-        const harvesters = ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1
-            && (!s.lastResupplyAtMs || time - s.lastResupplyAtMs >= HARVESTER_RESUPPLY_INTERVAL_MS))
-        if(harvesters.length === 0) return
+        this.harvesterSupportTarget.clear()
 
         const inRange = (harvester:ShipSprite, t:ShipSprite) => t.faction === harvester.faction
             && Phaser.Math.Distance.Between(harvester.x, harvester.y, t.x, t.y) <= HARVESTER_RESUPPLY_RANGE_PX
 
-        harvesters.forEach(harvester => {
+        // Picking a target happens every frame (so there's always something live for
+        // drawHarvesterSupportBeams to draw a beam to) — only actually spending metal on it is gated by
+        // lastResupplyAtMs below, same one-unit-per-interval cap as before.
+        ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1).forEach(harvester => {
             const ammoTarget = ships.find(t => inRange(harvester, t)
                 && ShipData[t.type].ammo && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo)
+            const repairTarget = !ammoTarget && (harvester.metalCarried ?? 0) >= HARVESTER_REPAIR_METAL_COST
+                ? ships.find(t => inRange(harvester, t) && t.hp < ShipData[t.type].hp)
+                : undefined
+            const target = ammoTarget ?? repairTarget
+            if(!target) return
+            this.harvesterSupportTarget.set(harvester.id, target.id)
+
+            if(harvester.lastResupplyAtMs && time - harvester.lastResupplyAtMs < HARVESTER_RESUPPLY_INTERVAL_MS) return
+            harvester.lastResupplyAtMs = time
             if(ammoTarget){
                 harvester.metalCarried = (harvester.metalCarried ?? 0) - 1
-                harvester.lastResupplyAtMs = time
                 ammoTarget.gainAmmo(1)
-                return
             }
-
-            if((harvester.metalCarried ?? 0) < HARVESTER_REPAIR_METAL_COST) return
-            const repairTarget = ships.find(t => inRange(harvester, t) && t.hp < ShipData[t.type].hp)
-            if(!repairTarget) return
-
-            harvester.metalCarried = (harvester.metalCarried ?? 0) - HARVESTER_REPAIR_METAL_COST
-            harvester.lastResupplyAtMs = time
-            repairTarget.heal(1)
+            else {
+                harvester.metalCarried = (harvester.metalCarried ?? 0) - HARVESTER_REPAIR_METAL_COST
+                repairTarget.heal(1)
+            }
         })
     }
 
@@ -1267,34 +1279,46 @@ export default class MapScene extends Scene {
         })
     }
 
-    drawHarvesterBeams = (time:number) => {
-        const g = this.harvesterBeamG
+    // Shared by drawHarvesterBeams (mining, yellow) and drawHarvesterSupportBeams (resupply/repair,
+    // green) below — same flickering beam from a Harvester to whatever it's currently working, just a
+    // different target map/color/end-point lookup.
+    drawFlickerBeams = (g:GameObjects.Graphics, time:number, targets:Map<string,string>, state:Map<string,{on:boolean,nextToggleAt:number}>, color:number, width:number, resolveEnd:(targetId:string) => {x:number,y:number} | undefined) => {
         g.clear()
 
-        this.harvesterBeamState.forEach((_, id) => {
-            if(!this.harvesterMiningTarget.has(id)) this.harvesterBeamState.delete(id)
+        state.forEach((_, id) => {
+            if(!targets.has(id)) state.delete(id)
         })
 
-        const { resourceNodes } = useAppStore.getState()
-        this.harvesterMiningTarget.forEach((nodeId, harvesterId) => {
+        targets.forEach((targetId, harvesterId) => {
             const sprite = this.shipSprites.get(harvesterId)
-            const node = resourceNodes.find(n => n.id === nodeId)
-            if(!sprite || !node) return
+            const end = resolveEnd(targetId)
+            if(!sprite || !end) return
 
-            let state = this.harvesterBeamState.get(harvesterId)
-            if(!state){
-                state = { on:true, nextToggleAt: time + this.randomFlickerIntervalMs() }
-                this.harvesterBeamState.set(harvesterId, state)
+            let s = state.get(harvesterId)
+            if(!s){
+                s = { on:true, nextToggleAt: time + this.randomFlickerIntervalMs() }
+                state.set(harvesterId, s)
             }
-            if(time >= state.nextToggleAt){
-                state.on = !state.on
-                state.nextToggleAt = time + this.randomFlickerIntervalMs()
+            if(time >= s.nextToggleAt){
+                s.on = !s.on
+                s.nextToggleAt = time + this.randomFlickerIntervalMs()
             }
-            if(!state.on) return
+            if(!s.on) return
 
-            g.lineStyle(1, YELLOW_HEX)
-            g.lineBetween(sprite.x, sprite.y, node.x, node.y)
+            g.lineStyle(width, color)
+            g.lineBetween(sprite.x, sprite.y, end.x, end.y)
         })
+    }
+
+    drawHarvesterBeams = (time:number) => {
+        const { resourceNodes } = useAppStore.getState()
+        this.drawFlickerBeams(this.harvesterBeamG, time, this.harvesterMiningTarget, this.harvesterBeamState, YELLOW_HEX, 1,
+            nodeId => resourceNodes.find(n => n.id === nodeId))
+    }
+
+    drawHarvesterSupportBeams = (time:number) => {
+        this.drawFlickerBeams(this.harvesterSupportBeamG, time, this.harvesterSupportTarget, this.harvesterSupportBeamState, GREEN_HEX, 2,
+            targetId => this.shipSprites.get(targetId))
     }
 
     randomFlickerIntervalMs = () => HARVESTER_BEAM_FLICKER_MIN_MS + Math.random()*(HARVESTER_BEAM_FLICKER_MAX_MS-HARVESTER_BEAM_FLICKER_MIN_MS)
@@ -1423,10 +1447,15 @@ export default class MapScene extends Scene {
     // point — each ship gets its own cell, evenly spaced along the axis perpendicular to the direction
     // of travel, in whatever left-to-right order the group is already standing in (so nobody has to
     // cross through the middle of the line to reach its spot). A single ship just gets the exact
-    // destination, same as before.
+    // destination, same as before. KKZ/BOM are excluded outright (see DRONE_TYPES) — kamikaze drones are
+    // usually massed to converge and detonate together, so they always just head straight for the
+    // clicked point instead.
     computeLineFormation = (shipIds:Array<string>, destX:number, destY:number):Map<string,{x:number,y:number}> => {
-        const ships = shipIds.map(id => this.shipSprites.get(id)).filter(s => !!s)
+        const allShips = shipIds.map(id => this.shipSprites.get(id)).filter(s => !!s)
         const formation = new Map<string,{x:number,y:number}>()
+        allShips.filter(s => DRONE_TYPES.has(s.type)).forEach(s => formation.set(s.id, { x:destX, y:destY }))
+        const ships = allShips.filter(s => !DRONE_TYPES.has(s.type))
+
         if(ships.length <= 1){
             ships.forEach(s => formation.set(s.id, { x:destX, y:destY }))
             return formation
@@ -1444,13 +1473,29 @@ export default class MapScene extends Scene {
         const ordered = [...ships].sort((a, b) =>
             ((a.x-centroidX)*perpX + (a.y-centroidY)*perpY) - ((b.x-centroidX)*perpX + (b.y-centroidY)*perpY))
 
+        const gridFor = (worldX:number, worldY:number) => {
+            const grid = this.toGrid(worldX, worldY)
+            return { x: PhaserMath.Clamp(grid.x, 0, this.mapData.width-1), y: PhaserMath.Clamp(grid.y, 0, this.mapData.height-1) }
+        }
+
+        const claimed = new Set<string>()
         ordered.forEach((s, i) => {
-            const offset = (i - (ordered.length-1)/2) * spacing
-            const grid = this.toGrid(destWorld.x + perpX*offset, destWorld.y + perpY*offset)
-            formation.set(s.id, {
-                x: PhaserMath.Clamp(grid.x, 0, this.mapData.width-1),
-                y: PhaserMath.Clamp(grid.y, 0, this.mapData.height-1),
-            })
+            const baseOffset = (i - (ordered.length-1)/2) * spacing
+            // A grid cell (CELL_SIZE px) is often coarser than the gap between two adjacent formation
+            // slots, especially for just 2-3 ships — their offsets can floor/round straight back to the
+            // same cell, which is exactly what a "still converges on one point" bug looks like. So push
+            // any collision one more full cell further out along the same line, as many times as it
+            // takes, until it lands somewhere no earlier ship in the line already claimed.
+            const sign = baseOffset < 0 ? -1 : 1
+            let extra = 0
+            let grid = gridFor(destWorld.x + perpX*baseOffset, destWorld.y + perpY*baseOffset)
+            while(claimed.has(`${grid.x},${grid.y}`) && extra < 50){
+                extra++
+                const offset = baseOffset + sign*extra*CELL_SIZE
+                grid = gridFor(destWorld.x + perpX*offset, destWorld.y + perpY*offset)
+            }
+            claimed.add(`${grid.x},${grid.y}`)
+            formation.set(s.id, grid)
         })
 
         return formation
