@@ -24,7 +24,7 @@ export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60
 export const CONTRAIL_LIFETIME_MS = 5000
 
-export const BULLET_SPEED_PX_S = 500
+export const BULLET_SPEED_PX_S = 600
 export const BULLET_MAX_LIFETIME_MS = 1000
 
 export const BEAM_LIFETIME_MS = 150

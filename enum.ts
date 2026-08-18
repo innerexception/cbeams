@@ -68,7 +68,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.GAIN]: { name:'Mater', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, sizeHex:0.7, productionTimeMs:8000, relicCost:1,
         description: 'Replenishment of the fleet, digests debris into fuel and parts.'
      },
-     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:200, sizeHex:0.7, productionTimeMs:8000, relicCost:2,
+     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, sizeHex:0.7, productionTimeMs:8000, relicCost:2,
         weaponType:'bullet', burstSize:1, ammo:20,
         description: 'A thousand needles rise up in defense.'
      },
