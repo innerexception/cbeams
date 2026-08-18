@@ -103,6 +103,11 @@ export default class MapScene extends Scene {
     // Iterate via `this.ships` (a fresh array snapshot) rather than this Map directly wherever a system
     // might spawn/destroy ships mid-iteration.
     shipSprites: Map<string, ShipSprite> = new Map()
+    // A ShipType's footprint radius, in real px — derived from its own texture the first time it's
+    // asked for (see getShipFootprintRadiusPx) rather than hand-maintained per type, so a selection
+    // ring, click hitbox, or spacing check can never drift out of sync with what the art actually looks
+    // like on screen the way a separate sizeHex number could.
+    shipFootprintRadiusPx: Map<ShipType, number> = new Map()
     shipLabels: Map<string, GameObjects.Text> = new Map()
     ammoLabels: Map<string, GameObjects.Text> = new Map()
     objectiveSprites: Map<string, GameObjects.Image> = new Map()
@@ -300,7 +305,7 @@ export default class MapScene extends Scene {
         selectedShipIds.forEach(id => {
             const ship = this.shipSprites.get(id)
             if(!ship) return
-            this.drawSelectionRing(ship.x, ship.y, ShipData[ship.type].sizeHex * CELL_SIZE * 0.7, time)
+            this.drawSelectionRing(ship.x, ship.y, this.getShipFootprintRadiusPx(ship.type) * 1.4, time)
         })
     }
 
@@ -351,7 +356,7 @@ export default class MapScene extends Scene {
 
             const percent = PhaserMath.Clamp(s.hp / maxHp, 0, 1)
             const w = CELL_SIZE * 1.4, h = 4
-            const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
+            const footprint = this.getShipFootprintRadiusPx(s.type)
             const barX = s.x - w/2, barY = s.y + footprint + h
             this.drawBar(g, barX, barY, w, h, percent, GREEN_HEX)
         })
@@ -372,7 +377,7 @@ export default class MapScene extends Scene {
 
             const percent = PhaserMath.Clamp((s.metalCarried ?? 0) / HARVESTER_METAL_CAPACITY, 0, 1)
             const w = CELL_SIZE * 1.4, h = 4
-            const footprint = ShipData[s.type].sizeHex * CELL_SIZE / 2
+            const footprint = this.getShipFootprintRadiusPx(s.type)
             const barX = s.x - w/2, barY = s.y + footprint + h*2 + 2
             this.drawBar(g, barX, barY, w, h, percent, YELLOW_HEX)
         })
@@ -420,7 +425,7 @@ export default class MapScene extends Scene {
     // loitering ships.
     spawnShip = (base:ShipSprite, type:ShipType) => {
         const center = { x:base.x, y:base.y }
-        const size = ShipData[type].sizeHex * CELL_SIZE
+        const footprint = this.getShipFootprintRadiusPx(type)
         let pos = center
 
         for(let attempt=0; attempt<40; attempt++){
@@ -428,7 +433,7 @@ export default class MapScene extends Scene {
             const angle = Math.random()*Math.PI*2
             const candidate = { x: center.x+Math.cos(angle)*radius, y: center.y+Math.sin(angle)*radius }
             const overlapsShip = this.ships.some(s => {
-                const minDist = (size + ShipData[s.type].sizeHex*CELL_SIZE)/2 + 12
+                const minDist = footprint + this.getShipFootprintRadiusPx(s.type) + 12
                 return Phaser.Math.Distance.Between(candidate.x, candidate.y, s.x, s.y) < minDist
             })
             if(!overlapsShip){ pos = candidate; break }
@@ -715,6 +720,21 @@ export default class MapScene extends Scene {
                 onComplete: () => { piece.destroy(); mask.destroy() },
             })
         })
+    }
+
+    // A type's own real footprint radius, off its texture's actual pixel dimensions — the smaller of
+    // width/height, same measure centerCircleBody already uses for the physics body itself, so a
+    // selection ring/hitbox/spacing check derived from this always agrees with what actually collides.
+    // Cached per type since it never changes once the texture's loaded; friendly and enemy textures for
+    // a type are always identical dimensions (the enemy one is a straight pixel recolor), so this is
+    // asked for off the plain type key regardless of which faction's ship it's for.
+    getShipFootprintRadiusPx = (type:ShipType) => {
+        let radius = this.shipFootprintRadiusPx.get(type)
+        if(radius !== undefined) return radius
+        const source = this.textures.get(type).getSourceImage() as HTMLImageElement | HTMLCanvasElement
+        radius = Math.min(source.width, source.height) / 2
+        this.shipFootprintRadiusPx.set(type, radius)
+        return radius
     }
 
     centerCircleBody = (sprite:Physics.Arcade.Sprite) => {
@@ -1511,7 +1531,7 @@ export default class MapScene extends Scene {
     findOwnShipAt = (worldX:number, worldY:number) => {
         return this.ships.find(s => {
             if(s.faction !== Faction.Player || s.type === ShipType.CATH) return false
-            const r = Math.max(ShipData[s.type].sizeHex * CELL_SIZE/2, 10)
+            const r = Math.max(this.getShipFootprintRadiusPx(s.type), 10)
             return Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= r
         })
     }
@@ -1557,7 +1577,7 @@ export default class MapScene extends Scene {
         const dirX = dist > 0.001 ? toDestX/dist : 1, dirY = dist > 0.001 ? toDestY/dist : 0
         const perpX = -dirY, perpY = dirX
 
-        const spacing = Math.max(...ships.map(s => ShipData[s.type].sizeHex)) * CELL_SIZE + SHIP_SEPARATION_PX
+        const spacing = Math.max(...ships.map(s => this.getShipFootprintRadiusPx(s.type))) * 2 + SHIP_SEPARATION_PX
         const ordered = [...ships].sort((a, b) =>
             ((a.x-centroidX)*perpX + (a.y-centroidY)*perpY) - ((b.x-centroidX)*perpX + (b.y-centroidY)*perpY))
 

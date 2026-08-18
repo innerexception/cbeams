@@ -6,7 +6,7 @@ New cores are gained when capturing objectives
 
 Heretic vessels:
 HUSK - hi hp low damage fodder
-STITCHER - creates HUSKS
+STITCHER - creates HUSKS / KKZ
 BEHOLDER - beam frigate, long range slow firing. retreats to max range.
 BLADE - fast, short range damage flanker. Can fire large dumb-fire missile.
 BOM - large fusion warhead on a stick
@@ -18,5 +18,4 @@ STL - med range gunboat
 
 Both:
 GAIN - resupply
-ZEL - captures objectives
-KKZ - suicide drone
+ZEL - captures objectives / infiltrates enemy ships

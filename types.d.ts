@@ -79,7 +79,6 @@ interface ShipStats {
     damage: number
     cooldownMs: number
     rangePx: number
-    sizeHex: number
     productionTimeMs: number
     relicCost: number
     description:string
