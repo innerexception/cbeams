@@ -270,13 +270,23 @@ export default class MapScene extends Scene {
         const ctx = canvas.getContext('2d')
         ctx.drawImage(source as CanvasImageSource, 0, 0)
 
+        // Both palette colors the friendly art actually uses — its green hull and its yellow highlight —
+        // go red, leaving black outline (and anything else) untouched. Matched with a small tolerance
+        // rather than exact equality: a getImageData/putImageData round-trip can shift a channel by a
+        // value or two (premultiplied-alpha unpremultiply rounding), which an exact match would silently
+        // skip, leaving stray green/yellow pixels behind.
         const imageData = ctx.getImageData(0, 0, w, h)
         const data = imageData.data
+        const COLOR_MATCH_TOLERANCE = 10
+        const closeTo = (i:number, cr:number, cg:number, cb:number) =>
+            Math.abs(data[i]-cr) <= COLOR_MATCH_TOLERANCE && Math.abs(data[i+1]-cg) <= COLOR_MATCH_TOLERANCE && Math.abs(data[i+2]-cb) <= COLOR_MATCH_TOLERANCE
+        const r = (RED_HEX >> 16) & 0xff, g = (RED_HEX >> 8) & 0xff, b = RED_HEX & 0xff
+        const greenR = (GREEN_HEX >> 16) & 0xff, greenG = (GREEN_HEX >> 8) & 0xff, greenB = GREEN_HEX & 0xff
+        const yellowR = (YELLOW_HEX >> 16) & 0xff, yellowG = (YELLOW_HEX >> 8) & 0xff, yellowB = YELLOW_HEX & 0xff
         for(let i=0; i<data.length; i += 4){
             if(data[i+3] === 0) continue
-            if(data[i] === 0x55 && data[i+1] === 0xff && data[i+2] === 0x55){
-                data[i] = 0xff; data[i+1] = 0x55; data[i+2] = 0x55
-            }
+            if(!closeTo(i, greenR, greenG, greenB) && !closeTo(i, yellowR, yellowG, yellowB)) continue
+            data[i] = r; data[i+1] = g; data[i+2] = b
         }
         ctx.putImageData(imageData, 0, 0)
 
