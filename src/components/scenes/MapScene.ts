@@ -144,6 +144,9 @@ export default class MapScene extends Scene {
     enemyBaseId: string
     enemyRaidLaunched: boolean = false
     gameOver: boolean = false
+    // Which Tiled map to actually load — read once from the store's own activeMapKey (see NewGame/
+    // Briefing) at the very start of create(), rather than re-reading it everywhere a tilemap gets made.
+    mapKey: Maps
     mapData: MapData
     origDragPoint: Phaser.Math.Vector2
     hoveredCell: {x:number, y:number}
@@ -195,8 +198,9 @@ export default class MapScene extends Scene {
         this.physics.add.overlap(this.bulletsGroup, this.missilesGroup, this.onBulletMissileContact, this.isHostileBulletMissilePair, this)
         this.physics.add.overlap(this.bulletsGroup, this.shipsGroup, this.onBulletShipContact, this.isHostileBulletShipPair, this)
 
+        this.mapKey = useAppStore.getState().activeMapKey || Maps.Sandbox
         this.mapData = useAppStore.getState().activeMap || { width:MAP_SIZE, height:MAP_SIZE, objectives:[], terrain:null }
-        const tiledMap = this.make.tilemap({ key: Maps.Sandbox })
+        const tiledMap = this.make.tilemap({ key: this.mapKey })
         if(tiledMap.width && tiledMap.height){
             this.mapData.width = tiledMap.width
             this.mapData.height = tiledMap.height
@@ -461,7 +465,7 @@ export default class MapScene extends Scene {
     // Every ship (both factions' Bases included) and every Objective/Asteroid comes straight off the
     // loaded map file's own entities layer.
     spawnEntitiesFromMap = () => {
-        const map = this.make.tilemap({ key: Maps.Sandbox })
+        const map = this.make.tilemap({ key: this.mapKey })
         const layer = map.getLayer('entities')
         if(!layer) return
 
@@ -1379,7 +1383,7 @@ export default class MapScene extends Scene {
 
             if(!this.shipSprites.get(targetId)){
                 const faction:Faction = child.getData('faction')
-                const searchRadius = this.mapData.width * CELL_SIZE
+                const searchRadius = Math.hypot(this.mapData.width, this.mapData.height) * CELL_SIZE
                 const retargeted = this.findNearestHostileShip(faction, child.x, child.y, searchRadius)
 
                 if(retargeted){
@@ -1523,13 +1527,18 @@ export default class MapScene extends Scene {
         const g = this.g
         g.clear()
 
-        const worldSize = this.mapData.width * CELL_SIZE
+        const worldW = this.mapData.width * CELL_SIZE
+        const worldH = this.mapData.height * CELL_SIZE
 
         for(let i=0; i<=this.mapData.width; i++){
             const isMajor = i % 5 === 0
             g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
-            g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldSize)
-            g.lineBetween(0, i*CELL_SIZE, worldSize, i*CELL_SIZE)
+            g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
+        }
+        for(let i=0; i<=this.mapData.height; i++){
+            const isMajor = i % 5 === 0
+            g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
+            g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
         }
 
         this.drawTerrain()
@@ -1831,11 +1840,12 @@ export default class MapScene extends Scene {
 
     centerCameraBounds = () => {
         const cam = this.cameras.main
-        const worldSize = this.mapData.width * CELL_SIZE
-        const boundsW = Math.max(worldSize, cam.width)
-        const boundsH = Math.max(worldSize, cam.height)
-        cam.setBounds((worldSize-boundsW)/2, (worldSize-boundsH)/2, boundsW, boundsH)
-        cam.centerOn(worldSize/2, worldSize/2)
+        const worldW = this.mapData.width * CELL_SIZE
+        const worldH = this.mapData.height * CELL_SIZE
+        const boundsW = Math.max(worldW, cam.width)
+        const boundsH = Math.max(worldH, cam.height)
+        cam.setBounds((worldW-boundsW)/2, (worldH-boundsH)/2, boundsW, boundsH)
+        cam.centerOn(worldW/2, worldH/2)
     }
 
     enableCameraControls = () => {

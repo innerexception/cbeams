@@ -6,6 +6,10 @@
   font-family: 'Titles';
   src: url('../assets/ATC.ttf')  format('truetype')
 }
+@font-face {
+  font-family: 'Phase1';
+  src: url('../assets/Phase 1.ttf')  format('truetype')
+}
 
 * {
   box-sizing: border-box;

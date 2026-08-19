@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type MapScene from '../components/scenes/MapScene';
-import { Faction, Modal, ShipType } from '../../enum';
+import { Faction, Maps, Modal, ShipType } from '../../enum';
 
 export interface AppState {
   activeModal: Modal | null;
@@ -8,6 +8,10 @@ export interface AppState {
   scene: MapScene | null;
   mySave: SaveFile | null;
   activeMap: MapData | null;
+  // Which Tiled map key MapScene's own create() actually loads — set before starting the scene (see
+  // NewGame/Briefing), read once there. Defaults to Sandbox so nothing that starts the scene without
+  // explicitly picking one (there isn't one currently) silently breaks.
+  activeMapKey: Maps;
   // A low-frequency summary of every ship in the match, both factions' — see ShipSummary's own doc
   // comment (types.d.ts) for why this isn't the real ship data. Pushed by MapScene's
   // syncShipSummaries, never mutated directly here.
@@ -34,6 +38,7 @@ export interface AppState {
   setSave: (save: SaveFile | null) => void;
   setLoaded: (loaded: boolean) => void;
   setActiveMap: (map: MapData | null) => void;
+  setActiveMapKey: (key: Maps) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
   // Every one of these actually mutates a real ShipSprite instance on the scene (see MapScene's own
   // methods of the same name) — none of it lives in this store. Kept here purely as the stable,
@@ -61,6 +66,7 @@ const initialState = {
   scene: null as MapScene | null,
   mySave: null as SaveFile | null,
   activeMap: null as MapData | null,
+  activeMapKey: Maps.Sandbox as Maps,
   ships: [] as Array<ShipSummary>,
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,
@@ -75,6 +81,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMap: (activeMap) => set({ activeMap }),
+  setActiveMapKey: (activeMapKey) => set({ activeMapKey }),
   setSelectedShipIds: (selectedShipIds) => set({ selectedShipIds }),
   addShipWaypoints: (shipIds, x, y) => get().scene?.addShipWaypoints(shipIds, x, y),
   setShipWaypoints: (shipIds, x, y) => get().scene?.setShipWaypoints(shipIds, x, y),

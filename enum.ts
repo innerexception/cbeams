@@ -1,5 +1,5 @@
 export enum Modal {
-    NewGame='ng', GameSetup='GameSetup', Victory='victory', Defeat='defeat'
+    NewGame='ng', GameSetup='GameSetup', Briefing='briefing', Victory='victory', Defeat='defeat'
 }
 
 export enum SceneNames {
@@ -11,7 +11,7 @@ export enum SoundEffects {
 }
 
 export enum Maps {
-    Sandbox='Sandbox'
+    Sandbox='Sandbox', Ambush='Ambush'
 }
 
 export enum IconIndexes {

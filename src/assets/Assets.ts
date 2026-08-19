@@ -27,6 +27,7 @@ export const resources:Array<PhaserResource> = [
     { key: 'nebula5', resource: require('./img/nebulas/nebula5.png'), type: 'image' },
     { key: SoundEffects.Click, resource: require('./audio/click.mp3'), type:'audio'},
     { key: Maps.Sandbox, resource: require('./maps/sandbox.json'), type: 'tilemapTiledJSON'},
+    { key: Maps.Ambush, resource: require('./maps/ambush.json'), type: 'tilemapTiledJSON'},
     { key: ShipType.GAIN, resource: require('./img/ships/Harvester.png'), type: 'image' },
     { key: ShipType.KKZ, resource: require('./img/ships/K.png'), type: 'image' },
     { key: ShipType.ZEL, resource: require('./img/ships/KE.png'), type: 'image' },

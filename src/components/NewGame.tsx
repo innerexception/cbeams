@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { onShowModal } from '../common/Thunks';
-import { SceneNames } from '../../enum';
+import { Maps, Modal } from '../../enum';
 import { MAP_SIZE } from '../common/Constants';
 import { tryLoadFile } from '../common/Utils';
 import { useAppStore } from '../common/store';
@@ -20,13 +20,15 @@ export default () => {
     },[])
 
     const startNewGame = () => {
-        const { setActiveMap, scene } = useAppStore.getState()
+        const { setActiveMap, setActiveMapKey } = useAppStore.getState()
         // Everything real (grid size, ships, objectives) gets filled in from the loaded map file itself
         // once MapScene's create() runs (see spawnEntitiesFromMap and its width/height read-off right
         // before it) — this is just a placeholder shell so activeMap is non-null in the meantime.
         setActiveMap({ width:MAP_SIZE, height:MAP_SIZE, objectives:[], terrain:null })
-        onShowModal(null)
-        scene?.scene.start(SceneNames.Main)
+        // The first map a new game ever loads — see Briefing, which actually starts MapScene once the
+        // player clicks through it.
+        setActiveMapKey(Maps.Ambush)
+        onShowModal(Modal.Briefing)
     }
 
     return (
