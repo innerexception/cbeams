@@ -41,7 +41,7 @@ export const NebulaResource = {
 
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
-    DRN='DRN', PDF='PDF', HUSK='HUSK', STL='STL', BEH='BEH'
+    DRN='DRN', PDF='PDF', HUSK='HUSK', STL='STL', BEH='BEH', BLADE='BLADE'
 }
 
 export enum ShipTypeSpriteIndex {
@@ -52,9 +52,13 @@ export enum ShipTypeSpriteIndexEnemy {
 }
 
 export const ShipData:Record<ShipType, ShipStats> = {
+    [ShipType.BLADE]: { name:'Blade', speed:40, sightRadius:150, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
+        burstSize: 1, ammo: 20,
+        description: 'Most ancient orthodox design. Immune to infiltration.'
+     },
     [ShipType.BEH]: { name:'Beholder', speed:20, sightRadius:250, armor:0, hp:15, damage:1, cooldownMs:1000, rangePx:200, productionTimeMs:5000, relicCost:2, weaponType:'beam',
         burstSize: 1,
-        description: 'Most ancient orthodox design. Immune to infiltration.'
+        description: 'Beams in the dark require no ammo.'
      },
     [ShipType.STL]: { name:'Phalanx', speed:30, sightRadius:150, armor:0, hp:15, damage:1, cooldownMs:1500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
         burstSize: 1, ammo: 20,

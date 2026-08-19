@@ -70,6 +70,13 @@ interface ProductionQueueItem {
     startedAt: number | null
 }
 
+// A per-ship AI override, sourced from the map file on a per-map basis (not wired up yet — nothing
+// currently sets this). When present it overrides every default autonomous behavior in AIPlayers.ts
+// entirely; its own exact shape isn't decided yet beyond an id.
+interface PrimeDirective {
+    id: string
+}
+
 interface ShipStats {
     name: string
     speed: number

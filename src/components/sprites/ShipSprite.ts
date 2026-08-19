@@ -44,6 +44,10 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     // completeQueueItem/MapScene's tickProduction.
     queue: Array<ProductionQueueItem> = []
 
+    // See PrimeDirective's own doc comment (types.d.ts) — overrides every default AI behavior in
+    // AIPlayers.ts while set.
+    primeDirective?: PrimeDirective
+
     constructor(scene:Phaser.Scene, x:number, y:number, texture:string, id:string, faction:Faction, type:ShipType){
         super(scene, x, y, texture)
         this.id = id

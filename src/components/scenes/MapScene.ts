@@ -3,7 +3,7 @@ import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSetScene, onShowModal } from "../../common/Thunks";
 import { getShipRelicCost } from "../../common/Utils";
-import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain } from "../../common/AIPlayers";
+import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
@@ -55,7 +55,7 @@ const asteroidTier = (node:ResourceNodeData):AsteroidTier => {
     return 'small'
 }
 
-const DRONE_TYPES = new Set<ShipType>([ShipType.KKZ, ShipType.BOM])
+export const DRONE_TYPES = new Set<ShipType>([ShipType.KKZ, ShipType.BOM])
 
 // Index of the closest waypoint at or after minIndex, so a retargeted route resumes from wherever the
 // ship already is without ever sending it back to a waypoint it has already passed.
@@ -282,6 +282,7 @@ export default class MapScene extends Scene {
         this.updateMlrs(time)
         this.updateDrn(time)
         this.updatePdf(time)
+        this.updateBulletWeapons(time)
         this.updateBeamWeapons(time)
         this.updateBullets(time)
         this.updateHarvesters(delta)
@@ -291,6 +292,10 @@ export default class MapScene extends Scene {
         checkEnemyRaid(this)
         updateEnemyZel(this)
         updateEnemyGain(this)
+        updateEnemyDrones(this)
+        updateEnemyBeh(this)
+        updateEnemyHusk(this)
+        updateEnemyBlade(this)
         this.updateFogOfWar()
         this.updateShipLabels()
         drawSightRadii(this.rangeG, this.ships.map(s => ({
@@ -1113,6 +1118,31 @@ export default class MapScene extends Scene {
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!ship.active) return
                     this.spawnBullet(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].damage, aimX, aimY)
+                })
+            }
+        })
+    }
+
+    // Any other bullet-weapon ship (STL, BLADE — PDF has its own updatePdf above, with its missile-
+    // priority targeting) just fires a burst at the nearest hostile ship in range, same shape as
+    // updateBeamWeapons below.
+    updateBulletWeapons = (time:number) => {
+        this.ships.forEach(ship => {
+            if(ship.type === ShipType.PDF) return
+            const stats = ShipData[ship.type]
+            if(stats.weaponType !== 'bullet') return
+            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < stats.cooldownMs) return
+
+            const target = this.findNearestHostileShip(ship.faction, ship.x, ship.y, stats.rangePx)
+            if(!target) return
+
+            ship.lastFiredAtMs = time
+            const shots = stats.burstSize ?? 1
+            const aimX = target.x, aimY = target.y
+            for(let i=0; i<shots; i++){
+                this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
+                    if(!ship.active) return
+                    this.spawnBullet(ship.faction, ship.x, ship.y, stats.damage, aimX, aimY)
                 })
             }
         })

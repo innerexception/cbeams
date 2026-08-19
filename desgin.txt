@@ -62,11 +62,13 @@ General AI notes:
     Scripted orders override all others
 
     ZELs should proceed to the nearest uncaptured objective
-    GAINs should proceed to resourcing if empty, otherwise approach ships needing support
+    GAINs should proceed to nearest asteroid if empty, otherwise approach ships needing support
 
-    When ship illuminated, AI should 
+    Scripted orders override all others
+
+    When enemy ship enters sight radius, AI should 
         send KKZs/BOM in immediately if nearby
         move BEHs into max range and fire
-        move HUSKs into min range
-        move ZEL/GAIN ships away
+        move HUSKs into range and fire
+        move ZEL/GAIN ships away if nearby
         move BLADEs around to the rear or side to flank

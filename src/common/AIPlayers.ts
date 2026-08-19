@@ -1,8 +1,23 @@
 import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
+import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, CELL_SIZE } from "./Constants"
 import { useAppStore } from "./store"
+
+// See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
+// for a ship that has one set, since it overrides all of them.
+const hasNoDirective = (s:ShipSprite) => !s.primeDirective
+
+// A ship's own sight radius, accounting for the same nebula reduction MapScene's own
+// isWithinFactionSightRange/drawSightRadii use.
+const effectiveSightRadiusPx = (scene:MapScene, ship:ShipSprite) =>
+    scene.isPointUnderNebula(ship.x, ship.y) ? NEBULA_SIGHT_RADIUS_PX : ShipData[ship.type].sightRadius
+
+const clampToMapWorld = (scene:MapScene, x:number, y:number) => ({
+    x: Math.max(0, Math.min(scene.mapData.width*CELL_SIZE - 1, x)),
+    y: Math.max(0, Math.min(scene.mapData.height*CELL_SIZE - 1, y)),
+})
 
 // All of the enemy faction's autonomous behavior lives here, kept out of MapScene's rendering/input
 // code. Each function takes the scene as its first argument and reads scene.ships directly (the real,
@@ -80,13 +95,36 @@ const findNearestCapturableObjectiveSpawn = (scene:MapScene, faction:Faction, x:
         spawn => objectives.find(o => o.id === spawn.id)?.owner !== faction)
 }
 
-// ZEL: heads for and captures the nearest Objective it doesn't already own. The actual latch-on/capture
-// logic all lives on MapScene's own moveShips/updateObjectives — exactly what a player-ordered ZEL goes
-// through too — this only ever supplies the travel order needed to get one in range of it. Once latched
-// (moveShips has taken over), this leaves it alone entirely rather than re-issuing a route that would
-// immediately cancel that latch (see ShipSprite's latchedObjectiveId, cleared by any new order).
+// A point exactly `distance` from `target`, along the direction target->from — approaching moves
+// straight at the target, retreating (a `distance` larger than the current gap) backs straight away.
+const pointAtDistance = (from:{x:number,y:number}, target:{x:number,y:number}, distance:number) => {
+    const dx = from.x-target.x, dy = from.y-target.y
+    const dist = Math.hypot(dx, dy)
+    const ux = dist > 0.001 ? dx/dist : 1, uy = dist > 0.001 ? dy/dist : 0
+    return { x: target.x+ux*distance, y: target.y+uy*distance }
+}
+
+// Retreats `ship` straight away from `threat`, by roughly its own sight radius, clamped to the map so it
+// never routes itself off the edge.
+const fleeFrom = (scene:MapScene, ship:ShipSprite, threat:{x:number,y:number}) => {
+    const dist = Math.hypot(ship.x-threat.x, ship.y-threat.y)
+    const fleePoint = pointAtDistance(ship, threat, dist + ShipData[ship.type].sightRadius)
+    const clamped = clampToMapWorld(scene, fleePoint.x, fleePoint.y)
+    routeTowards(scene, ship, clamped.x, clamped.y)
+}
+
+// ZEL: unarmed, so a nearby hostile ship (see effectiveSightRadiusPx) is something to flee straight away
+// from, ahead of anything else it would otherwise be doing. Failing that, it heads for and captures the
+// nearest Objective it doesn't already own — the actual latch-on/capture logic all lives on MapScene's
+// own moveShips/updateObjectives, exactly what a player-ordered ZEL goes through too — this only ever
+// supplies the travel order needed to get one in range of it. Once latched (moveShips has taken over),
+// this leaves it alone entirely rather than re-issuing a route that would immediately cancel that latch
+// (see ShipSprite's latchedObjectiveId, cleared by any new order).
 export const updateEnemyZel = (scene:MapScene) => {
-    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL).forEach(zel => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL && hasNoDirective(s)).forEach(zel => {
+        const threat = scene.findNearestHostileShip(zel.faction, zel.x, zel.y, effectiveSightRadiusPx(scene, zel))
+        if(threat){ fleeFrom(scene, zel, threat); return }
+
         if(zel.latchedObjectiveId) return
         const spawn = findNearestCapturableObjectiveSpawn(scene, zel.faction, zel.x, zel.y)
         if(!spawn) return
@@ -110,14 +148,18 @@ const findNearestAsteroid = (x:number, y:number) => {
     return findNearest(resourceNodes, x, y, n => n, n => (n.metal ?? 0) > 0)
 }
 
-// GAIN: prefers heading for whichever friendly ship nearest it actually needs ammo or repairs — it has to
+// GAIN: unarmed like ZEL, so a nearby hostile ship comes first here too (see updateEnemyZel). Otherwise
+// it prefers heading for whichever friendly ship nearest it actually needs ammo or repairs — it has to
 // be carrying at least some metal to help at all, same requirement updateHarvesterSupport itself has —
 // over anything else. Failing that, an empty GAIN heads for the nearest Asteroid still carrying metal and
 // mines it there until full (updateHarvesterMiningTargets/updateHarvesters take over automatically once
 // it's in range, the same "just supply the travel" split updateEnemyZel above uses for latching). A GAIN
 // that's neither empty nor needed anywhere right now is left wherever it already is.
 export const updateEnemyGain = (scene:MapScene) => {
-    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.GAIN).forEach(gain => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.GAIN && hasNoDirective(s)).forEach(gain => {
+        const threat = scene.findNearestHostileShip(gain.faction, gain.x, gain.y, effectiveSightRadiusPx(scene, gain))
+        if(threat){ fleeFrom(scene, gain, threat); return }
+
         if((gain.metalCarried ?? 0) >= 1){
             const needy = findNearestNeedyShip(scene, gain)
             if(needy){
@@ -131,5 +173,83 @@ export const updateEnemyGain = (scene:MapScene) => {
         const asteroid = findNearestAsteroid(gain.x, gain.y)
         if(!asteroid) return
         routeTowards(scene, gain, asteroid.x, asteroid.y)
+    })
+}
+
+// KKZ/BOM: kamikaze drones — the nearest hostile ship within sight is routed straight onto (see
+// routeTowards, re-issued fresh every frame as the target moves), so it walks itself into the actual
+// physics contact that detonates it (see MapScene's onDroneShipContact/detonateDrone, and BOM's own
+// route-end detonation in moveShips) rather than needing any special-cased "collide" logic of its own
+// here at all.
+export const updateEnemyDrones = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && DRONE_TYPES.has(s.type) && hasNoDirective(s)).forEach(drone => {
+        const target = scene.findNearestHostileShip(drone.faction, drone.x, drone.y, effectiveSightRadiusPx(scene, drone))
+        if(!target) return
+        routeTowards(scene, drone, target.x, target.y)
+    })
+}
+
+// Comfortably inside a ship's own weapon range, not right on the boundary — floating-point/grid
+// quantization could otherwise leave it just outside and never actually firing.
+const WEAPON_RANGE_MARGIN = 0.9
+
+// Moves `ship` to within its own weapon range of `target` — retreating too, to hold at exactly max
+// range, when `holdAtMaxRange` is set (BEH's own stand-off style); otherwise only ever closes distance,
+// never backing off again once already close enough (HUSK's "just get there" style). Firing itself is
+// entirely MapScene's own job (updateBeamWeapons) once this has actually gotten a ship into range.
+const positionForWeaponRange = (scene:MapScene, ship:ShipSprite, target:{x:number,y:number}, holdAtMaxRange:boolean) => {
+    const rangePx = ShipData[ship.type].rangePx * WEAPON_RANGE_MARGIN
+    const dist = Math.hypot(ship.x-target.x, ship.y-target.y)
+    if(!holdAtMaxRange && dist <= rangePx) return
+    const standoff = pointAtDistance(ship, target, rangePx)
+    const clamped = clampToMapWorld(scene, standoff.x, standoff.y)
+    routeTowards(scene, ship, clamped.x, clamped.y)
+}
+
+// BEH: engages at its own max weapon range — approaching if too far, backing off if already closer than
+// that, so it never has to eat return fire it doesn't have to.
+export const updateEnemyBeh = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.BEH && hasNoDirective(s)).forEach(ship => {
+        const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
+        if(!target) return
+        positionForWeaponRange(scene, ship, target, true)
+    })
+}
+
+// HUSK: just closes the distance until it's within its own (short) weapon range, then holds — no reason
+// to back off once it's already close enough to hit something.
+export const updateEnemyHusk = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.HUSK && hasNoDirective(s)).forEach(ship => {
+        const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
+        if(!target) return
+        positionForWeaponRange(scene, ship, target, false)
+    })
+}
+
+// A per-ship stable angle (not re-rolled every frame) so a given BLADE always works the same side of its
+// target's rear arc instead of jittering between them frame to frame — same deterministic-hash idea
+// MapScene's own stableAngularPhase uses, just kept local here since it's the only thing that needs it.
+const stableFlankOffset = (id:string) => {
+    let h = 0
+    for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
+    return (((h >>> 0) % 1000) / 1000 - 0.5) * Math.PI // -90°..+90° off dead-rear
+}
+
+// BLADE: continuously maneuvers to a point at its own weapon range, somewhere in the target's rear
+// half — never straight in front of it — recomputed every frame off the target's live position and
+// facing (a ship's own `rotation` already tracks its current facing, set by moveShips), so it's still
+// actively working around to the flank even as the target turns or moves, not just charging once and
+// holding. Once it's actually within range, MapScene's own updateBulletWeapons takes it from there.
+export const updateEnemyBlade = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.BLADE && hasNoDirective(s)).forEach(ship => {
+        const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
+        if(!target) return
+
+        const targetRearAngle = (target.rotation - Math.PI/2) + Math.PI
+        const flankAngle = targetRearAngle + stableFlankOffset(ship.id)
+        const rangePx = ShipData[ship.type].rangePx * WEAPON_RANGE_MARGIN
+        const flankPoint = { x: target.x + Math.cos(flankAngle)*rangePx, y: target.y + Math.sin(flankAngle)*rangePx }
+        const clamped = clampToMapWorld(scene, flankPoint.x, flankPoint.y)
+        routeTowards(scene, ship, clamped.x, clamped.y)
     })
 }
