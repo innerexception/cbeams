@@ -3,10 +3,16 @@ import { onShowModal } from '../common/Thunks';
 import { SceneNames, SoundEffects } from '../../enum';
 import { useAppStore } from '../common/store';
 import { colors, MODAL_PADDING_PX } from '../styles/AppStyles';
+import { MAP_METADATA } from '../assets/MapMetadata';
+
+const stars = require('../assets/img/stars.png')
 
 const FADE_IN_MS = 800
 const FADE_OUT_MS = 800
 const TYPEWRITER_CHARS_PER_SEC = 45
+// Total time for the image panel to pan through every one of its map's own imageKeyframes, start to
+// finish — split evenly across however many keyframe-to-keyframe legs that map happens to have.
+const IMAGE_ANIMATION_DURATION_MS = 3000
 
 const LOREM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
 
@@ -34,6 +40,33 @@ export default () => {
     const [charIndex, setCharIndex] = React.useState(0)
 
     const sequenceComplete = sentenceIndex >= SENTENCES.length
+
+    const activeMapKey = useAppStore(state => state.activeMapKey)
+    const imageKeyframes = MAP_METADATA[activeMapKey]?.imageKeyframes ?? []
+    const [keyframeIndex, setKeyframeIndex] = React.useState(0)
+    // Even split of the fixed total duration across however many keyframe-to-keyframe legs there are —
+    // e.g. 2 keyframes is a single 3000ms leg, 3 is two 1500ms legs.
+    const keyframeLegMs = imageKeyframes.length > 1 ? IMAGE_ANIMATION_DURATION_MS / (imageKeyframes.length-1) : 0
+
+    // Steps keyframeIndex forward one at a time; the actual pan between each pair happens via the CSS
+    // transition on backgroundPosition below, not by animating this index itself. Stops (and stays put)
+    // once it reaches the last keyframe — a one-shot pan through the whole sequence, not a loop.
+    React.useEffect(() => {
+        if(keyframeIndex >= imageKeyframes.length-1) return
+        const timeout = setTimeout(() => setKeyframeIndex(i => i+1), keyframeLegMs)
+        return () => clearTimeout(timeout)
+    }, [keyframeIndex, imageKeyframes.length, keyframeLegMs])
+
+    // Flips true once the pan has actually finished moving — not the instant keyframeIndex reaches the
+    // last keyframe (that's when its CSS transition *starts*, still keyframeLegMs away from done), but
+    // keyframeLegMs after that. Without this extra wait the zoom's own transform transition would start
+    // in parallel with the still-in-flight backgroundPosition one instead of after it.
+    const [panFinished, setPanFinished] = React.useState(imageKeyframes.length <= 1)
+    React.useEffect(() => {
+        if(keyframeIndex < imageKeyframes.length-1) return
+        const timeout = setTimeout(() => setPanFinished(true), keyframeLegMs)
+        return () => clearTimeout(timeout)
+    }, [keyframeIndex, imageKeyframes.length, keyframeLegMs])
 
     React.useEffect(() => {
         const frame = requestAnimationFrame(() => setMounted(true))
@@ -124,11 +157,21 @@ export default () => {
 
                 <div style={{ width:'10%' }}/>
 
+                {/* The frame itself (border/sizing) never transforms — only the map div inside it zooms,
+                    clipped to the frame's own bounds by this div's overflow:hidden, so the zoom reads as
+                    the map growing within a fixed window rather than the whole frame growing too. */}
                 <div style={{
-                    width:'30%', border:`2px dashed ${colors.green}`, opacity:0.6,
-                    display:'flex', alignItems:'center', justifyContent:'center',
-                    color:colors.green, fontFamily:'Body', fontSize:14,
-                }}>IMAGE</div>
+                    width:'30%', border:`2px dashed ${colors.green}`, opacity:0.6, overflow:'hidden',
+                    position:'relative', color:colors.green, fontFamily:'Body', fontSize:14,
+                }}>
+                    <div style={{
+                        position:'absolute', inset:0, backgroundImage:'url('+stars+')',
+                        backgroundPosition: imageKeyframes[keyframeIndex] ? `${imageKeyframes[keyframeIndex].x}px ${imageKeyframes[keyframeIndex].y}px` : undefined,
+                        transform: panFinished ? 'scale(1.5)' : 'scale(1)',
+                        transition: [keyframeLegMs && `background-position ${keyframeLegMs}ms linear`, 'transform 500ms ease']
+                            .filter(Boolean).join(', '),
+                    }}/>
+                </div>
             </div>
         </div>
     )

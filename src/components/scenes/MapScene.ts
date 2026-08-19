@@ -38,7 +38,11 @@ const SHIP_LABEL_GAP_PX = 10
 const AMMO_LABEL_GAP_PX = 4
 
 const IDLE_TURN_RATE_PER_MS = 0.002
-const MOVE_TURN_RATE_PER_MS = 0.001
+// A moving ship's turn rate scales with its own speed rather than being one flat number for every ship
+// type — a fast KKZ snaps toward its heading much quicker than a sluggish DRN does. 20px/s (SPR/EYE/BEH's
+// own speed) is the reference point this is tuned against: a ship moving at exactly that speed turns at
+// the same 0.001 rad/ms every ship used to, uniformly, before this scaled by speed at all.
+const MOVE_TURN_RATE_PER_SPEED_PX_S = 0.001 / 20
 
 const stableAngularPhase = (id:string) => {
     let h = 0
@@ -896,7 +900,7 @@ export default class MapScene extends Scene {
             if(ship.type !== ShipType.CATH){
                 const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !idle
                 const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
-                const turnRatePerMs = hasDirectionalTarget ? MOVE_TURN_RATE_PER_MS : IDLE_TURN_RATE_PER_MS
+                const turnRatePerMs = hasDirectionalTarget ? speed * MOVE_TURN_RATE_PER_SPEED_PX_S : IDLE_TURN_RATE_PER_MS
                 ship.setRotation(Phaser.Math.Angle.RotateTo(ship.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
             }
 

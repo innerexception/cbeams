@@ -127,6 +127,24 @@ interface ResourceNodeData {
     maxMetal?: number
 }
 
+// One waypoint in a map's own briefing-image pan — see MapMetadata's own doc comment. Pixel coordinates
+// against the image's own native size (can run negative/past its edges — the pan is free to carry the
+// image beyond its own frame, not clamped to stay within it).
+interface MapImageKeyframe {
+    x: number
+    y: number
+}
+
+// Per-map flavor content for the Briefing screen (see src/assets/MapMetadata.ts for the actual per-Maps
+// entries) — everything about a given map that isn't gameplay data (that's MapData/the Tiled file
+// itself), just what Briefing needs to introduce it.
+interface MapMetadata {
+    briefingText: string
+    // The map image pans/animates through these points in order over the course of the briefing — not
+    // wired up to any actual animation yet, just the data it'll eventually drive.
+    imageKeyframes: Array<MapImageKeyframe>
+}
+
 interface RState {
     activeModal: import('./enum').Modal
     isLoaded:boolean
