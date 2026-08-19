@@ -359,7 +359,7 @@ export default class MapScene extends Scene {
     drawBar = (g:GameObjects.Graphics, barX:number, barY:number, w:number, h:number, percent:number, color:number) => {
         g.lineStyle(1, color, 1)
         g.strokeRect(barX, barY, w, h)
-        g.fillStyle(color, 0.9)
+        g.fillStyle(color, 1)
         g.fillRect(barX, barY, w*percent, h)
     }
 
@@ -1600,12 +1600,12 @@ export default class MapScene extends Scene {
 
     drawRouteAndMarkers = (g:GameObjects.Graphics, originWorld:{x:number,y:number}, waypoints:Array<{x:number,y:number}>) => {
         const points = [originWorld, ...waypoints.map(w => this.toWorld(w.x, w.y))]
-        g.lineStyle(1.5, GREEN_HEX, 0.5)
+        g.lineStyle(1.5, GREEN_HEX, 1)
         for(let i=0; i<points.length-1; i++) g.lineBetween(points[i].x, points[i].y, points[i+1].x, points[i+1].y)
 
         waypoints.forEach((w, i) => {
             const { x, y } = this.toWorld(w.x, w.y)
-            g.fillStyle(GREEN_HEX, 0.9)
+            g.fillStyle(GREEN_HEX, 1)
             g.fillCircle(x, y, 5)
             g.lineStyle(1, GREEN_HEX, 1)
             g.strokeCircle(x, y, 8)
