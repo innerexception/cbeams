@@ -75,10 +75,10 @@ export const ShipData:Record<ShipType, ShipStats> = {
         description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
      },
     [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:3000, rangePx:250, productionTimeMs:12000, relicCost:2, ammo:10,
-        weaponType:'missile', burstSize:3,
+        weaponType:'missile', burstSize:2,
         description: 'Missile carrier, needs replenishment.'
      },
-    [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:600, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:12000, relicCost:3,
+    [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:500, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:12000, relicCost:3,
         description: 'A great eye.'
      },
     [ShipType.ZEL]: { name:'Zealot', speed:12, sightRadius:50, armor:2, hp:25, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:2,

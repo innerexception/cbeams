@@ -2,7 +2,7 @@ import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX } from "./Constants"
 import { useAppStore } from "./store"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
@@ -102,6 +102,16 @@ const findNearestCapturableObjectiveSpawn = (scene:MapScene, faction:Faction, x:
         spawn => objectives.find(o => o.id === spawn.id)?.owner !== faction)
 }
 
+// A per-ship stable angle (not re-rolled every frame), same deterministic-hash idea as BLADE's own
+// stableFlankOffset below, just spread across the full circle instead of a rear half-arc — this is what
+// keeps a handful of ZEL routed at the same Objective from all approaching its exact center point and
+// getting wedged against each other/applyShipSeparation on the way in.
+const stableApproachAngle = (id:string) => {
+    let h = 0
+    for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
+    return ((h >>> 0) % 1000) / 1000 * Math.PI * 2
+}
+
 // A point exactly `distance` from `target`, along the direction target->from — approaching moves
 // straight at the target, retreating (a `distance` larger than the current gap) backs straight away.
 const pointAtDistance = (from:{x:number,y:number}, target:{x:number,y:number}, distance:number) => {
@@ -120,6 +130,57 @@ const fleeFrom = (scene:MapScene, ship:ShipSprite, threat:{x:number,y:number}) =
     routeTowards(scene, ship, clamped.x, clamped.y)
 }
 
+// Combat types that actually have their own per-frame AI update function below (updateEnemyBeh/
+// Husk/Blade) — the only ones that can meaningfully be assigned escort duty, since nothing else ever
+// reads scene.escortAssignments to act on it.
+const ESCORT_ELIGIBLE_TYPES = new Set([ShipType.BEH, ShipType.HUSK, ShipType.BLADE])
+
+// Keeps scene.escortAssignments (escort ship id -> the ZEL it's protecting) current: drops any pairing
+// whose escort or ZEL has died, then assigns the nearest unassigned eligible combat ship to every enemy
+// ZEL that doesn't already have a living one — "at least 1" escort per ZEL, never more (an already-
+// escorted ZEL is skipped entirely). Called once per frame from updateEnemyZel, ahead of
+// updateEnemyBeh/Husk/Blade (see MapScene's update()), so their own escortZel fallback always sees this
+// frame's assignments rather than last frame's.
+const assignZelEscorts = (scene:MapScene) => {
+    const shipsById = new Map(scene.ships.map(s => [s.id, s] as const))
+    const zelIds = new Set(scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL).map(s => s.id))
+
+    scene.escortAssignments.forEach((zelId, escortId) => {
+        if(!shipsById.has(escortId) || !zelIds.has(zelId)) scene.escortAssignments.delete(escortId)
+    })
+
+    const escortedZelIds = new Set(scene.escortAssignments.values())
+    const assignedEscortIds = new Set(scene.escortAssignments.keys())
+
+    zelIds.forEach(zelId => {
+        if(escortedZelIds.has(zelId)) return
+        const zel = shipsById.get(zelId)
+        const candidate = findNearest(scene.ships, zel.x, zel.y, s => s,
+            s => s.faction === Faction.Enemy && ESCORT_ELIGIBLE_TYPES.has(s.type) && hasNoDirective(s) && !assignedEscortIds.has(s.id))
+        if(!candidate) return
+        scene.escortAssignments.set(candidate.id, zelId)
+        assignedEscortIds.add(candidate.id)
+    })
+}
+
+// Falls back to standing near whichever ZEL `ship` is currently assigned to escort (see
+// assignZelEscorts) — every combat type below only calls this once it's already confirmed it has no
+// hostile target of its own to deal with first, so escort duty never pulls a ship out of a fight it's
+// already in. Offset off dead-center by a per-ship stable angle (same idea as ZEL's own
+// stableApproachAngle) so escorts of different ZELs — or, once there's ever more than one per ZEL —
+// don't all converge on the same point either.
+const escortZel = (scene:MapScene, ship:ShipSprite) => {
+    const zelId = scene.escortAssignments.get(ship.id)
+    if(!zelId) return
+    const zel = scene.ships.find(s => s.id === zelId)
+    if(!zel) return
+    const angle = stableApproachAngle(ship.id)
+    const ESCORT_STANDOFF_PX = 40
+    const point = { x: zel.x + Math.cos(angle)*ESCORT_STANDOFF_PX, y: zel.y + Math.sin(angle)*ESCORT_STANDOFF_PX }
+    const clamped = clampToMapWorld(scene, point.x, point.y)
+    routeTowards(scene, ship, clamped.x, clamped.y)
+}
+
 // ZEL: unarmed, so a nearby hostile ship (see effectiveSightRadiusPx) is something to flee straight away
 // from, ahead of anything else it would otherwise be doing. Failing that, it heads for and captures the
 // nearest Objective it doesn't already own — the actual latch-on/capture logic all lives on MapScene's
@@ -128,6 +189,8 @@ const fleeFrom = (scene:MapScene, ship:ShipSprite, threat:{x:number,y:number}) =
 // this leaves it alone entirely rather than re-issuing a route that would immediately cancel that latch
 // (see ShipSprite's latchedObjectiveId, cleared by any new order).
 export const updateEnemyZel = (scene:MapScene) => {
+    assignZelEscorts(scene)
+
     scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL && hasNoDirective(s)).forEach(zel => {
         const threat = scene.findNearestHostileShip(zel.faction, zel.x, zel.y, effectiveSightRadiusPx(scene, zel))
         if(threat){ fleeFrom(scene, zel, threat); return }
@@ -136,7 +199,14 @@ export const updateEnemyZel = (scene:MapScene) => {
         const spawn = findNearestCapturableObjectiveSpawn(scene, zel.faction, zel.x, zel.y)
         if(!spawn) return
         const { x, y } = scene.toWorld(spawn.x, spawn.y)
-        routeTowards(scene, zel, x, y)
+        // Routed at a per-ship point on a ring around the Objective, not its exact center — still
+        // comfortably inside OBJECTIVE_CAPTURE_RADIUS_PX, so it counts as latched just the same, but
+        // several ZEL converging on the same Objective spread out around it instead of all fighting to
+        // stand on the one same pixel.
+        const angle = stableApproachAngle(zel.id)
+        const approachRadius = OBJECTIVE_CAPTURE_RADIUS_PX * 0.4
+        const clamped = clampToMapWorld(scene, x + Math.cos(angle)*approachRadius, y + Math.sin(angle)*approachRadius)
+        routeTowards(scene, zel, clamped.x, clamped.y)
     })
 }
 
@@ -214,21 +284,23 @@ const positionForWeaponRange = (scene:MapScene, ship:ShipSprite, target:{x:numbe
 }
 
 // BEH: engages at its own max weapon range — approaching if too far, backing off if already closer than
-// that, so it never has to eat return fire it doesn't have to.
+// that, so it never has to eat return fire it doesn't have to. No hostile in sight and it falls back to
+// escort duty (see escortZel) if it's been assigned a ZEL to babysit.
 export const updateEnemyBeh = (scene:MapScene) => {
     scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.BEH && hasNoDirective(s)).forEach(ship => {
         const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
-        if(!target) return
+        if(!target){ escortZel(scene, ship); return }
         positionForWeaponRange(scene, ship, target, true)
     })
 }
 
 // HUSK: just closes the distance until it's within its own (short) weapon range, then holds — no reason
-// to back off once it's already close enough to hit something.
+// to back off once it's already close enough to hit something. Same escort fallback as BEH once there's
+// no hostile to deal with.
 export const updateEnemyHusk = (scene:MapScene) => {
     scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.HUSK && hasNoDirective(s)).forEach(ship => {
         const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
-        if(!target) return
+        if(!target){ escortZel(scene, ship); return }
         positionForWeaponRange(scene, ship, target, false)
     })
 }
@@ -246,11 +318,12 @@ const stableFlankOffset = (id:string) => {
 // half — never straight in front of it — recomputed every frame off the target's live position and
 // facing (a ship's own `rotation` already tracks its current facing, set by moveShips), so it's still
 // actively working around to the flank even as the target turns or moves, not just charging once and
-// holding. Once it's actually within range, MapScene's own updateBulletWeapons takes it from there.
+// holding. Once it's actually within range, MapScene's own updateBulletWeapons takes it from there. Same
+// escort fallback as BEH/HUSK once there's no hostile to deal with.
 export const updateEnemyBlade = (scene:MapScene) => {
     scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.BLADE && hasNoDirective(s)).forEach(ship => {
         const target = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
-        if(!target) return
+        if(!target){ escortZel(scene, ship); return }
 
         const targetRearAngle = (target.rotation - Math.PI/2) + Math.PI
         const flankAngle = targetRearAngle + stableFlankOffset(ship.id)

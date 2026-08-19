@@ -145,6 +145,11 @@ export default class MapScene extends Scene {
     harvesterSupportTarget: Map<string, string> = new Map()
     harvesterSupportBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
 
+    // Escort ship id -> the ZEL it's currently assigned to babysit — see AIPlayers' assignZelEscorts
+    // (which keeps this up to date) and escortZel (which each combat type's own update function falls
+    // back to once it has no hostile target of its own to deal with).
+    escortAssignments: Map<string, string> = new Map()
+
     enemyBaseId: string
     enemyRaidLaunched: boolean = false
     gameOver: boolean = false
@@ -1411,24 +1416,16 @@ export default class MapScene extends Scene {
         this.missilesGroup.children.each((child:Physics.Arcade.Sprite) => {
             if(!child.active) return true
 
-            const targetId = child.getData('targetId')
             const createdAt = child.getData('createdAt')
             if(time - createdAt > MISSILE_MAX_LIFETIME_MS){
                 child.destroy()
                 return true
             }
 
-            if(!this.shipSprites.get(targetId)){
-                const faction:Faction = child.getData('faction')
-                const searchRadius = Math.hypot(this.mapData.width, this.mapData.height) * CELL_SIZE
-                const retargeted = this.findNearestHostileShip(faction, child.x, child.y, searchRadius)
-
-                if(retargeted){
-                    child.setData('targetId', retargeted.getData('id'))
-                    this.startMissileLeg(child, child.x, child.y, retargeted.x, retargeted.y)
-                }
-            }
-
+            // No re-targeting once fired, even if the ship it was launched at has since died — it just
+            // keeps flying its already-committed leg toward wherever that target was at spawn time (see
+            // spawnMissile's own aimX/aimY fallback), landing there and grazing anything it happens to
+            // pass through (onMissileShipContact) along the way, same as always.
             const legOriginX = child.getData('legOriginX'), legOriginY = child.getData('legOriginY')
             const legTargetX = child.getData('legTargetX'), legTargetY = child.getData('legTargetY')
             const legStartAt = child.getData('legStartAt'), legDurationMs:number = child.getData('legDurationMs')
