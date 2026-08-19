@@ -2,8 +2,7 @@ import * as React from 'react'
 import { onShowModal } from '../common/Thunks';
 import { SceneNames, SoundEffects } from '../../enum';
 import { useAppStore } from '../common/store';
-import ToolButton from './ToolButton'
-import { colors } from '../styles/AppStyles';
+import { colors, MODAL_PADDING_PX } from '../styles/AppStyles';
 
 const FADE_IN_MS = 800
 const FADE_OUT_MS = 800
@@ -24,9 +23,9 @@ type Phase = 'phase1' | 'atc'
 // startNewGame, which sets activeMapKey to the map this hands off to and shows this instead of starting
 // the scene directly). Each sentence is typed out once in Phase1, then immediately retyped in place over
 // itself in Body (ATC) — same text, each letter overwritten one at a time from Phase1 into ATC — before
-// the sequence moves on to the next sentence. Skip jumps straight to every sentence fully in its ATC
-// form and, same as letting the sequence finish on its own, turns the button into Start, which fades
-// this out and only then actually starts MapScene.
+// the sequence moves on to the next sentence. A click anywhere, while it's still typing, jumps straight
+// to every sentence fully in its ATC form; the next click after that (same handler, sequenceComplete now
+// true) fades this out and only then actually starts MapScene.
 export default () => {
     const [mounted, setMounted] = React.useState(false)
     const [fadingOut, setFadingOut] = React.useState(false)
@@ -46,7 +45,7 @@ export default () => {
     // sequence is torn down without ever reaching that point.
     React.useEffect(() => {
         const sound = useAppStore.getState().scene?.sound.get(SoundEffects.Briefing)
-        sound?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.volume })
+        sound?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.musicVolume })
         return () => { sound?.stop() }
     }, [])
 
@@ -82,7 +81,7 @@ export default () => {
         return () => clearTimeout(timeout)
     }, [fadingOut])
 
-    const handleSkipOrStart = () => {
+    const handleClick = () => {
         if(!sequenceComplete){
             setSentenceIndex(SENTENCES.length)
             setPhase('phase1')
@@ -93,11 +92,12 @@ export default () => {
     }
 
     return (
-        <div style={{
-            position:'fixed', inset:0, zIndex:5, background:colors.black,
-            display:'flex', alignItems:'center', justifyContent:'center',
+        <div onClick={handleClick} style={{
+            position:'fixed', inset:0, zIndex:5, background:colors.black, padding:MODAL_PADDING_PX,
+            display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column',
             opacity: fadingOut ? 0 : (mounted ? 1 : 0),
             transition: `opacity ${(fadingOut ? FADE_OUT_MS : FADE_IN_MS)}ms ease`,
+            cursor:'pointer',
         }}>
             <div style={{ width:'80%', maxWidth:1100, height:'65%', display:'flex' }}>
                 <div style={{ width:'60%', position:'relative', overflow:'hidden' }}>
@@ -129,10 +129,6 @@ export default () => {
                     display:'flex', alignItems:'center', justifyContent:'center',
                     color:colors.green, fontFamily:'Body', fontSize:14,
                 }}>IMAGE</div>
-            </div>
-
-            <div style={{ position:'absolute', bottom:40, right:60 }}>
-                <ToolButton onClick={handleSkipOrStart}>{sequenceComplete ? 'Start' : 'Skip'}</ToolButton>
             </div>
         </div>
     )

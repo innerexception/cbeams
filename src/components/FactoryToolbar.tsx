@@ -7,6 +7,7 @@ import { getShipRelicCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 import Tooltip from 'rc-tooltip'
+import ResourceHUD from './ResourceHUD'
 
 export default () => {
     const { selectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics } = useAppStore((state) => ({
@@ -35,7 +36,7 @@ export default () => {
     const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
 
     return (
-        <div style={{ position:'absolute', top:10, left:10, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+        <div style={{ position:'absolute', top:75, left:75, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueFull = queue.length >= MAX_QUEUE
@@ -45,42 +46,45 @@ export default () => {
                 const relicsAvailable = machineRelics[playerBase.faction] ?? 0
 
                 return (
-                    <div>
-                        <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
-                            <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
-                            {buildMenuMinimized && relicsAvailable > 0 && (
-                                // Hint badge so the player still knows there's unspent Machine Relics
-                                // without having to reopen the panel.
-                                <div style={{
-                                    width:20, height:20, borderRadius:'50%', background:colors.yellow,
-                                    color:'#000', fontFamily:'Body', fontSize:11, fontWeight:'bold',
-                                    display:'flex', alignItems:'center', justifyContent:'center',
-                                }}>{relicsAvailable}</div>
+                    <div style={{display:'flex'}}>
+                        <div>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
+                                    <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
+                                    {buildMenuMinimized && relicsAvailable > 0 && (
+                                        // Hint badge so the player still knows there's unspent Machine Relics
+                                        // without having to reopen the panel.
+                                        <div style={{
+                                            width:20, height:20, borderRadius:'50%', background:colors.yellow,
+                                            color:'#000', fontFamily:'Body', fontSize:11, fontWeight:'bold',
+                                            display:'flex', alignItems:'center', justifyContent:'center',
+                                        }}>{relicsAvailable}</div>
+                                    )}
+                            </div>
+                            {!buildMenuMinimized && (
+                                <>
+                                    <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
+                                        {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
+                                            <ToolButton key={type} disabled={queueFull || relicsAvailable < getShipRelicCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
+                                        ))}
+                                    </div>
+                                    <div style={{ marginTop:8, display:'flex', gap:8 }}>
+                                        {Array.from({ length: MAX_QUEUE }).map((_, i) => {
+                                            const item = queue[i]
+                                            const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
+                                            return (
+                                                <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
+                                                    <div>{item ? ShipData[item.type].name : '—'}</div>
+                                                    <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
+                                                        {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </>
                             )}
                         </div>
-                        {!buildMenuMinimized && (
-                            <>
-                                <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
-                                    {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
-                                        <ToolButton key={type} disabled={queueFull || relicsAvailable < getShipRelicCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
-                                    ))}
-                                </div>
-                                <div style={{ marginTop:8, display:'flex', gap:8 }}>
-                                    {Array.from({ length: MAX_QUEUE }).map((_, i) => {
-                                        const item = queue[i]
-                                        const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
-                                        return (
-                                            <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
-                                                <div>{item ? ShipData[item.type].name : '—'}</div>
-                                                <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
-                                                    {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            </>
-                        )}
+                        <ResourceHUD />
                     </div>
                 )
             })()}
@@ -90,7 +94,7 @@ export default () => {
                 // a waypoint onto each one's own route (see MapScene's handleClick) — this panel is just
                 // the selection readout + bulk Clear Orders/Cancel.
                 <div>
-                    <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>
+                    <div style={{ fontSize:14 }}>
                         {selectedShips.length > 0 && <div>SELECTION</div>}
                         {selectedShips.map(s=>
                             <div key={s.id}>
@@ -104,7 +108,7 @@ export default () => {
                     </div>
                 </div>
             ) : (
-                <div style={{ color:colors.green, fontFamily:'Body', fontSize:14 }}>Drag to select units</div>
+                <div style={{ fontSize:14 }}>Drag to select units</div>
             )}
         </div>
     )

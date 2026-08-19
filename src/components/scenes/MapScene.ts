@@ -229,7 +229,7 @@ export default class MapScene extends Scene {
         this.events.once('shutdown', () => this.unsubscribe())
 
         this.sound.get(SoundEffects.Briefing)?.stop()
-        this.sound.get(SoundEffects.Main)?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.volume })
+        this.sound.get(SoundEffects.Main)?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.musicVolume })
 
         useAppStore.getState().setLoaded(true)
     }

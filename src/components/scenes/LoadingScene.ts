@@ -1,6 +1,7 @@
 import { Scene } from "phaser";
 import { Modal, SceneNames, SoundEffects } from "../../../enum";
 import { resources } from "../../assets/Assets";
+import { RED_HEX } from "../../common/Constants";
 import { onShowModal } from "../../common/Thunks";
 
 export default class LoadingScene extends Scene {
@@ -11,7 +12,7 @@ export default class LoadingScene extends Scene {
             (this.load[asset.type] as any)(asset.key, asset.resource, asset.data)
         })
         const loadbar = this.add.graphics()
-        loadbar.fillStyle(0xa6a6a6)
+        loadbar.fillStyle(RED_HEX)
         this.load.on('progress', (value) => {
             loadbar.fillRect(this.cameras.main.centerX-50, this.cameras.main.centerY, value*100, 25)
         });

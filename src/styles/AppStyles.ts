@@ -5,6 +5,9 @@ export const colors = {
     yellow: '#ffff55'
 }
 
+export const FLOOR_PADDING_PX = 128
+export const MODAL_PADDING_PX = 64
+
 export default {
     
 }
