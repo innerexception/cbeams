@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
+import { onSelectShips } from '../common/Thunks'
 import { Faction, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
@@ -8,9 +9,8 @@ import { colors } from '../styles/AppStyles'
 import Tooltip from 'rc-tooltip'
 
 export default () => {
-    const { selectedShipIds, setSelectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
-        setSelectedShipIds: state.setSelectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         clearShipWaypoints: state.clearShipWaypoints,
@@ -97,7 +97,7 @@ export default () => {
                                 <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>
                                     {/* Narrows the current selection down to just this ship's own type — drops
                                         every other type out of it, keeps every ship of this one. */}
-                                    <div style={{ cursor:'pointer' }} onClick={()=>setSelectedShipIds(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
+                                    <div style={{ cursor:'pointer' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
                                 </Tooltip>
                             </div>
                         )}

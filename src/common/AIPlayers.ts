@@ -2,17 +2,24 @@ import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, CELL_SIZE } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE } from "./Constants"
 import { useAppStore } from "./store"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
 // for a ship that has one set, since it overrides all of them.
 const hasNoDirective = (s:ShipSprite) => !s.primeDirective
 
-// A ship's own sight radius, accounting for the same nebula reduction MapScene's own
-// isWithinFactionSightRange/drawSightRadii use.
+// How far a ship's own AI target search reaches — its own sight radius (accounting for the same nebula
+// reduction MapScene's own isWithinFactionSightRange/drawSightRadii use), floored at
+// AI_ALLIED_SPOTTING_RANGE_PX so a short-sighted ship still searches out to wherever the fleet's shared
+// vision could plausibly have spotted something for it (the actual sighting is still checked per-target
+// by isWithinFactionSightRange, which already looks at every friendly ship's own sight radius, not just
+// this one's — this only widens how far out that check even gets attempted from).
 const effectiveSightRadiusPx = (scene:MapScene, ship:ShipSprite) =>
-    scene.isPointUnderNebula(ship.x, ship.y) ? NEBULA_SIGHT_RADIUS_PX : ShipData[ship.type].sightRadius
+    Math.max(
+        scene.isPointUnderNebula(ship.x, ship.y) ? NEBULA_SIGHT_RADIUS_PX : ShipData[ship.type].sightRadius,
+        AI_ALLIED_SPOTTING_RANGE_PX
+    )
 
 const clampToMapWorld = (scene:MapScene, x:number, y:number) => ({
     x: Math.max(0, Math.min(scene.mapData.width*CELL_SIZE - 1, x)),

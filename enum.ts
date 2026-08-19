@@ -7,8 +7,12 @@ export enum SceneNames {
 }
 
 export enum SoundEffects {
-    Click='Click'
+    Click='Click', Briefing='Briefing', Main='Main',
+    Ack1='Ack1', Ack2='Ack2', Ack3='Ack3', Ack4='Ack4', Ack5='Ack5', Ack6='Ack6'
 }
+
+// Picked from at random whenever the player selects ship(s) — see Thunks' onSelectShips.
+export const ShipAckSounds = [SoundEffects.Ack1, SoundEffects.Ack2, SoundEffects.Ack3, SoundEffects.Ack4, SoundEffects.Ack5, SoundEffects.Ack6]
 
 export enum Maps {
     Sandbox='Sandbox', Ambush='Ambush'

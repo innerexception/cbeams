@@ -1,15 +1,15 @@
 import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
-import { onSetScene, onShowModal } from "../../common/Thunks";
+import { onSelectShips, onSetScene, onShowModal } from "../../common/Thunks";
 import { getShipRelicCost } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
 import {
-    MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX,
+    MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
     MAX_QUEUE, MAX_WAYPOINTS,
     DOUBLE_CLICK_MS,
     BULLET_SPEED_PX_S, BULLET_MAX_LIFETIME_MS,
@@ -228,6 +228,9 @@ export default class MapScene extends Scene {
         })
         this.events.once('shutdown', () => this.unsubscribe())
 
+        this.sound.get(SoundEffects.Briefing)?.stop()
+        this.sound.get(SoundEffects.Main)?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.volume })
+
         useAppStore.getState().setLoaded(true)
     }
 
@@ -305,7 +308,9 @@ export default class MapScene extends Scene {
         drawSightRadii(this.rangeG, this.ships.map(s => ({
             x: s.x, y: s.y, type: s.type, faction: s.faction,
             sightRadiusOverride: this.isPointUnderNebula(s.x, s.y) ? NEBULA_SIGHT_RADIUS_PX : undefined,
-        })))
+        })), this.rangeShadeBrush)
+        this.rangeShadeRT.clear()
+        this.rangeShadeRT.draw(this.rangeShadeBrush)
         this.drawObjectiveCaptureProgress(time)
 
         this.drawProductionProgress()
@@ -494,6 +499,9 @@ export default class MapScene extends Scene {
                     const type = ShipType[shipTypeKey]
                     const { x, y } = this.toWorld(tx, ty)
                     this.createShipSprite(v4(), faction, type, x, y)
+                    if(faction == Faction.Player && shipTypeKey === ShipType.CATH){
+                        this.cameras.main.pan(x,y)
+                    }
                     continue
                 }
 
@@ -625,7 +633,7 @@ export default class MapScene extends Scene {
             const percent = PhaserMath.Clamp((time-objective.captureStartedAtMs) / OBJECTIVE_CAPTURE_TIME_MS, 0, 1)
             const color = this.getObjectiveOwnerColor(objective.capturingFaction)
             const w = OBJECTIVE_ICON_SIZE, h = 4
-            const barX = x - w/2, barY = y + OBJECTIVE_ICON_SIZE*0.5 + 20
+            const barX = x - w/2, barY = y - OBJECTIVE_ICON_SIZE*0.5 - 20 - h
             this.drawBar(g, barX, barY, w, h, percent, color)
         })
     }
@@ -857,8 +865,18 @@ export default class MapScene extends Scene {
             const nextPathIndex = (!miningNode && !latchedObjectiveWorld && !movementLocked && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
             const arrivedAtRouteEnd = nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length
 
+            // A plain route waypoint (not a mining orbit or latched Objective — see
+            // WAYPOINT_ARRIVAL_RADIUS_PX's own comment) counts as reached from anywhere within this
+            // wider dead zone, not just the exact pixel, so a clump of ships routed to the same point
+            // settles instead of vibrating against applyShipSeparation forever.
+            const arrivalRadius = (miningNode || latchedObjectiveWorld) ? 0 : WAYPOINT_ARRIVAL_RADIUS_PX
+            const arrived = dist <= Math.max(step, arrivalRadius)
+
             if(dist <= step){
                 ship.setPosition(target.x, target.y)
+                ship.setVelocity(0, 0)
+            }
+            else if(arrived){
                 ship.setVelocity(0, 0)
             }
             else {
@@ -874,21 +892,25 @@ export default class MapScene extends Scene {
 
             this.shipLabels.get(ship.id)?.setPosition(ship.x, ship.y-this.shipLabelOffsetPx(ship))
 
-            if(ship.type === ShipType.BOM && arrivedAtRouteEnd && dist <= step) arrivedBoms.push(ship)
+            if(ship.type === ShipType.BOM && arrivedAtRouteEnd && arrived) arrivedBoms.push(ship)
 
-            ship.objectiveAttached = !!latchedObjectiveWorld && dist <= step
+            ship.objectiveAttached = !!latchedObjectiveWorld && arrived
             ship.latchedObjectiveId = latchedObjectiveId
-            ship.pathIndex = dist <= step ? nextPathIndex : pathIndex
-            if(ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && dist <= step) ship.movementLocked = true
+            ship.pathIndex = arrived ? nextPathIndex : pathIndex
+            if(ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && arrived) ship.movementLocked = true
         })
 
         this.applyShipSeparation()
         arrivedBoms.forEach(ship => this.detonateDrone(ship, null))
     }
 
-    // Minimum gap kept between any two ship bodies, every frame, on top of whatever movement decision
-    // each one already made this frame — this is what makes a pile of ships arriving at the same
-    // waypoint spread out instead of stacking exactly on top of each other.
+    // Minimum gap kept between any two FRIENDLY ship bodies, every frame, on top of whatever movement
+    // decision each one already made this frame — this is what makes a pile of ships arriving at the
+    // same waypoint spread out instead of stacking exactly on top of each other. Opposing-faction ships
+    // are left alone here: a kamikaze drone (KKZ/BOM) has to actually reach physics-overlap distance
+    // with its hostile target to detonate (see onDroneShipContact) — pushing hostiles apart the instant
+    // they're about to touch, same as friendlies, meant it could never quite close that last bit of gap
+    // and just paced its target forever instead.
     applyShipSeparation = () => {
         const ships = this.ships
         for(let i=0; i<ships.length; i++){
@@ -898,6 +920,7 @@ export default class MapScene extends Scene {
 
             for(let j=i+1; j<ships.length; j++){
                 const b = ships[j]
+                if(a.faction !== b.faction) continue
                 const bodyB = b.body as Physics.Arcade.Body
                 const immovableB = ShipData[b.type].speed === 0
                 if(immovableA && immovableB) continue
@@ -1801,13 +1824,13 @@ export default class MapScene extends Scene {
             if(isDoubleClick){
                 // Select every one of the player's own ships of the same type, not just this one.
                 const sameTypeIds = this.ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
-                setSelectedShipIds(sameTypeIds)
+                onSelectShips(sameTypeIds)
                 // A third click right after shouldn't chain into yet another double-click.
                 this.lastClickShipId = null
                 return
             }
 
-            setSelectedShipIds([clicked.id])
+            onSelectShips([clicked.id])
             return
         }
 
@@ -1845,7 +1868,6 @@ export default class MapScene extends Scene {
         const boundsW = Math.max(worldW, cam.width)
         const boundsH = Math.max(worldH, cam.height)
         cam.setBounds((worldW-boundsW)/2, (worldH-boundsH)/2, boundsW, boundsH)
-        cam.centerOn(worldW/2, worldH/2)
     }
 
     enableCameraControls = () => {
@@ -1900,7 +1922,7 @@ export default class MapScene extends Scene {
             const hitIds = this.ships
                 .filter(s => s.faction === Faction.Player && s.type !== ShipType.CATH && s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY)
                 .map(s => s.id)
-            useAppStore.getState().setSelectedShipIds(hitIds)
+            onSelectShips(hitIds)
         })
 
         this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {

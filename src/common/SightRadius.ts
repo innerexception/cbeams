@@ -1,6 +1,6 @@
 import { GameObjects, Math as PhaserMath } from "phaser"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { GREEN_HEX } from "./Constants"
+import { GREEN_HEX, RED_HEX } from "./Constants"
 
 const TWO_PI = Math.PI*2
 
@@ -94,9 +94,16 @@ const fillCircleOverlap = (g:GameObjects.Graphics, circle:{x:number,y:number,r:n
 // it, so there's no interior line through the overlap). A non-player (enemy) circle starts fully
 // hidden instead of full — the player has no business seeing the full extent of an enemy's sight
 // radius, only the arcs of it that actually fall within the player's own sight radius get revealed.
-// The overlap itself is additionally communicated with a light fill over the lens-shaped intersection.
-export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y:number, type:ShipType, faction:Faction, sightRadiusOverride?:number }>) => {
+// The overlap itself is additionally communicated with a light fill over the lens-shaped intersection —
+// drawn fully opaque onto shadeG (an off-screen brush, not itself on the display list) rather than at
+// the final translucent alpha, so that e.g. two player ships both sitting inside the same enemy circle
+// produce one lens each but painting both at once still only ever *covers* a pixel, it doesn't build up
+// alpha on it. MapScene then stamps shadeG onto its RenderTexture (which carries the actual translucent
+// alpha) once per frame — a single composited draw, so overlapping lenses read as one flat shade
+// instead of stacking darker wherever several of them cross.
+export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y:number, type:ShipType, faction:Faction, sightRadiusOverride?:number }>, shadeG:GameObjects.Graphics) => {
     g.clear()
+    shadeG.clear()
 
     // sightRadiusOverride lets a caller shrink a specific ship's own circle (see MapScene's nebula
     // concealment) without this needing any notion of nebulas itself — it just draws whatever radius
@@ -147,11 +154,11 @@ export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y
         })
     })
 
-    g.fillStyle(GREEN_HEX, 0.12)
+    shadeG.fillStyle(RED_HEX, 1)
     circles.forEach((circle, i) => {
         circles.forEach((other, j) => {
             if(j <= i || other.faction === circle.faction) return
-            fillCircleOverlap(g, circle, other)
+            fillCircleOverlap(shadeG, circle, other)
         })
     })
 }

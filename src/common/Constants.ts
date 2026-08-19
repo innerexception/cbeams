@@ -6,6 +6,16 @@ export const worldToGrid = (worldX:number, worldY:number) => ({ x: Math.floor(wo
 
 export const SHIP_SEPARATION_PX = 1
 
+// A ship heading for a plain route waypoint (not a mining orbit or a latched Objective, both of which
+// already have their own always-approaching convergence) counts as "arrived" once within this radius
+// of it, not just once within a single frame's step of the exact pixel. Without it, a clump of ships
+// routed to the same point can end up permanently fighting applyShipSeparation over the last few
+// pixels — none can ever sit exactly on the target once separation is nudging it aside, so it keeps
+// re-triggering a full-speed moveTo back toward that exact point every frame, forever. This dead zone
+// is comfortably wider than a single separation nudge, so once a ship settles anywhere in the clump
+// near the destination, it actually stops.
+export const WAYPOINT_ARRIVAL_RADIUS_PX = 8
+
 export const SAVE_NAME = 'xeno3_save'
 
 export const SHIPS_SYNC_INTERVAL_MS = 150
@@ -48,6 +58,13 @@ export const ENEMY_RAID_SIZE = 3
 // ship that's also inside a nebula (see MapScene's isWithinFactionSightRange). "Inside a nebula" is a
 // convex-hull containment test against each nebula's precomputed boundary — see assets/NebulaHulls.ts.
 export const NEBULA_SIGHT_RADIUS_PX = 40
+
+// Floor on how far an AI ship's target search reaches — see AIPlayers' effectiveSightRadiusPx. A target
+// still has to actually fall within some friendly ship's own sight radius (isWithinFactionSightRange
+// already checks the whole fleet, not just the searching ship) to count as spotted; this just makes sure
+// a short-sighted ship (e.g. a 50px-sightRadius KKZ) doesn't ignore a target the fleet can already see
+// together just because it's further than that one ship could ever spot alone.
+export const AI_ALLIED_SPOTTING_RANGE_PX = 350
 
 export const HARVESTER_ORBIT_RADIUS_PX = 40
 export const HARVESTER_RANGE_PX = HARVESTER_ORBIT_RADIUS_PX + 30

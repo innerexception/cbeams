@@ -2,10 +2,18 @@ import { create } from 'zustand';
 import type MapScene from '../components/scenes/MapScene';
 import { Faction, Maps, Modal, ShipType } from '../../enum';
 
+// Player-adjustable settings, as opposed to AppState's other fields which are all derived/runtime —
+// this is the one bit of it meant to eventually be persisted/exposed via a settings UI.
+export interface PlayerSettings {
+  // Master volume every sound.play() call is given as its `volume` config — see Thunks' onPlaySound.
+  volume: number;
+}
+
 export interface AppState {
   activeModal: Modal | null;
   isLoaded: boolean;
   scene: MapScene | null;
+  playerSettings: PlayerSettings;
   mySave: SaveFile | null;
   activeMap: MapData | null;
   // Which Tiled map key MapScene's own create() actually loads — set before starting the scene (see
@@ -35,6 +43,7 @@ export interface AppState {
   machineRelics: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
+  setVolume: (volume: number) => void;
   setSave: (save: SaveFile | null) => void;
   setLoaded: (loaded: boolean) => void;
   setActiveMap: (map: MapData | null) => void;
@@ -60,10 +69,13 @@ export interface AppState {
   addMachineRelics: (faction: Faction, amount: number) => void;
 }
 
+const DEFAULT_VOLUME = 0.1;
+
 const initialState = {
   activeModal: null as Modal | null,
   isLoaded: false,
   scene: null as MapScene | null,
+  playerSettings: { volume: DEFAULT_VOLUME } as PlayerSettings,
   mySave: null as SaveFile | null,
   activeMap: null as MapData | null,
   activeMapKey: Maps.Sandbox as Maps,
@@ -78,6 +90,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   ...initialState,
   setModal: (modal) => set({ activeModal: modal }),
   setScene: (scene) => set({ scene }),
+  setVolume: (volume) => set((state) => ({ playerSettings: { ...state.playerSettings, volume } })),
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMap: (activeMap) => set({ activeMap }),

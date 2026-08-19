@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { onShowModal } from '../common/Thunks';
-import { SceneNames } from '../../enum';
+import { SceneNames, SoundEffects } from '../../enum';
 import { useAppStore } from '../common/store';
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles';
@@ -29,6 +29,15 @@ export default () => {
     React.useEffect(() => {
         const frame = requestAnimationFrame(() => setMounted(true))
         return () => cancelAnimationFrame(frame)
+    }, [])
+
+    // Plays for the duration of the briefing sequence; MapScene.create stops it and starts main.mp3
+    // once the map has actually loaded. Also stopped here on unmount as a safety net in case the
+    // sequence is torn down without ever reaching that point.
+    React.useEffect(() => {
+        const sound = useAppStore.getState().scene?.sound.get(SoundEffects.Briefing)
+        sound?.play(undefined, { loop: true, volume: useAppStore.getState().playerSettings.volume })
+        return () => { sound?.stop() }
     }, [])
 
     React.useEffect(() => {
