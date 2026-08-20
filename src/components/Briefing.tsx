@@ -14,15 +14,6 @@ const TYPEWRITER_CHARS_PER_SEC = 45
 // finish — split evenly across however many keyframe-to-keyframe legs that map happens to have.
 const IMAGE_ANIMATION_DURATION_MS = 3000
 
-const LOREM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-
-Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.`
-
-// Split on sentence-ending punctuation, each entry keeping its own terminator and any whitespace up to
-// the next sentence (so joining them all back together reproduces LOREM exactly, paragraph break
-// included) — this is what lets the sequence below advance one whole sentence at a time.
-const SENTENCES = LOREM.match(/[^.!?]+[.!?]*\s*/g) ?? [LOREM]
-
 type Phase = 'phase1' | 'atc'
 
 // Shown once, right after NewGame's "New" button, before MapScene actually starts (see its own
@@ -39,9 +30,14 @@ export default () => {
     const [phase, setPhase] = React.useState<Phase>('phase1')
     const [charIndex, setCharIndex] = React.useState(0)
 
-    const sequenceComplete = sentenceIndex >= SENTENCES.length
-
     const activeMapKey = useAppStore(state => state.activeMapKey)
+    const briefingText = MAP_METADATA[activeMapKey]?.briefingText ?? ''
+    // Split on sentence-ending punctuation, each entry keeping its own terminator and any whitespace up
+    // to the next sentence (so joining them all back together reproduces briefingText exactly, paragraph
+    // breaks included) — this is what lets the sequence below advance one whole sentence at a time.
+    const sentences = React.useMemo(() => briefingText.match(/[^.!?]+[.!?]*\s*/g) ?? [briefingText], [briefingText])
+
+    const sequenceComplete = sentenceIndex >= sentences.length
     const imageKeyframes = MAP_METADATA[activeMapKey]?.imageKeyframes ?? []
     const [keyframeIndex, setKeyframeIndex] = React.useState(0)
     // Even split of the fixed total duration across however many keyframe-to-keyframe legs there are —
@@ -88,7 +84,7 @@ export default () => {
     // sentence — until there isn't one, at which point the sequence is complete.
     React.useEffect(() => {
         if(sequenceComplete) return
-        const sentence = SENTENCES[sentenceIndex]
+        const sentence = sentences[sentenceIndex]
         if(charIndex >= sentence.length){
             if(phase === 'phase1'){
                 setPhase('atc')
@@ -116,7 +112,7 @@ export default () => {
 
     const handleClick = () => {
         if(!sequenceComplete){
-            setSentenceIndex(SENTENCES.length)
+            setSentenceIndex(sentences.length)
             setPhase('phase1')
             setCharIndex(0)
             return
@@ -142,15 +138,15 @@ export default () => {
                         position:'absolute', left:0, right:0,
                         color:colors.green, fontSize:20, lineHeight:1.6, whiteSpace:'pre-wrap',
                     }}>
-                        {SENTENCES.slice(0, sentenceIndex).map((sentence, i) =>
+                        {sentences.slice(0, sentenceIndex).map((sentence, i) =>
                             <span key={i} style={{ fontFamily:'Body' }}>{sentence}</span>
                         )}
                         {!sequenceComplete && phase === 'phase1' &&
-                            <span style={{ fontFamily:'Phase1' }}>{SENTENCES[sentenceIndex].slice(0, charIndex)}</span>
+                            <span style={{ fontFamily:'Phase1' }}>{sentences[sentenceIndex].slice(0, charIndex)}</span>
                         }
                         {!sequenceComplete && phase === 'atc' && <>
-                            <span style={{ fontFamily:'Body' }}>{SENTENCES[sentenceIndex].slice(0, charIndex)}</span>
-                            <span style={{ fontFamily:'Phase1' }}>{SENTENCES[sentenceIndex].slice(charIndex)}</span>
+                            <span style={{ fontFamily:'Body' }}>{sentences[sentenceIndex].slice(0, charIndex)}</span>
+                            <span style={{ fontFamily:'Phase1' }}>{sentences[sentenceIndex].slice(charIndex)}</span>
                         </>}
                     </div>
                 </div>
