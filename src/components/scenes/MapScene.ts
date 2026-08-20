@@ -37,6 +37,16 @@ const SHIP_LABEL_GAP_PX = 10
 
 const AMMO_LABEL_GAP_PX = 4
 
+// Phaser Text renders its glyphs through the browser's own canvas font rasterizer, which always
+// anti-aliases curve edges — pixelArt/roundPixels (see Viewport's game config) only stop the resulting
+// texture from being blurred further on scale-up, they can't remove AA baked into the glyph pixels
+// themselves. Rendering at a higher internal resolution (canvas text drawn N times larger, then Phaser
+// scales the texture back down to the same on-screen size) shrinks how many display pixels that soft AA
+// edge actually spans, so it reads as meaningfully crisper at these label sizes — not the *zero*-AA a
+// bitmap font would give, but a real improvement for a one-line change to every label below. Bumping
+// this further has a real (if fairly small, at this text volume) generated-texture memory cost per Text.
+const LABEL_TEXT_RESOLUTION = 4
+
 const IDLE_TURN_RATE_PER_MS = 0.002
 // A moving ship's turn rate scales with its own speed rather than being one flat number for every ship
 // type — a fast KKZ snaps toward its heading much quicker than a sluggish DRN does. 20px/s (SPR/EYE/BEH's
@@ -552,7 +562,7 @@ export default class MapScene extends Scene {
 
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.green }).setOrigin(0.5).setDepth(5)
+        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
         this.tweens.add({
             targets: label,
             y: y-20,
@@ -694,7 +704,7 @@ export default class MapScene extends Scene {
         const sprite = this.add.image(x, y, 'tiles', ObjectiveSpriteIndex[spawn.sprite]).setDepth(2)
         this.objectiveSprites.set(spawn.id, sprite)
 
-        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { stroke:'#000000', strokeThickness:8, fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5, 0).setDepth(2)
+        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { stroke:'#000000', strokeThickness:4, fontFamily:'Body', fontSize:'12px', color:colors.green }).setOrigin(0.5, 0).setDepth(2).setResolution(LABEL_TEXT_RESOLUTION)
         this.objectiveLabels.set(spawn.id, label)
     }
 
@@ -817,11 +827,11 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(ship)
         this.shipSprites.set(id, ship)
 
-        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false)
+        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
         this.shipLabels.set(id, label)
 
         if(ShipData[type].ammo){
-            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false)
+            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
             this.ammoLabels.set(id, ammoLabel)
         }
 
@@ -1685,12 +1695,12 @@ export default class MapScene extends Scene {
 
         for(let i=0; i<=this.mapData.width; i++){
             const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.25)
+            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0)
             g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
         }
         for(let i=0; i<=this.mapData.height; i++){
             const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.25)
+            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0)
             g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
         }
 
@@ -1729,7 +1739,7 @@ export default class MapScene extends Scene {
             g.fillCircle(x, y, 5)
             g.lineStyle(1, GREEN_HEX, 1)
             g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5).setDepth(5)
+            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
             this.orderLabels.push(label)
         })
     }
