@@ -381,21 +381,35 @@ export default class MapScene extends Scene {
         })
     }
 
+    // Shared by drawMinimap and its own click-to-recenter handling (enableSelectionControls) — the
+    // minimap's own screen rect, in plain screen pixels (same space pointer.x/y are already in), so the
+    // two can never drift apart on where the thing actually is/how big it looks on screen.
+    getMinimapRect = () => {
+        const cam = this.cameras.main
+        const size = 150
+        const margin = 72
+        return { originX: cam.width-size-margin, originY: margin, size }
+    }
+
     // Toggled by 'M' (see enableSelectionControls) — the whole map's own coordinate space (its full
     // world width/height, not just whatever the camera currently frames) squashed into a fixed square
-    // in the middle of the screen. Screen-fixed (minimapG has setScrollFactor(0)), so it's drawn in
-    // camera-space pixels here, not world-space like everything else this scene draws. Only ever shows
-    // a ship that's actually .visible right now — same fog-of-war an enemy ship is already subject to on
-    // the real map (see updateFogOfWar) rather than a full reveal; a friendly ship is always visible, so
-    // it always shows.
+    // in the top-right corner. Screen-fixed (minimapG has setScrollFactor(0), which cancels the
+    // camera's scroll but not its zoom — fixed at 2x, see create's setZoom): the camera still scales
+    // everything around its own CENTER point by that zoom, scrollFactor or not, so a naive
+    // g.setScale(1/zoom) alone only fixes sizes — it leaves a constant offset of center*(1-1/zoom)
+    // pixels, which for a zoom of 2 is fully half the screen, easily enough to push the whole thing
+    // off-canvas. Giving the object that same offset as its own position cancels that residual out too,
+    // so a plain screen pixel like (originX, originY) below actually lands at (originX, originY) on
+    // screen, whatever the zoom is.
     drawMinimap = (time:number) => {
         const g = this.minimapG
         g.clear()
         if(!this.minimapVisible) return
 
         const cam = this.cameras.main
-        const size = 100
-        const originX = (cam.width-615), originY = 280
+        const zoomOffsetFactor = 1 - 1/cam.zoom
+        g.setScale(1/cam.zoom).setPosition(cam.width/2*zoomOffsetFactor, cam.height/2*zoomOffsetFactor)
+        const { originX, originY, size } = this.getMinimapRect()
         const worldW = this.mapData.width * CELL_SIZE, worldH = this.mapData.height * CELL_SIZE
         const toMinimap = (worldX:number, worldY:number) => ({
             x: originX + (worldX/worldW)*size,
@@ -404,7 +418,7 @@ export default class MapScene extends Scene {
 
         g.fillStyle(0x000000, 1)
         g.fillRect(originX, originY, size, size)
-        g.lineStyle(1, GREEN_HEX, 1)
+        g.lineStyle(2, GREEN_HEX, 1)
         this.strokeDashedRect(g, originX, originY, size, size)
 
         // Flashes red (toggling every 250ms, off phases just skip the fillCircle so the marker actually
@@ -445,7 +459,7 @@ export default class MapScene extends Scene {
         const clampedY1 = PhaserMath.Clamp(viewTopLeft.y, originY, originY+size)
         const clampedX2 = PhaserMath.Clamp(viewBottomRight.x, originX, originX+size)
         const clampedY2 = PhaserMath.Clamp(viewBottomRight.y, originY, originY+size)
-        g.lineStyle(1, YELLOW_HEX, 1)
+        g.lineStyle(2, YELLOW_HEX, 1)
         this.strokeDashedRect(g, clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
     }
 
@@ -1909,8 +1923,23 @@ export default class MapScene extends Scene {
 
     enableSelectionControls = () => {
         this.input.on('pointerdown', (pointer:Phaser.Input.Pointer) => {
-            if(!this.hoveredCell) return
             if(!pointer.leftButtonDown()) return
+
+            // Minimap click-to-recenter takes priority over everything below — pointer.x/y are already
+            // real screen pixels, the same space getMinimapRect's own numbers are in, so no conversion
+            // is needed to test against it.
+            if(this.minimapVisible){
+                const { originX, originY, size } = this.getMinimapRect()
+                if(pointer.x >= originX && pointer.x <= originX+size && pointer.y >= originY && pointer.y <= originY+size){
+                    const worldW = this.mapData.width * CELL_SIZE, worldH = this.mapData.height * CELL_SIZE
+                    const worldX = (pointer.x-originX)/size * worldW
+                    const worldY = (pointer.y-originY)/size * worldH
+                    this.cameras.main.centerOn(worldX, worldY)
+                    return
+                }
+            }
+
+            if(!this.hoveredCell) return
 
             const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y)
             this.pointerDownWorld = { x:worldPoint.x, y:worldPoint.y }
