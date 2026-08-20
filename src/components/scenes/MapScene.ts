@@ -25,7 +25,7 @@ import {
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     NEBULA_SIGHT_RADIUS_PX,
-    GREEN_HEX, GREEN_DIM_HEX, YELLOW_HEX, RED_HEX, CYAN_HEX,
+    GREEN_HEX, YELLOW_HEX, RED_HEX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -100,6 +100,9 @@ export default class MapScene extends Scene {
     starfield: GameObjects.TileSprite
     nebulaSprites: Array<GameObjects.Image> = []
     dragSelectG: GameObjects.Graphics
+    // Screen-fixed (setScrollFactor(0)), toggled by 'M' — see enableSelectionControls/drawMinimap.
+    minimapG: GameObjects.Graphics
+    minimapVisible: boolean = false
 
     shipsGroup: Physics.Arcade.Group
     missilesGroup: Physics.Arcade.Group
@@ -191,6 +194,7 @@ export default class MapScene extends Scene {
         this.trailG = this.add.graphics()
         this.objectiveRangeG = this.add.graphics()
         this.dragSelectG = this.add.graphics()
+        this.minimapG = this.add.graphics().setScrollFactor(0).setDepth(1000)
         this.harvesterBeamG = this.add.graphics()
         this.harvesterSupportBeamG = this.add.graphics()
         this.beamG = this.add.graphics()
@@ -218,7 +222,7 @@ export default class MapScene extends Scene {
             this.mapData.height = tiledMap.height
         }
 
-        this.cameras.main.setZoom(1)
+        this.cameras.main.setZoom(2)
         this.centerCameraBounds()
 
         const bounds = this.cameras.main.getBounds()
@@ -356,6 +360,64 @@ export default class MapScene extends Scene {
             if(!ship) return
             this.drawSelectionRing(ship.x, ship.y, this.getShipFootprintRadiusPx(ship.type) * 1.4, time)
         })
+
+        this.drawMinimap()
+    }
+
+    // Toggled by 'M' (see enableSelectionControls) — the whole map's own coordinate space (its full
+    // world width/height, not just whatever the camera currently frames) squashed into a fixed square
+    // in the middle of the screen. Screen-fixed (minimapG has setScrollFactor(0)), so it's drawn in
+    // camera-space pixels here, not world-space like everything else this scene draws. Only ever shows
+    // a ship that's actually .visible right now — same fog-of-war an enemy ship is already subject to on
+    // the real map (see updateFogOfWar) rather than a full reveal; a friendly ship is always visible, so
+    // it always shows.
+    drawMinimap = () => {
+        const g = this.minimapG
+        g.clear()
+        if(!this.minimapVisible) return
+
+        const cam = this.cameras.main
+        const size = 100
+        const originX = (cam.width-615), originY = 280
+        const worldW = this.mapData.width * CELL_SIZE, worldH = this.mapData.height * CELL_SIZE
+        const toMinimap = (worldX:number, worldY:number) => ({
+            x: originX + (worldX/worldW)*size,
+            y: originY + (worldY/worldH)*size,
+        })
+
+        g.fillStyle(0x000000, 1)
+        g.fillRect(originX, originY, size, size)
+        g.lineStyle(1, GREEN_HEX, 1)
+        g.strokeRect(originX, originY, size, size)
+
+        this.mapData.objectives.forEach(spawn => {
+            const world = this.toWorld(spawn.x, spawn.y)
+            const p = toMinimap(world.x, world.y)
+            g.fillStyle(YELLOW_HEX, 1)
+            g.fillCircle(p.x, p.y, 2)
+        })
+
+        this.ships.forEach(ship => {
+            if(!ship.visible) return
+            const p = toMinimap(ship.x, ship.y)
+            g.fillStyle(ship.faction === Faction.Player ? GREEN_HEX : RED_HEX, 1)
+            g.fillCircle(p.x, p.y, ship.type === ShipType.CATH ? 2 : 1)
+        })
+
+        // The camera's own current world-space view (cam.worldView already accounts for scroll/zoom),
+        // squashed into minimap space the same as everything else here — a little box showing where
+        // "on-screen right now" actually is within the whole map. Clamped to the minimap's own square
+        // (centerCameraBounds lets the camera scroll a bit past the map's actual edges) so this box
+        // never draws outside it.
+        const view = cam.worldView
+        const viewTopLeft = toMinimap(view.x, view.y)
+        const viewBottomRight = toMinimap(view.x+view.width, view.y+view.height)
+        const clampedX1 = PhaserMath.Clamp(viewTopLeft.x, originX, originX+size)
+        const clampedY1 = PhaserMath.Clamp(viewTopLeft.y, originY, originY+size)
+        const clampedX2 = PhaserMath.Clamp(viewBottomRight.x, originX, originX+size)
+        const clampedY2 = PhaserMath.Clamp(viewBottomRight.y, originY, originY+size)
+        g.lineStyle(1, YELLOW_HEX, 1)
+        g.strokeRect(clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
     }
 
     drawSelectionRing = (x:number, y:number, baseRadius:number, time:number) => {
@@ -603,6 +665,14 @@ export default class MapScene extends Scene {
             const spawn = this.mapData.objectives.find(o => o.id === objective.id)
             if(!spawn) return objective
             const { x, y } = this.toWorld(spawn.x, spawn.y)
+
+            // Whoever's actually nearby, regardless of whether they've got armor attached — this is
+            // purely for the CONTESTED label below, separate from contestingFaction's own stricter
+            // "uncontested hold" definition just below it.
+            const nearbyFactions = new Set(ships
+                .filter(s => Phaser.Math.Distance.Between(x, y, s.x, s.y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
+                .map(s => s.faction))
+            this.objectiveLabels.get(objective.id)?.setText(nearbyFactions.size >= 2 ? 'CONTESTED' : spawn.sprite)
 
             const contestingFaction = [Faction.Player, Faction.Enemy].find(faction => {
                 const hasAttachedArmor = ships.some(s => s.faction === faction && s.type === ShipType.ZEL
@@ -1239,7 +1309,7 @@ export default class MapScene extends Scene {
         this.beamFlashes = this.beamFlashes.filter(b => time - b.createdAt < BEAM_LIFETIME_MS)
         this.beamFlashes.forEach(b => {
             const alpha = 1 - (time-b.createdAt)/BEAM_LIFETIME_MS
-            g.lineStyle(BEAM_WIDTH_PX, CYAN_HEX, alpha)
+            g.lineStyle(BEAM_WIDTH_PX, RED_HEX, alpha)
             g.lineBetween(b.x1, b.y1, b.x2, b.y2)
         })
     }
@@ -1572,12 +1642,12 @@ export default class MapScene extends Scene {
 
         for(let i=0; i<=this.mapData.width; i++){
             const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
+            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.25)
             g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
         }
         for(let i=0; i<=this.mapData.height; i++){
             const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_DIM_HEX, isMajor ? 0.6 : 0.25)
+            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.25)
             g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
         }
 
@@ -1825,6 +1895,10 @@ export default class MapScene extends Scene {
         this.input.keyboard.on('keydown-ESC', () => {
             useAppStore.getState().setSelectedShipIds([])
         })
+
+        this.input.keyboard.on('keydown-M', () => {
+            this.minimapVisible = !this.minimapVisible
+        })
     }
 
     handleClick = (worldX:number, worldY:number) => {
@@ -1942,9 +2016,9 @@ export default class MapScene extends Scene {
             onSelectShips(hitIds)
         })
 
-        this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
-            this.cameras.main.setZoom(dy < 0 ? ZOOM_LEVELS[ZOOM_LEVELS.length-1] : ZOOM_LEVELS[0])
-        })
+        // this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
+        //     this.cameras.main.setZoom(dy < 0 ? ZOOM_LEVELS[ZOOM_LEVELS.length-1] : ZOOM_LEVELS[0])
+        // })
     }
 
     drawDragSelectBox = () => {

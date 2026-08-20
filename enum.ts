@@ -60,12 +60,12 @@ export const ShipData:Record<ShipType, ShipStats> = {
         burstSize: 1, ammo: 20,
         description: 'Most ancient orthodox design. Immune to infiltration.'
      },
-    [ShipType.BEH]: { name:'Beholder', speed:20, sightRadius:250, armor:0, hp:15, damage:1, cooldownMs:1000, rangePx:200, productionTimeMs:5000, relicCost:2, weaponType:'beam',
+    [ShipType.BEH]: { name:'Beholder', speed:20, sightRadius:250, armor:0, hp:15, damage:1, cooldownMs:2000, rangePx:250, productionTimeMs:5000, relicCost:2, weaponType:'beam',
         burstSize: 1,
         description: 'Beams in the dark require no ammo.'
      },
     [ShipType.STL]: { name:'Phalanx', speed:30, sightRadius:150, armor:0, hp:15, damage:1, cooldownMs:1500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
-        burstSize: 1, ammo: 20,
+        burstSize: 1,
         description: 'Most ancient orthodox design. Immune to infiltration.'
      },
     [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, productionTimeMs:5000, relicCost:0,
@@ -91,14 +91,14 @@ export const ShipData:Record<ShipType, ShipStats> = {
         description: 'Replenishment of the fleet, digests debris into fuel and parts.'
      },
      [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:8000, relicCost:2,
-        weaponType:'bullet', burstSize:1, ammo:20,
+        weaponType:'bullet', burstSize:1,
         description: 'A thousand needles rise up in defense.'
      },
      [ShipType.DRN]: { name:'Stitcher', speed:8, sightRadius:200, armor:0, hp:20, damage:0, cooldownMs:2500, rangePx:0, productionTimeMs:18000, relicCost:5, ammo:4,
         description: "Manufactors KKZ or HUSK from Mater's metals"
      },
      [ShipType.HUSK]: {
-        name:'Husk', speed:8, sightRadius:100, armor:0, hp:30, damage:1, cooldownMs:500, rangePx:40, productionTimeMs:8000, relicCost:1,
+        name:'Husk', speed:10, sightRadius:100, armor:0, hp:30, damage:1, cooldownMs:500, rangePx:45, productionTimeMs:8000, relicCost:1,
         weaponType:'beam', burstSize:1,
         description: "Deranged machine made from random scraps"
      }

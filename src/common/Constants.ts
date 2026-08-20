@@ -78,10 +78,9 @@ export const ASTEROID_AVG_METAL = 50
 export const ASTEROID_METAL_VARIANCE = 15
 
 export const GREEN_HEX = 0x55FF55
-export const GREEN_DIM_HEX = 0x006500
+// export const GREEN_DIM_HEX = 0x006500
 export const YELLOW_HEX = 0xFFFF55
 export const RED_HEX=0xff5555
-export const CYAN_HEX = 0x55FFFF
 
 export const HARVESTER_BEAM_FLICKER_MIN_MS = 250
 export const HARVESTER_BEAM_FLICKER_MAX_MS = 1000
