@@ -11,8 +11,6 @@ export const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProp
     border: '2px solid '+colors.green,
     cursor: disabled ? 'default' : 'pointer',
     opacity: disabled ? 0.4 : 1,
-    fontFamily: 'Body',
-    fontSize: '14px',
     userSelect: 'none',
 })
 

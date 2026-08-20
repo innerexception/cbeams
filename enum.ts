@@ -68,7 +68,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
         burstSize: 1,
         description: 'Most ancient orthodox design. Immune to infiltration.'
      },
-    [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, productionTimeMs:5000, relicCost:0,
+    [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:3, damage:5, cooldownMs:0, rangePx:0, productionTimeMs:5000, relicCost:0,
         description: 'Single use blessings built by DRN. Contact fuse.'
      },
     [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:20, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:1,

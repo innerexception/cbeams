@@ -5,8 +5,6 @@ import { MAP_SIZE } from '../common/Constants';
 import { tryLoadFile } from '../common/Utils';
 import { useAppStore } from '../common/store';
 import ToolButton from './ToolButton'
-import { colors } from '../styles/AppStyles';
-
 export default () => {
 
     const [saveFile, setSave] = React.useState(null as SaveFile)
@@ -34,11 +32,10 @@ export default () => {
     return (
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
             <div style={{ display:'flex' }}>
-                <ToolButton disabled={!saveFile} onClick={()=>onShowModal(null)}>Continue</ToolButton>
+                {saveFile && <ToolButton onClick={()=>onShowModal(null)}>Continue</ToolButton>}
                 <ToolButton onClick={startNewGame}>New</ToolButton>
                 <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
             </div>
-            {!saveFile && <div style={{ color:colors.green, marginTop:6, fontSize:12, fontFamily:'Body' }}>No save found</div>}
         </div>
     )
 }

@@ -14,7 +14,7 @@ export default () => {
     return (
         <div style={{ zIndex:2, fontSize:14 }}>
             <div>Objectives: {objectivesHeld} / {objectives.length}</div>
-            <div>Machine Relics: {machineRelics}</div>
+            <div>Cortex Relics: {machineRelics}</div>
         </div>
     )
 }
