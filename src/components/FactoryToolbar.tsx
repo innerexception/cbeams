@@ -37,6 +37,28 @@ export default () => {
 
     return (
         <div style={{ position:'absolute', top:75, left:75, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+            <ResourceHUD />
+            {selectedShipIds.length > 0 ? (
+                // A drag-selected group of ships takes orders via the map itself — every click sets/adds
+                // a waypoint onto each one's own route (see MapScene's handleClick) — this panel is just
+                // the selection readout + bulk Clear Orders/Cancel.
+                <div>
+                    <div style={{ fontSize:14 }}>
+                        {selectedShips.length > 0 && <div>SELECTION</div>}
+                        {selectedShips.map(s=>
+                            <div key={s.id}>
+                                <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>
+                                    {/* Narrows the current selection down to just this ship's own type — drops
+                                        every other type out of it, keeps every ship of this one. */}
+                                    <div style={{ cursor:'pointer' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
+                                </Tooltip>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div style={{ fontSize:14 }}>Drag to select units</div>
+            )}
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueFull = queue.length >= MAX_QUEUE
@@ -46,7 +68,7 @@ export default () => {
                 const relicsAvailable = machineRelics[playerBase.faction] ?? 0
 
                 return (
-                    <div style={{display:'flex'}}>
+                    <div style={{display:'flex', flexDirection:'column'}}>
                         <div>
                             <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
                                     <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
@@ -84,32 +106,9 @@ export default () => {
                                 </>
                             )}
                         </div>
-                        <ResourceHUD />
                     </div>
                 )
             })()}
-
-            {selectedShipIds.length > 0 ? (
-                // A drag-selected group of ships takes orders via the map itself — every click sets/adds
-                // a waypoint onto each one's own route (see MapScene's handleClick) — this panel is just
-                // the selection readout + bulk Clear Orders/Cancel.
-                <div>
-                    <div style={{ fontSize:14 }}>
-                        {selectedShips.length > 0 && <div>SELECTION</div>}
-                        {selectedShips.map(s=>
-                            <div key={s.id}>
-                                <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>
-                                    {/* Narrows the current selection down to just this ship's own type — drops
-                                        every other type out of it, keeps every ship of this one. */}
-                                    <div style={{ cursor:'pointer' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
-                                </Tooltip>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : (
-                <div style={{ fontSize:14 }}>Drag to select units</div>
-            )}
         </div>
     )
 }

@@ -123,8 +123,8 @@ export default () => {
             <ColumnBorder side='right' />
             <Base />
             <Ceiling />
-            <div style={{position:'absolute', backgroundSize:'contain', bottom:0, left:-50, zIndex:12, backgroundImage:'url('+decal+')', width:'240px', height:'275px'}}/>
-            <div style={{position:'absolute', backgroundSize:'contain', bottom:-30, right:-50, zIndex:12, backgroundImage:'url('+decal2+')', width:'240px', height:'300px'}}/>
+            <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:0, left:-50, zIndex:12, backgroundImage:'url('+decal+')', width:'240px', height:'275px'}}/>
+            <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:-30, right:-50, zIndex:12, backgroundImage:'url('+decal2+')', width:'240px', height:'300px'}}/>
         </div>
     )
 }

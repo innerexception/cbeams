@@ -12,7 +12,7 @@ export default () => {
     const objectivesHeld = objectives.filter((o) => o.owner === Faction.Player).length
 
     return (
-        <div style={{ zIndex:2, fontSize:14, display:'flex', alignItems:'flex-start', gap:24 }}>
+        <div style={{ zIndex:2, fontSize:14 }}>
             <div>Objectives: {objectivesHeld} / {objectives.length}</div>
             <div>Machine Relics: {machineRelics}</div>
         </div>
