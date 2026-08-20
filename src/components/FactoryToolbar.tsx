@@ -44,10 +44,10 @@ export default () => {
                 // the selection readout + bulk Clear Orders/Cancel.
                 <div>
                     <div style={{ fontSize:14 }}>
-                        {selectedShips.length > 0 && <div>SELECTION</div>}
+                        {selectedShips.length > 0 && <div style={{marginBottom:'1em'}}>SELECTION</div>}
                         {selectedShips.map(s=>
                             <div key={s.id}>
-                                <Tooltip overlay={<div>{ShipData[s.type].description}</div>}>
+                                <Tooltip placement="bottom" overlay={<div>{ShipData[s.type].description}</div>}>
                                     {/* Narrows the current selection down to just this ship's own type — drops
                                         every other type out of it, keeps every ship of this one. */}
                                     <div style={{ cursor:'pointer' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
@@ -71,7 +71,7 @@ export default () => {
                     <div style={{display:'flex', flexDirection:'column'}}>
                         <div>
                             <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
-                                    <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>{buildMenuMinimized ? '+' : '-'}</ToolButton>
+                                    {relicsAvailable > 0 && <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>Relics Available</ToolButton>}
                                     {buildMenuMinimized && relicsAvailable > 0 && (
                                         // Hint badge so the player still knows there's unspent Machine Relics
                                         // without having to reopen the panel.

@@ -102,7 +102,7 @@ export default class MapScene extends Scene {
     dragSelectG: GameObjects.Graphics
     // Screen-fixed (setScrollFactor(0)), toggled by 'M' — see enableSelectionControls/drawMinimap.
     minimapG: GameObjects.Graphics
-    minimapVisible: boolean = false
+    minimapVisible: boolean = true
 
     shipsGroup: Physics.Arcade.Group
     missilesGroup: Physics.Arcade.Group
@@ -361,7 +361,24 @@ export default class MapScene extends Scene {
             this.drawSelectionRing(ship.x, ship.y, this.getShipFootprintRadiusPx(ship.type) * 1.4, time)
         })
 
-        this.drawMinimap()
+        this.drawMinimap(time)
+    }
+
+    // Phaser's Graphics has no native dashed-stroke option — strokeRect is always solid — so a dashed
+    // rectangle is just four edges' worth of short line segments with gaps, drawn by hand. lineStyle is
+    // whatever the caller already set; this only issues the actual segments.
+    strokeDashedRect = (g:GameObjects.Graphics, x:number, y:number, w:number, h:number, dash:number = 2, gap:number = 3) => {
+        const edges:Array<[number,number,number,number]> = [
+            [x, y, x+w, y], [x+w, y, x+w, y+h], [x+w, y+h, x, y+h], [x, y+h, x, y],
+        ]
+        edges.forEach(([x1, y1, x2, y2]) => {
+            const length = Phaser.Math.Distance.Between(x1, y1, x2, y2)
+            const ux = (x2-x1)/length, uy = (y2-y1)/length
+            for(let d=0; d<length; d += dash+gap){
+                const segEnd = Math.min(d+dash, length)
+                g.lineBetween(x1+ux*d, y1+uy*d, x1+ux*segEnd, y1+uy*segEnd)
+            }
+        })
     }
 
     // Toggled by 'M' (see enableSelectionControls) — the whole map's own coordinate space (its full
@@ -371,7 +388,7 @@ export default class MapScene extends Scene {
     // a ship that's actually .visible right now — same fog-of-war an enemy ship is already subject to on
     // the real map (see updateFogOfWar) rather than a full reveal; a friendly ship is always visible, so
     // it always shows.
-    drawMinimap = () => {
+    drawMinimap = (time:number) => {
         const g = this.minimapG
         g.clear()
         if(!this.minimapVisible) return
@@ -388,12 +405,24 @@ export default class MapScene extends Scene {
         g.fillStyle(0x000000, 1)
         g.fillRect(originX, originY, size, size)
         g.lineStyle(1, GREEN_HEX, 1)
-        g.strokeRect(originX, originY, size, size)
+        this.strokeDashedRect(g, originX, originY, size, size)
 
+        // Flashes red (toggling every 250ms, off phases just skip the fillCircle so the marker actually
+        // disappears rather than merely swapping color) while some faction is actively capturing it — a
+        // held-uncontested-long-enough capture, not just any ship stood nearby (see updateObjectives'
+        // own contestingFaction). Otherwise it's whatever getObjectiveOwnerColor already says for its
+        // current owner — red once the enemy actually holds it, green for the player, yellow (same as
+        // the flash) while unowned — same color-per-owner every other Objective readout (its own sprite
+        // tint, the capture progress bar) already uses.
+        const { objectives } = useAppStore.getState()
+        const flashOn = Math.floor(time/250) % 2 === 0
         this.mapData.objectives.forEach(spawn => {
+            const objective = objectives.find(o => o.id === spawn.id)
+            const beingCaptured = !!objective?.capturingFaction
+            if(beingCaptured && !flashOn) return
             const world = this.toWorld(spawn.x, spawn.y)
             const p = toMinimap(world.x, world.y)
-            g.fillStyle(YELLOW_HEX, 1)
+            g.fillStyle(beingCaptured ? RED_HEX : this.getObjectiveOwnerColor(objective?.owner ?? null), 1)
             g.fillCircle(p.x, p.y, 2)
         })
 
@@ -417,7 +446,7 @@ export default class MapScene extends Scene {
         const clampedX2 = PhaserMath.Clamp(viewBottomRight.x, originX, originX+size)
         const clampedY2 = PhaserMath.Clamp(viewBottomRight.y, originY, originY+size)
         g.lineStyle(1, YELLOW_HEX, 1)
-        g.strokeRect(clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
+        this.strokeDashedRect(g, clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
     }
 
     drawSelectionRing = (x:number, y:number, baseRadius:number, time:number) => {

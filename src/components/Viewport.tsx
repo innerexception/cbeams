@@ -13,7 +13,7 @@ const base = require('../assets/img/base.png')
 const baseLeft = require('../assets/img/base-l.png')
 const ceiling = require('../assets/img/ceiling.png')
 const ceilingLeft = require('../assets/img/ceiling-l.png')
-const decal = require('../assets/img/decal1.png')
+const decal = require('../assets/img/decal1-1.png')
 const decal2 = require('../assets/img/decal2.png')
 const COLUMN_TILE_PX = 32
 const COLUMN_RENDER_PX = COLUMN_TILE_PX * 2
@@ -123,7 +123,7 @@ export default () => {
             <ColumnBorder side='right' />
             <Base />
             <Ceiling />
-            <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:0, left:-50, zIndex:12, backgroundImage:'url('+decal+')', width:'240px', height:'275px'}}/>
+            <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:-30, left:-90, zIndex:12, backgroundImage:'url('+decal+')', width:'320px', height:'440px'}}/>
             <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:-30, right:-50, zIndex:12, backgroundImage:'url('+decal2+')', width:'240px', height:'300px'}}/>
         </div>
     )
