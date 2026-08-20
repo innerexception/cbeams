@@ -25,7 +25,7 @@ export const MAX_WAYPOINTS = 5
 
 export const DOUBLE_CLICK_MS = 350
 
-export const ATD_BLAST_RADIUS_PX = 10
+export const ATD_BLAST_RADIUS_PX = 20
 
 export const MISSILE_SPEED_PX_S = 110
 export const MISSILE_MAX_LIFETIME_MS = 8000

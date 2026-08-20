@@ -71,7 +71,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:5, damage:5, cooldownMs:0, rangePx:0, productionTimeMs:5000, relicCost:0,
         description: 'Single use blessings built by DRN. Contact fuse.'
      },
-    [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:10, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:1,
+    [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:20, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:1,
         description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
      },
     [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:3000, rangePx:250, productionTimeMs:12000, relicCost:2, ammo:10,

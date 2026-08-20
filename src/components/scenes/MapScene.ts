@@ -82,8 +82,10 @@ export default class MapScene extends Scene {
 
     g: GameObjects.Graphics
     rangeG: GameObjects.Graphics
+    // Overlap-shape source for rangeShadeDither's geometry mask — never itself on the display list.
     rangeShadeBrush: GameObjects.Graphics
-    rangeShadeRT: GameObjects.RenderTexture
+    // Enemy-sight shading: a tiled full-alpha red dither pattern, masked to rangeShadeBrush's shape.
+    rangeShadeDither: GameObjects.TileSprite
     selectionG: GameObjects.Graphics
     progressG: GameObjects.Graphics
     healthG: GameObjects.Graphics
@@ -180,7 +182,6 @@ export default class MapScene extends Scene {
         this.g = this.add.graphics()
         this.rangeG = this.add.graphics()
         this.rangeShadeBrush = this.make.graphics({}, false)
-        this.rangeShadeRT = this.add.renderTexture(0, 0, MAP_SIZE*CELL_SIZE, MAP_SIZE*CELL_SIZE).setOrigin(0, 0).setAlpha(0.12)
         this.selectionG = this.add.graphics()
         this.progressG = this.add.graphics()
         this.healthG = this.add.graphics()
@@ -198,6 +199,8 @@ export default class MapScene extends Scene {
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
 
         this.generateTextures()
+        this.rangeShadeDither = this.add.tileSprite(0, 0, MAP_SIZE*CELL_SIZE, MAP_SIZE*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
+        this.rangeShadeDither.setMask(this.rangeShadeBrush.createGeometryMask())
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
         this.bulletsGroup = this.physics.add.group()
@@ -257,6 +260,11 @@ export default class MapScene extends Scene {
         }
 
         bake('missile_dot', 8, (g, cx, cy) => { g.fillStyle(GREEN_HEX, 0.9); g.fillCircle(cx, cy, 2) })
+        // Tiled full-alpha checkerboard, not a translucent fill — see rangeShadeDither.
+        bake('dither_red', 8, (g) => {
+            g.fillStyle(RED_HEX, 1)
+            g.fillRect(0, 0, 1, 1)
+        })
         // Bigger/brighter than missile_dot, with a soft glow ring — a bullet only lives up to
         // BULLET_MAX_LIFETIME_MS and covers its whole (short) range in well under a second, so it needs
         // to read clearly at a glance or PDF actually firing is easy to miss entirely.
@@ -328,8 +336,6 @@ export default class MapScene extends Scene {
             x: s.x, y: s.y, type: s.type, faction: s.faction,
             sightRadiusOverride: this.isPointUnderNebula(s.x, s.y) ? NEBULA_SIGHT_RADIUS_PX : undefined,
         })), this.rangeShadeBrush)
-        this.rangeShadeRT.clear()
-        this.rangeShadeRT.draw(this.rangeShadeBrush)
         this.drawObjectiveCaptureProgress(time)
 
         this.drawProductionProgress()
