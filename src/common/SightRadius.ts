@@ -110,7 +110,7 @@ export const drawSightRadii = (g:GameObjects.Graphics, ships:Array<{ x:number, y
     // it's handed, same as it always drew ShipData's own.
     const circles = ships.map(s => ({ x: s.x, y: s.y, r: s.sightRadiusOverride ?? ShipData[s.type].sightRadius, faction: s.faction }))
 
-    g.lineStyle(1, GREEN_HEX, 0.25)
+    g.lineStyle(1, GREEN_HEX, 1)
     circles.forEach((circle, i) => {
         let visible:Array<[number,number]> = circle.faction === Faction.Player ? [[0, TWO_PI]] : []
 

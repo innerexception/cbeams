@@ -9,7 +9,6 @@ export const FONT_DEFAULT = {
 export const defaultCursor = require('./img/default.png')
 export const pointerCursor = require('./img/pointer.png')
 export const invalidCursor = require('./img/invalid.png')
-export const atkCursor = require('./img/atk.png')
 export const iconSheet = require('./img/tiles.png')
 
 // Background parallax dressing (see MapScene's spawnNebulaLayer) — picked two at random per match, so
@@ -19,7 +18,7 @@ export const NEBULA_KEYS = ['nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5
 export const resources:Array<PhaserResource> = [
     { key: 'logo', resource: require('./logo.png'), type: 'image' },
     { key: 'tiles', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 32, frameHeight: 32 } },
-    { key: 'starfield', resource: require('./img/starfield.png'), type: 'image' },
+    { key: 'starfield', resource: require('./img/what.jpg'), type: 'image' },
     { key: 'nebula1', resource: require('./img/nebulas/nebula1.png'), type: 'image' },
     { key: 'nebula2', resource: require('./img/nebulas/nebula2.png'), type: 'image' },
     { key: 'nebula3', resource: require('./img/nebulas/nebula3.png'), type: 'image' },

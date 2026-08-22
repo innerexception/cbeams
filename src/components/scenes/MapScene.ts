@@ -190,7 +190,6 @@ export default class MapScene extends Scene {
     }
 
     create = () => {
-        this.cameras.main.setBackgroundColor('#000000')
         this.input.mouse.disableContextMenu()
         this.g = this.add.graphics()
         this.rangeG = this.add.graphics()
@@ -236,7 +235,8 @@ export default class MapScene extends Scene {
         this.centerCameraBounds()
 
         const bounds = this.cameras.main.getBounds()
-        this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-1000).setScrollFactor(0.5)
+        this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-10).setScrollFactor(0.5)
+        //this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'grid').setDepth(-500).setScrollFactor(0.8)
         this.spawnEntitiesFromMap()
         this.drawMap()
         this.enableCameraControls()
@@ -1687,24 +1687,24 @@ export default class MapScene extends Scene {
     toGrid = worldToGrid
 
     drawMap = () => {
-        const g = this.g
-        g.clear()
+        // const g = this.g
+        // g.clear()
 
-        const worldW = this.mapData.width * CELL_SIZE
-        const worldH = this.mapData.height * CELL_SIZE
+        // const worldW = this.mapData.width * CELL_SIZE
+        // const worldH = this.mapData.height * CELL_SIZE
 
-        for(let i=0; i<=this.mapData.width; i++){
-            const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0)
-            g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
-        }
-        for(let i=0; i<=this.mapData.height; i++){
-            const isMajor = i % 5 === 0
-            g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0)
-            g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
-        }
+        // for(let i=0; i<=this.mapData.width; i++){
+        //     const isMajor = i % 5 === 0
+        //     g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.3)
+        //     g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
+        // }
+        // for(let i=0; i<=this.mapData.height; i++){
+        //     const isMajor = i % 5 === 0
+        //     g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.3)
+        //     g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
+        // }
 
-        this.drawTerrain()
+        // this.drawTerrain()
     }
 
     drawTerrain = () => {
