@@ -18,7 +18,7 @@ export const NEBULA_KEYS = ['nebula1', 'nebula2', 'nebula3', 'nebula4', 'nebula5
 export const resources:Array<PhaserResource> = [
     { key: 'logo', resource: require('./logo.png'), type: 'image' },
     { key: 'tiles', resource: iconSheet, type: 'spritesheet', data: { frameWidth: 32, frameHeight: 32 } },
-    { key: 'starfield', resource: require('./img/what.jpg'), type: 'image' },
+    { key: 'starfield', resource: require('./img/bg.png'), type: 'image' },
     { key: 'nebula1', resource: require('./img/nebulas/nebula1.png'), type: 'image' },
     { key: 'nebula2', resource: require('./img/nebulas/nebula2.png'), type: 'image' },
     { key: 'nebula3', resource: require('./img/nebulas/nebula3.png'), type: 'image' },
