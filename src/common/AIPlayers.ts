@@ -2,7 +2,7 @@ import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS } from "./Constants"
 import { useAppStore } from "./store"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
@@ -124,10 +124,13 @@ const pointAtDistance = (from:{x:number,y:number}, target:{x:number,y:number}, d
 // Retreats `ship` straight away from `threat`, by roughly its own sight radius, clamped to the map so it
 // never routes itself off the edge.
 const fleeFrom = (scene:MapScene, ship:ShipSprite, threat:{x:number,y:number}) => {
+    const now = scene.time.now
+    if(ship.lastFleeOrderAtMs !== undefined && now - ship.lastFleeOrderAtMs < AI_FLEE_ORDER_INTERVAL_MS) return
     const dist = Math.hypot(ship.x-threat.x, ship.y-threat.y)
     const fleePoint = pointAtDistance(ship, threat, dist + ShipData[ship.type].sightRadius)
     const clamped = clampToMapWorld(scene, fleePoint.x, fleePoint.y)
     routeTowards(scene, ship, clamped.x, clamped.y)
+    ship.lastFleeOrderAtMs = now
 }
 
 // Combat types that actually have their own per-frame AI update function below (updateEnemyBeh/
@@ -188,14 +191,34 @@ const escortZel = (scene:MapScene, ship:ShipSprite) => {
 // supplies the travel order needed to get one in range of it. Once latched (moveShips has taken over),
 // this leaves it alone entirely rather than re-issuing a route that would immediately cancel that latch
 // (see ShipSprite's latchedObjectiveId, cleared by any new order).
+// Finds the closest visible, unescorted hostile ship. Bases cannot be boarded.
+const findNearestIsolatedHostileShip = (scene:MapScene, zel:ShipSprite) => {
+    const searchRadius = effectiveSightRadiusPx(scene, zel)
+    return findNearest(scene.ships, zel.x, zel.y, ship => ship, ship => {
+        if(ship.type === ShipType.CATH || ship.faction === zel.faction || ship.latchedByZelId) return false
+        if(Math.hypot(ship.x-zel.x, ship.y-zel.y) > searchRadius) return false
+        if(!scene.isWithinFactionSightRange(ship.x, ship.y, zel.faction)) return false
+        return !scene.ships.some(escort => escort.id !== ship.id && escort.faction === ship.faction
+            && Math.hypot(escort.x-ship.x, escort.y-ship.y) <= ZEL_CAPTURE_ISOLATION_RADIUS_PX)
+    })
+}
+
 export const updateEnemyZel = (scene:MapScene) => {
     assignZelEscorts(scene)
 
     scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL && hasNoDirective(s)).forEach(zel => {
+        // MapScene owns the latch and capture timer. Do not replace its route mid-boarding.
+        if(zel.latchedShipId || zel.latchedObjectiveId) return
+
+        const isolatedTarget = findNearestIsolatedHostileShip(scene, zel)
+        if(isolatedTarget){
+            routeTowards(scene, zel, isolatedTarget.x, isolatedTarget.y)
+            return
+        }
+
         const threat = scene.findNearestHostileShip(zel.faction, zel.x, zel.y, effectiveSightRadiusPx(scene, zel))
         if(threat){ fleeFrom(scene, zel, threat); return }
 
-        if(zel.latchedObjectiveId) return
         const spawn = findNearestCapturableObjectiveSpawn(scene, zel.faction, zel.x, zel.y)
         if(!spawn) return
         const { x, y } = scene.toWorld(spawn.x, spawn.y)

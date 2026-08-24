@@ -104,5 +104,5 @@ General AI notes:
         move BLADEs around to the rear or side to flank
 
 
-ZEL should try to capture nearby enemy ships if they are alone. 
+ZEL should be able to capture enemy ships. 
 When ZEL is latched on, target ship cannot move or attack.

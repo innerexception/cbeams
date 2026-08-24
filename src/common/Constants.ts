@@ -51,7 +51,18 @@ export const OBJECTIVE_CAPTURE_RADIUS_PX = 200
 export const OBJECTIVE_ICON_SIZE = 40
 export const OBJECTIVE_CAPTURE_TIME_MS = 30000
 
+// A ZEL has to get right alongside a hostile ship before it can board it.  Ship captures deliberately
+// use the same sustained hold duration as Objectives, rather than converting a ship on first contact.
+export const ZEL_SHIP_CAPTURE_RADIUS_PX = 32
+export const ZEL_SHIP_CAPTURE_TIME_MS = OBJECTIVE_CAPTURE_TIME_MS
+// Enemy ZELs board targets only when no nearby allied escort can protect them.
+export const ZEL_CAPTURE_ISOLATION_RADIUS_PX = 150
+
 export const ENEMY_RAID_SIZE = 3
+
+// AI retreat destinations are intentionally refreshed sparingly. Reissuing a new escape route every
+// frame near the edge of an enemy's sight range makes ships visibly jitter back and forth.
+export const AI_FLEE_ORDER_INTERVAL_MS = 5000
 
 // A ship sitting inside a nebula has its own sight cut down to this, and is only detectable by an enemy
 // ship that's also inside a nebula (see MapScene's isWithinFactionSightRange). "Inside a nebula" is a

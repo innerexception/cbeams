@@ -20,6 +20,7 @@ import {
     BEAM_LIFETIME_MS, BEAM_WIDTH_PX,
     SHIP_FRAGMENT_LIFETIME_MS, SHIP_FRAGMENT_MIN_DISTANCE_PX, SHIP_FRAGMENT_MAX_DISTANCE_PX,
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
+    ZEL_SHIP_CAPTURE_RADIUS_PX, ZEL_SHIP_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S,
     HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
@@ -340,6 +341,7 @@ export default class MapScene extends Scene {
         this.updateHarvesters(delta)
         this.updateHarvesterSupport(time)
         this.updateObjectives(time)
+        this.updateShipCaptures(time)
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         updateEnemyZel(this)
@@ -851,6 +853,7 @@ export default class MapScene extends Scene {
     shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
 
     destroyShipSprite = (id:string) => {
+        this.releaseShipCapture(id)
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
         this.shipLabels.get(id)?.destroy()
@@ -978,6 +981,53 @@ export default class MapScene extends Scene {
         useAppStore.getState().setShips(this.ships.map(s => s.toSummary()))
     }
 
+    // Ends a ZEL boarding action from either side.  This is called before either participant is
+    // destroyed and when a player gives the ZEL a new order, so a disabled target is never left stuck.
+    releaseShipCapture = (shipId:string) => {
+        const ship = this.shipSprites.get(shipId)
+        if(!ship) return
+        if(ship.type === ShipType.ZEL && ship.latchedShipId){
+            const target = this.shipSprites.get(ship.latchedShipId)
+            if(target?.latchedByZelId === ship.id) target.latchedByZelId = undefined
+            ship.latchedShipId = undefined
+            ship.shipCaptureAttached = undefined
+            ship.shipCaptureStartedAtMs = undefined
+        }
+        if(ship.latchedByZelId){
+            const zel = this.shipSprites.get(ship.latchedByZelId)
+            if(zel?.latchedShipId === ship.id){
+                zel.latchedShipId = undefined
+                zel.shipCaptureAttached = undefined
+                zel.shipCaptureStartedAtMs = undefined
+            }
+            ship.latchedByZelId = undefined
+        }
+    }
+
+    isShipAttackDisabled = (ship:ShipSprite) => !!ship.latchedByZelId
+
+    updateShipCaptures = (time:number) => {
+        this.ships.filter(zel => zel.type === ShipType.ZEL && zel.latchedShipId).forEach(zel => {
+            const target = this.shipSprites.get(zel.latchedShipId)
+            if(!target || target.faction === zel.faction || target.latchedByZelId !== zel.id || !zel.shipCaptureAttached){
+                this.releaseShipCapture(zel.id)
+                return
+            }
+            if(zel.shipCaptureStartedAtMs === undefined) zel.shipCaptureStartedAtMs = time
+            if(time - zel.shipCaptureStartedAtMs < ZEL_SHIP_CAPTURE_TIME_MS) return
+
+            // A converted ship starts idle under its new faction.  Its existing route belonged to the
+            // previous owner, so retaining it would immediately send it on an enemy-issued order.
+            target.faction = zel.faction
+            target.waypoints = []
+            target.pathIndex = 0
+            target.orderSpeedPxS = undefined
+            target.setTexture(target.faction === Faction.Player ? target.type : target.type+'_enemy')
+            this.releaseShipCapture(zel.id)
+            this.syncShipSummaries()
+        })
+    }
+
     // Advances every ship one step towards its own route (see ShipSprite's waypoints/pathIndex), then
     // sits idle at the end of it — except ZEL, which instead heads for and latches onto a capturable
     // Objective the instant it's in range (overriding its route entirely while latched), GAIN, which
@@ -994,19 +1044,34 @@ export default class MapScene extends Scene {
             const speed = ship.orderSpeedPxS ?? ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
-            const movementLocked = ship.type === ShipType.EYE && !!ship.movementLocked
+            const movementLocked = (ship.type === ShipType.EYE && !!ship.movementLocked) || !!ship.latchedByZelId
             const idle = movementLocked || pathIndex >= waypoints.length
             const miningNodeId = this.harvesterMiningTarget.get(ship.id)
             const miningNode = miningNodeId ? resourceNodes.find(n => n.id === miningNodeId) : undefined
 
             let latchedObjectiveId = ship.latchedObjectiveId
             let latchedObjectiveWorld:{x:number,y:number} | undefined
+            let latchedShip = ship.latchedShipId ? this.shipSprites.get(ship.latchedShipId) : undefined
             if(ship.type === ShipType.ZEL){
+                if(latchedShip && (latchedShip.faction === ship.faction || latchedShip.latchedByZelId !== ship.id)){
+                    this.releaseShipCapture(ship.id)
+                    latchedShip = undefined
+                }
                 if(latchedObjectiveId){
                     const held = objectives.find(o => o.id === latchedObjectiveId)
                     if(!held || held.owner === ship.faction) latchedObjectiveId = undefined
                 }
-                if(!latchedObjectiveId){
+                if(!latchedObjectiveId && !latchedShip){
+                    latchedShip = this.ships
+                        .filter(candidate => candidate.type !== ShipType.CATH && candidate.faction !== ship.faction && !candidate.latchedByZelId)
+                        .filter(candidate => Phaser.Math.Distance.Between(ship.x, ship.y, candidate.x, candidate.y) <= ZEL_SHIP_CAPTURE_RADIUS_PX)
+                        .sort((a, b) => Phaser.Math.Distance.Between(ship.x, ship.y, a.x, a.y) - Phaser.Math.Distance.Between(ship.x, ship.y, b.x, b.y))[0]
+                    if(latchedShip){
+                        ship.latchedShipId = latchedShip.id
+                        latchedShip.latchedByZelId = ship.id
+                    }
+                }
+                if(!latchedObjectiveId && !latchedShip){
                     const spawn = this.mapData.objectives.find(sp => {
                         const candidate = objectives.find(o => o.id === sp.id)
                         if(!candidate || candidate.owner === ship.faction) return false
@@ -1026,7 +1091,10 @@ export default class MapScene extends Scene {
             }
 
             let target:{x:number,y:number}
-            if(latchedObjectiveWorld){
+            if(latchedShip){
+                target = { x:latchedShip.x, y:latchedShip.y }
+            }
+            else if(latchedObjectiveWorld){
                 target = latchedObjectiveWorld
             }
             else if(miningNode){
@@ -1040,14 +1108,14 @@ export default class MapScene extends Scene {
             const prevX = ship.x, prevY = ship.y
 
             const dist = Phaser.Math.Distance.Between(ship.x, ship.y, target.x, target.y)
-            const nextPathIndex = (!miningNode && !latchedObjectiveWorld && !movementLocked && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
+            const nextPathIndex = (!miningNode && !latchedObjectiveWorld && !latchedShip && !movementLocked && waypoints.length > 0 && pathIndex < waypoints.length) ? pathIndex+1 : pathIndex
             const arrivedAtRouteEnd = nextPathIndex !== pathIndex && nextPathIndex >= waypoints.length
 
             // A plain route waypoint (not a mining orbit or latched Objective — see
             // WAYPOINT_ARRIVAL_RADIUS_PX's own comment) counts as reached from anywhere within this
             // wider dead zone, not just the exact pixel, so a clump of ships routed to the same point
             // settles instead of vibrating against applyShipSeparation forever.
-            const arrivalRadius = (miningNode || latchedObjectiveWorld) ? 0 : WAYPOINT_ARRIVAL_RADIUS_PX
+            const arrivalRadius = (miningNode || latchedObjectiveWorld || latchedShip) ? 0 : WAYPOINT_ARRIVAL_RADIUS_PX
             const arrived = dist <= Math.max(step, arrivalRadius)
 
             if(dist <= step){
@@ -1062,7 +1130,7 @@ export default class MapScene extends Scene {
             }
 
             if(ship.type !== ShipType.CATH){
-                const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !idle
+                const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !!latchedShip || !idle
                 const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
                 const turnRatePerMs = hasDirectionalTarget ? speed * MOVE_TURN_RATE_PER_SPEED_PX_S : IDLE_TURN_RATE_PER_MS
                 ship.setRotation(Phaser.Math.Angle.RotateTo(ship.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
@@ -1074,6 +1142,7 @@ export default class MapScene extends Scene {
 
             ship.objectiveAttached = !!latchedObjectiveWorld && arrived
             ship.latchedObjectiveId = latchedObjectiveId
+            ship.shipCaptureAttached = !!latchedShip && arrived
             ship.pathIndex = arrived ? nextPathIndex : pathIndex
             if(ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && arrived) ship.movementLocked = true
         })
@@ -1282,6 +1351,7 @@ export default class MapScene extends Scene {
     updateMlrs = (time:number) => {
         this.ships.forEach(ship => {
             if(ship.type !== ShipType.SPR) return
+            if(this.isShipAttackDisabled(ship)) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.SPR].cooldownMs) return
             if(!ship.ammoRemaining) return
 
@@ -1295,7 +1365,7 @@ export default class MapScene extends Scene {
             const aimX = targetShip.x, aimY = targetShip.y
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
-                    if(!ship.active) return
+                    if(!ship.active || this.isShipAttackDisabled(ship)) return
                     this.spawnMissile(ship.faction, ship.x, ship.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY, ship.id)
                 })
             }
@@ -1312,6 +1382,7 @@ export default class MapScene extends Scene {
     updatePdf = (time:number) => {
         this.ships.forEach(ship => {
             if(ship.type !== ShipType.PDF) return
+            if(this.isShipAttackDisabled(ship)) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.PDF].cooldownMs) return
 
             const target = this.findNearestThreat(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].rangePx)
@@ -1323,7 +1394,7 @@ export default class MapScene extends Scene {
             const aimX = target.x, aimY = target.y
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
-                    if(!ship.active) return
+                    if(!ship.active || this.isShipAttackDisabled(ship)) return
                     this.spawnBullet(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].damage, aimX, aimY, ship.id)
                 })
             }
@@ -1336,6 +1407,7 @@ export default class MapScene extends Scene {
     updateBulletWeapons = (time:number) => {
         this.ships.forEach(ship => {
             if(ship.type === ShipType.PDF) return
+            if(this.isShipAttackDisabled(ship)) return
             const stats = ShipData[ship.type]
             if(stats.weaponType !== 'bullet') return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < stats.cooldownMs) return
@@ -1348,7 +1420,7 @@ export default class MapScene extends Scene {
             const aimX = target.x, aimY = target.y
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
-                    if(!ship.active) return
+                    if(!ship.active || this.isShipAttackDisabled(ship)) return
                     this.spawnBullet(ship.faction, ship.x, ship.y, stats.damage, aimX, aimY, ship.id)
                 })
             }
@@ -1363,6 +1435,7 @@ export default class MapScene extends Scene {
         this.ships.forEach(ship => {
             const stats = ShipData[ship.type]
             if(stats.weaponType !== 'beam') return
+            if(this.isShipAttackDisabled(ship)) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < stats.cooldownMs) return
 
             const target = this.findNearestHostileShip(ship.faction, ship.x, ship.y, stats.rangePx)
@@ -1373,7 +1446,7 @@ export default class MapScene extends Scene {
             const shots = stats.burstSize ?? 1
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
-                    if(!ship.active) return
+                    if(!ship.active || this.isShipAttackDisabled(ship)) return
                     const liveTarget = this.shipSprites.get(targetId)
                     if(!liveTarget || !liveTarget.isAlive()) return
                     this.spawnBeam(ship.x, ship.y, liveTarget.x, liveTarget.y)
@@ -1892,6 +1965,7 @@ export default class MapScene extends Scene {
             // A new order overrides ZEL's own Objective-latch the same way it overrides anything else it
             // was doing — see ShipSprite's latchedObjectiveId/objectiveAttached.
             ship.waypoints = [...ship.waypoints, formation.get(id) ?? { x, y }]
+            this.releaseShipCapture(ship.id)
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
             ship.orderSpeedPxS = speed
@@ -1909,6 +1983,7 @@ export default class MapScene extends Scene {
             if(!ship) return
             ship.waypoints = [formation.get(id) ?? { x, y }]
             ship.pathIndex = 0
+            this.releaseShipCapture(ship.id)
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
             ship.orderSpeedPxS = speed
@@ -1930,6 +2005,7 @@ export default class MapScene extends Scene {
             const minIndex = p > index ? p-1 : p
             ship.pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(ship.x, ship.y, newWaypoints, minIndex)
             ship.waypoints = newWaypoints
+            this.releaseShipCapture(ship.id)
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
         })
@@ -1942,6 +2018,7 @@ export default class MapScene extends Scene {
             if(!ship) return
             ship.waypoints = []
             ship.pathIndex = 0
+            this.releaseShipCapture(ship.id)
             ship.latchedObjectiveId = undefined
             ship.objectiveAttached = undefined
         })
@@ -2031,7 +2108,7 @@ export default class MapScene extends Scene {
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked).map(s => s.id)
+            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked && !s.latchedByZelId).map(s => s.id)
             if(orderableIds.length === 0) return
 
             // Clicking directly on an existing waypoint marker always removes it — for every selected

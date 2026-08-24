@@ -23,6 +23,8 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     orderSpeedPxS?: number
 
     lastFiredAtMs?: number
+    // AI only — timestamp of the last retreat order. See AIPlayers' fleeFrom.
+    lastFleeOrderAtMs?: number
     // GAIN only — when it last spent metal supporting another ship (ammo or repair), gating that to one
     // action per HARVESTER_RESUPPLY_INTERVAL_MS instead of a continuous per-frame fractional rate.
     lastResupplyAtMs?: number
@@ -33,6 +35,13 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     // not latchedObjectiveId alone, is what a capture requires before its hold timer even starts.
     latchedObjectiveId?: string
     objectiveAttached?: boolean
+
+    // ZEL ship capture mirrors its Objective latch: the ZEL holds the target id and timer, while the
+    // target points back to its captor.  The latter makes the movement/weapon lock cheap and unambiguous.
+    latchedShipId?: string
+    shipCaptureAttached?: boolean
+    shipCaptureStartedAtMs?: number
+    latchedByZelId?: string
 
     // EYE only — set the instant it finishes its very first route and comes to a stop. From then on it's
     // permanently immobile and can't be given new orders — see moveShips/MapScene's handleClick.
