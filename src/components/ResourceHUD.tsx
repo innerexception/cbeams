@@ -12,9 +12,8 @@ export default () => {
     const objectivesHeld = objectives.filter((o) => o.owner === Faction.Player).length
 
     return (
-        <div style={{ zIndex:2, fontSize:14 }}>
-            <div>Objectives: {objectivesHeld} / {objectives.length}</div>
-            <div>Cortex Relics: {machineRelics}</div>
+        <div style={{ zIndex:2 }}>
+            {/* <div>Objectives: {objectivesHeld} / {objectives.length}</div> */}
         </div>
     )
 }

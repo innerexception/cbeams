@@ -10,7 +10,8 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             { x: 30, y: 40 },
             { x: 70, y: 60 },
         ],
-        victory: Maps.Ambush
+        victory: Maps.Ambush,
+        tip: ""
     },
     [Maps.Ambush]: {
         briefingText: `And he made himself into a god, each one his own, and took to the stars for Man wanted to be alone.
@@ -20,6 +21,8 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             { x: 900, y: 0 },
             { x: 1400, y: -200 },
         ],
-        victory: Maps.Sandbox
+        victory: Maps.Sandbox,
+        tip: `Prevent the heretics from capturing the places of power to spread their message. 
+        Use your GAIN class to repurpose nearby hulks for replenishment of the fleet.`
     },
 }

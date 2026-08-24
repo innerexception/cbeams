@@ -45,7 +45,7 @@ export const NebulaResource = {
 
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
-    DRN='DRN', PDF='PDF', HUSK='HUSK', STL='STL', BEH='BEH', BLADE='BLADE'
+    DRN='DRN', PDF='PDF', HUSK='HUSK', BEH='BEH', BLADE='BLADE'
 }
 
 export enum ShipTypeSpriteIndex {
@@ -58,48 +58,56 @@ export enum ShipTypeSpriteIndexEnemy {
 export const ShipData:Record<ShipType, ShipStats> = {
     [ShipType.BLADE]: { name:'Blade', speed:40, sightRadius:150, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
         burstSize: 1, ammo: 20,
-        description: 'Most ancient orthodox design. Immune to infiltration.'
+        description: 'Vicious flanker armed with a single nuke',
+        portraitIndex: 10
      },
     [ShipType.BEH]: { name:'Beholder', speed:20, sightRadius:250, armor:0, hp:15, damage:1, cooldownMs:2000, rangePx:250, productionTimeMs:5000, relicCost:2, weaponType:'beam',
         burstSize: 1,
-        description: 'Beams in the dark require no ammo.'
-     },
-    [ShipType.STL]: { name:'Phalanx', speed:30, sightRadius:150, armor:0, hp:15, damage:1, cooldownMs:1500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
-        burstSize: 1,
-        description: 'Most ancient orthodox design. Immune to infiltration.'
+        description: 'Beams in the dark require no ammo.',
+        portraitIndex: 8
      },
     [ShipType.KKZ]: { name:'Kindler', speed:90, sightRadius:50, armor:0, hp:3, damage:5, cooldownMs:0, rangePx:0, productionTimeMs:5000, relicCost:0,
-        description: 'Single use blessings built by DRN. Contact fuse.'
+        description: 'Single use blessings built by DRN. Contact fuse.',
+        portraitIndex: 4
      },
     [ShipType.BOM]: { name:'Torch', speed:50, sightRadius:50, armor:0, hp:8, damage:20, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:1,
-        description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.'
+        description: 'Fusion warhead strapped to whatever space junk can be salvaged. Explodes when movement ends.',
+        portraitIndex: 5
      },
     [ShipType.SPR]: { name:'Javelin', speed:20, sightRadius:200, armor:0, hp:15, damage:5, cooldownMs:3000, rangePx:250, productionTimeMs:12000, relicCost:2, ammo:10,
         weaponType:'missile', burstSize:2,
-        description: 'Missile carrier, needs replenishment.'
+        description: 'Missile carrier, needs replenishment.',
+        portraitIndex: 6
      },
     [ShipType.EYE]: { name:'Occulus', speed:20, sightRadius:500, armor:0, hp:5, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:12000, relicCost:3,
-        description: 'A great eye.'
+        description: 'A great eye.',
+        portraitIndex: 7
      },
     [ShipType.ZEL]: { name:'Zealot', speed:12, sightRadius:50, armor:2, hp:25, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:10000, relicCost:2,
-        description: 'Carries one mad cypher-preist, opener of doors and master of machine speak.'
+        description: 'Carries one mad cypher-preist, opener of doors and master of machine speak.',
+        portraitIndex: 8
      },
     [ShipType.CATH]: { name:'Cathedral', speed:0, sightRadius:300, armor:0, hp:80, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:0, relicCost:0,
-        description: 'Home'
+        description: 'Home',
+        portraitIndex: 9
      },
     [ShipType.GAIN]: { name:'Mater', speed:12, sightRadius:80, armor:0, hp:10, damage:0, cooldownMs:0, rangePx:0, productionTimeMs:8000, relicCost:1,
-        description: 'Replenishment of the fleet, digests debris into fuel and parts.'
+        description: 'Replenishment of the fleet, digests debris into fuel and parts.',
+        portraitIndex: 10
      },
      [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:8000, relicCost:2,
         weaponType:'bullet', burstSize:1,
-        description: 'A thousand needles rise up in defense.'
+        description: 'A thousand needles rise up in defense.',
+        portraitIndex: 11
      },
      [ShipType.DRN]: { name:'Stitcher', speed:8, sightRadius:200, armor:0, hp:20, damage:0, cooldownMs:2500, rangePx:0, productionTimeMs:18000, relicCost:5, ammo:4,
-        description: "Manufactors KKZ or HUSK from Mater's metals"
+        description: "Manufactors KKZ or HUSK from Mater's metals",
+        portraitIndex: 12
      },
      [ShipType.HUSK]: {
         name:'Husk', speed:10, sightRadius:100, armor:0, hp:30, damage:1, cooldownMs:500, rangePx:45, productionTimeMs:8000, relicCost:1,
         weaponType:'beam', burstSize:1,
-        description: "Deranged machine made from random scraps"
+        description: "Deranged machine made from random scraps",
+        portraitIndex: 13
      }
 }

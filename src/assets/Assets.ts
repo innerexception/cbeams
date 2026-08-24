@@ -2,7 +2,6 @@ import { Maps, ShipType, SoundEffects } from "../../enum"
 
 export const FONT_DEFAULT = {
     fontFamily: 'Body', 
-    fontSize: '8px',
     color:'#55FF55',
 }
 
@@ -45,7 +44,6 @@ export const resources:Array<PhaserResource> = [
     { key: ShipType.DRN, resource: require('./img/ships/CV.png'), type: 'image' },
     { key: ShipType.PDF, resource: require('./img/ships/FL.png'), type: 'image' },
     { key: ShipType.HUSK, resource: require('./img/ships/husk.png'), type: 'image' },
-    { key: ShipType.STL, resource: require('./img/ships/STL.png'), type: 'image' },
     { key: ShipType.BEH, resource: require('./img/ships/BEH.png'), type: 'image' },
     { key: ShipType.BLADE, resource: require('./img/ships/BEH.png'), type: 'image' },
     { key: 'base_enemy', resource: require('./img/ships/baseB.png'), type: 'image' },

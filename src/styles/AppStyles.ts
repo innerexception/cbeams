@@ -1,3 +1,5 @@
+export const FONT_SIZE = '18px'
+
 export const colors = {
     black:'#000000',
     red:'#ff5555',

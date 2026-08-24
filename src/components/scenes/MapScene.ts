@@ -46,6 +46,7 @@ const AMMO_LABEL_GAP_PX = 4
 // bitmap font would give, but a real improvement for a one-line change to every label below. Bumping
 // this further has a real (if fairly small, at this text volume) generated-texture memory cost per Text.
 const LABEL_TEXT_RESOLUTION = 4
+const MAP_FONT_SIZE = '12px'
 
 const IDLE_TURN_RATE_PER_MS = 0.002
 // A moving ship's turn rate scales with its own speed rather than being one flat number for every ship
@@ -230,6 +231,9 @@ export default class MapScene extends Scene {
             this.mapData.width = tiledMap.width
             this.mapData.height = tiledMap.height
         }
+        // The red dither is masked to enemy/player sight overlap. It must span the entire loaded map,
+        // not the old fixed 10×10-cell fallback, or overlaps outside that small corner have no dots.
+        this.rangeShadeDither.setSize(this.mapData.width * CELL_SIZE, this.mapData.height * CELL_SIZE)
 
         this.cameras.main.setZoom(2)
         this.centerCameraBounds()
@@ -562,7 +566,7 @@ export default class MapScene extends Scene {
 
     floatText = (gridX:number, gridY:number, text:string) => {
         const { x, y } = this.toWorld(gridX, gridY)
-        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:'20px', color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
+        const label = this.add.text(x, y, text, { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
         this.tweens.add({
             targets: label,
             y: y-20,
@@ -704,7 +708,7 @@ export default class MapScene extends Scene {
         const sprite = this.add.image(x, y, 'tiles', ObjectiveSpriteIndex[spawn.sprite]).setDepth(2)
         this.objectiveSprites.set(spawn.id, sprite)
 
-        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { stroke:'#000000', strokeThickness:4, fontFamily:'Body', fontSize:'12px', color:colors.green }).setOrigin(0.5, 0).setDepth(2).setResolution(LABEL_TEXT_RESOLUTION)
+        const label = this.add.text(x, y + OBJECTIVE_ICON_SIZE*0.5 + 4, spawn.sprite, { stroke:'#000000', strokeThickness:4, fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.green }).setOrigin(0.5, 0).setDepth(2).setResolution(LABEL_TEXT_RESOLUTION)
         this.objectiveLabels.set(spawn.id, label)
     }
 
@@ -818,11 +822,11 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(ship)
         this.shipSprites.set(id, ship)
 
-        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:'12px', color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
+        const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
         this.shipLabels.set(id, label)
 
         if(ShipData[type].ammo){
-            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
+            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
             this.ammoLabels.set(id, ammoLabel)
         }
 
@@ -1730,7 +1734,7 @@ export default class MapScene extends Scene {
             g.fillCircle(x, y, 5)
             g.lineStyle(1, GREEN_HEX, 1)
             g.strokeCircle(x, y, 8)
-            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:'11px', color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
+            const label = this.add.text(x, y-16, String(i+1), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.green }).setOrigin(0.5).setDepth(5).setResolution(LABEL_TEXT_RESOLUTION)
             this.orderLabels.push(label)
         })
     }

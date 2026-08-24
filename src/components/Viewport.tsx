@@ -18,14 +18,6 @@ const decal2 = require('../assets/img/decal2.png')
 const COLUMN_TILE_PX = 32
 const COLUMN_RENDER_PX = COLUMN_TILE_PX * 2
 
-// A decorative frame along the viewport's left/right edges: column-top/column-bottom cap the very top
-// and bottom (one render-scale tile), column-mid tiles to fill whatever's left between them. Drawn as
-// three stacked backgrounds (top and bottom listed first so they paint over the tiled mid layer at
-// their own ends) rather than three separate elements, so there's no need to measure anything to know
-// how much of the middle tile to show. Rendered at double the source art's native 32px so each tile
-// scales up as a whole square (backgroundSize covers both axes) rather than just tiling twice as often.
-// Inset by one render-scale tile on both ends — top and bottom — so it sits between (supporting, not
-// overlapping) the Ceiling strip above and the Base strip below.
 const ColumnBorder = ({ side }: { side: 'left' | 'right' }) => (
     <div style={{
         position: 'absolute', top: COLUMN_RENDER_PX, bottom: COLUMN_RENDER_PX, [side]: 0, width: COLUMN_RENDER_PX, zIndex: 10,

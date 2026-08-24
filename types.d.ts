@@ -97,6 +97,7 @@ interface ShipStats {
     // How many shots weaponType fires per single cooldownMs — a staggered burst rather than one shot,
     // same idea as SPR's old fixed missile salvo. Undefined/1 means a single shot per cooldown.
     burstSize?: number
+    portraitIndex: number
 }
 
 // A ship's own real, high-frequency simulation state (hp, position, cooldowns, route, ...) lives on
@@ -145,6 +146,7 @@ interface MapMetadata {
     imageKeyframes: Array<MapImageKeyframe>
     victory: import('./enum').Maps
     defeat?: import('./enum').Maps
+    tip:string
 }
 
 interface RState {

@@ -136,7 +136,7 @@ export default () => {
                         the ATC span already retyped and the Phase1 span still waiting its turn. */}
                     <div style={{
                         position:'absolute', left:0, right:0,
-                        color:colors.green, fontSize:20, lineHeight:1.6, whiteSpace:'pre-wrap',
+                        color:colors.green, lineHeight:1.6, whiteSpace:'pre-wrap',
                     }}>
                         {sentences.slice(0, sentenceIndex).map((sentence, i) =>
                             <span key={i} style={{ fontFamily:'Body' }}>{sentence}</span>
@@ -158,7 +158,7 @@ export default () => {
                     the map growing within a fixed window rather than the whole frame growing too. */}
                 <div style={{
                     width:'30%', border:`2px dashed ${colors.green}`, opacity:0.6, overflow:'hidden',
-                    position:'relative', color:colors.green, fontFamily:'Body', fontSize:14,
+                    position:'relative', color:colors.green, fontFamily:'Body',
                 }}>
                     <div style={{
                         position:'absolute', inset:0, backgroundImage:'url('+stars+')',

@@ -22,7 +22,7 @@ html {
 body {
   margin:0;
   font-family: 'Body';
-  font-size: 18px;
+  font-size: var(--app-font-size);
   line-height: unset;
   user-select: none;
   image-rendering: pixelated;
@@ -36,13 +36,13 @@ input {
   background-color: white;
   color: black;
   font-family: 'Body';
-  font-size: 18px;
+  font-size: var(--app-font-size);
   cursor: url(../assets/img/default.png), pointer;
   border: 1px dashed;
 }
 
 h1,h2,h3,h4,h5,h6{
-  margin:0; font-size: 36px;
+  margin:0; font-size: var(--app-font-size);
   /* text-shadow: 2px 2px 0px black; */
 }
 
@@ -80,5 +80,5 @@ textarea:focus, input:focus{
   background: #000;
   border: 1px solid #55ff55;
   font-family: 'Body';
-  font-size: 13px;
+  font-size: var(--app-font-size);
 }

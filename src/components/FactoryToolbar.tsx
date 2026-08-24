@@ -6,16 +6,17 @@ import { MAX_QUEUE } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
-import Tooltip from 'rc-tooltip'
 import ResourceHUD from './ResourceHUD'
+import { MAP_METADATA } from '../assets/MapMetadata'
 
 export default () => {
-    const { selectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics, activeMapKey } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         clearShipWaypoints: state.clearShipWaypoints,
         machineRelics: state.machineRelics,
+        activeMapKey: state.activeMapKey,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -34,31 +35,12 @@ export default () => {
     // from selectedShipIds the way it used to be.
     const playerBase = ships.find(s => s.faction === Faction.Player && s.type === ShipType.CATH)
     const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
+    const selectedShip = selectedShips[0]
 
     return (
+        <>
         <div style={{ position:'absolute', top:75, left:75, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
             <ResourceHUD />
-            {selectedShipIds.length > 0 ? (
-                // A drag-selected group of ships takes orders via the map itself — every click sets/adds
-                // a waypoint onto each one's own route (see MapScene's handleClick) — this panel is just
-                // the selection readout + bulk Clear Orders/Cancel.
-                <div>
-                    <div style={{ fontSize:14 }}>
-                        {selectedShips.length > 0 && <div style={{marginBottom:'1em'}}>SELECTION</div>}
-                        {selectedShips.map(s=>
-                            <div key={s.id}>
-                                <Tooltip placement="bottom" overlay={<div>{ShipData[s.type].description}</div>}>
-                                    {/* Narrows the current selection down to just this ship's own type — drops
-                                        every other type out of it, keeps every ship of this one. */}
-                                    <div style={{ cursor:'pointer' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
-                                </Tooltip>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : (
-                <div style={{ fontSize:14 }}>Drag to select units</div>
-            )}
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueFull = queue.length >= MAX_QUEUE
@@ -77,7 +59,7 @@ export default () => {
                                         // without having to reopen the panel.
                                         <div style={{
                                             width:20, height:20, borderRadius:'50%', background:colors.yellow,
-                                            color:'#000', fontFamily:'Body', fontSize:11, fontWeight:'bold',
+                                            color:'#000', fontFamily:'Body', fontWeight:'bold',
                                             display:'flex', alignItems:'center', justifyContent:'center',
                                         }}>{relicsAvailable}</div>
                                     )}
@@ -94,7 +76,7 @@ export default () => {
                                             const item = queue[i]
                                             const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
                                             return (
-                                                <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', fontSize:11, color:colors.green }}>
+                                                <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', color:colors.green }}>
                                                     <div>{item ? ShipData[item.type].name : '—'}</div>
                                                     <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
                                                         {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
@@ -110,5 +92,16 @@ export default () => {
                 )
             })()}
         </div>
+            <div style={{ position:'absolute', bottom:80, left:160, zIndex:13, width:'75vw', background:'black' }}>
+                {selectedShipIds.length > 0 ? (
+                        <div style={{display:'flex'}}>
+                            {selectedShips.map(s =>
+                                <div key={s.id} style={{ cursor:'pointer', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
+                            )}
+                        </div>
+                ) : <div style={{marginBottom:'10px'}}>Drag to select units</div>}
+                {selectedShip ? <div>{ShipData[selectedShip.type].description}</div>:<div>{MAP_METADATA[activeMapKey]?.tip}</div>}
+            </div>
+        </>
     )
 }
