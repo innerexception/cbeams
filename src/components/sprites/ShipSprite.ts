@@ -7,6 +7,8 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     type: ShipType
 
     hp: number
+    killCount: number = 0
+    rank: number = 0
     // Only meaningful for a ship whose ShipStats sets `ammo` (SPR/DRN/PDF's cooldown-gated weapons/
     // production) — undefined for everything else, same as it always was.
     ammoRemaining?: number
@@ -48,18 +50,22 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     // AIPlayers.ts while set.
     primeDirective?: PrimeDirective
 
-    constructor(scene:Phaser.Scene, x:number, y:number, texture:string, id:string, faction:Faction, type:ShipType){
+    constructor(scene:Phaser.Scene, x:number, y:number, texture:string, id:string, faction:Faction, type:ShipType, veteran?:VeteranShip){
         super(scene, x, y, texture)
         this.id = id
         this.faction = faction
         this.type = type
         this.hp = ShipData[type].hp
         this.ammoRemaining = ShipData[type].ammo
+        this.killCount = veteran?.killCount ?? 0
+        this.rank = veteran?.rank ?? 0
     }
 
     // A low-frequency snapshot of whatever the store/React actually needs to know about this ship —
     // nothing that changes every frame. See this class's own doc comment for why the split exists.
-    toSummary = ():ShipSummary => ({ id:this.id, faction:this.faction, type:this.type, queue:this.queue })
+    toSummary = ():ShipSummary => ({ id:this.id, faction:this.faction, type:this.type, killCount:this.killCount, rank:this.rank, queue:this.queue })
+
+    toVeteran = ():VeteranShip => ({ type:this.type, killCount:this.killCount, rank:this.rank })
 
     isAlive = () => this.hp > 0
 

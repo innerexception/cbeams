@@ -2,7 +2,7 @@ import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSelectShips, onSetScene, onShowModal } from "../../common/Thunks";
-import { getShipRelicCost } from "../../common/Utils";
+import { getShipRelicCost, saveFile } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import { NEBULA_KEYS } from "../../assets/Assets";
@@ -618,6 +618,15 @@ export default class MapScene extends Scene {
         const layer = map.getLayer('entities')
         if(!layer) return
 
+        // Veteran ships retain their campaign identity but enter at this map's authored spawn points.
+        // A slot consumes one matching type; unmatched veterans remain available for a later map.
+        const campaign = useAppStore.getState().mySave
+        const remainingVeterans = [...(campaign?.veteranShips ?? [])]
+        const takeVeteran = (type:ShipType) => {
+            const index = remainingVeterans.findIndex(veteran => veteran.type === type)
+            return index < 0 ? undefined : remainingVeterans.splice(index, 1)[0]
+        }
+
         const firstgid = map.tilesets[0]?.firstgid ?? 1
 
         for(let ty=0; ty<layer.height; ty++){
@@ -629,7 +638,8 @@ export default class MapScene extends Scene {
                 const baseFaction = ([Faction.Player, Faction.Enemy] as Array<Faction>).find(f => BASE_SPRITE_INDEX[f] === localIndex)
                 if(baseFaction){
                     const { x, y } = this.toWorld(tx, ty)
-                    const base = this.createShipSprite(v4(), baseFaction, ShipType.CATH, x, y)
+                    const base = this.createShipSprite(v4(), baseFaction, ShipType.CATH, x, y,
+                        baseFaction === Faction.Player ? takeVeteran(ShipType.CATH) : undefined)
                     if(baseFaction === Faction.Enemy) this.enemyBaseId = base.id
                     continue
                 }
@@ -642,7 +652,8 @@ export default class MapScene extends Scene {
                     const faction = ShipTypeSpriteIndex[localIndex] !== undefined ? Faction.Player : Faction.Enemy
                     const type = ShipType[shipTypeKey]
                     const { x, y } = this.toWorld(tx, ty)
-                    this.createShipSprite(v4(), faction, type, x, y)
+                    this.createShipSprite(v4(), faction, type, x, y,
+                        faction === Faction.Player ? takeVeteran(type) : undefined)
                     if(faction == Faction.Player && shipTypeKey === ShipType.CATH){
                         this.cameras.main.pan(x,y)
                     }
@@ -675,7 +686,8 @@ export default class MapScene extends Scene {
         }
 
         // One bulk sync at the end rather than one per entity — this runs once at match start with
-        // potentially dozens of ships, and nothing needs to see them appear one at a time.
+        // potentially dozens of ships, and nothing needs to see them appear one at a time. Keep the
+        // roster in the save while this map is active, so reloading mid-map deploys the same veterans.
         this.syncShipSummaries()
     }
 
@@ -765,6 +777,7 @@ export default class MapScene extends Scene {
         if(this.gameOver) return
         this.gameOver = true
         this.scene.pause()
+        if(faction === Faction.Player) this.promoteSurvivingShips()
         onShowModal(faction === Faction.Player ? Modal.Victory : Modal.Defeat)
     }
 
@@ -790,6 +803,7 @@ export default class MapScene extends Scene {
         if(this.gameOver) return
         this.gameOver = true
         this.scene.pause()
+        if(faction === Faction.Enemy) this.promoteSurvivingShips()
         onShowModal(faction === Faction.Player ? Modal.Defeat : Modal.Victory)
     }
 
@@ -806,14 +820,14 @@ export default class MapScene extends Scene {
         })
     }
 
-    createShipSprite = (id:string, faction:Faction, type:ShipType, x:number, y:number):ShipSprite => {
+    createShipSprite = (id:string, faction:Faction, type:ShipType, x:number, y:number, veteran?:VeteranShip):ShipSprite => {
         const isFriend = faction === Faction.Player
         // A real baked enemy-colored texture (see generateHostileShipTexture), not a tint — setTint
         // multiplies against whatever colors are already in the art, which for a sprite already using
         // more than one palette color (black outline, green hull, yellow highlight) produces off-palette
         // blends rather than a clean recolor. CATH (Base) has its own bespoke enemy texture instead.
         const textureKey = isFriend ? type : (type === ShipType.CATH ? 'base_enemy' : type+'_enemy')
-        const ship = new ShipSprite(this, x, y, textureKey, id, faction, type)
+        const ship = new ShipSprite(this, x, y, textureKey, id, faction, type, veteran)
         this.add.existing(ship)
         this.physics.add.existing(ship)
         this.centerCircleBody(ship)
@@ -925,8 +939,9 @@ export default class MapScene extends Scene {
     // effects (death fragments, sprite/label cleanup, ending the match if it was a Base, syncing the
     // store's summary) — every ship-damage call site funnels through this. detonateDrone handles the
     // *drone's own* death separately (it gets an impact flash, not fragments — it's the one detonating).
-    killIfDead = (ship:ShipSprite) => {
+    killIfDead = (ship:ShipSprite, killer?:ShipSprite) => {
         if(ship.isAlive()) return false
+        if(killer && killer.faction !== ship.faction) killer.killCount++
         this.spawnDeathFragments(ship)
         const wasBase = ship.type === ShipType.CATH
         const faction = ship.faction
@@ -934,6 +949,26 @@ export default class MapScene extends Scene {
         this.syncShipSummaries()
         if(wasBase) this.handleBaseDestroyed(faction)
         return true
+    }
+
+    // Winning a map promotes every survivor. The player fleet is then snapshotted for the next map's
+    // authored player spawn slots; enemy survivors are not carried across the campaign.
+    promoteSurvivingShips = () => {
+        this.ships.forEach(ship => ship.rank++)
+        const veterans = this.ships
+            .filter(ship => ship.faction === Faction.Player)
+            .map(ship => ship.toVeteran())
+        const state = useAppStore.getState()
+        const campaign:SaveFile = {
+            currentMap: this.mapKey,
+            completedMaps: state.mySave?.completedMaps.includes(this.mapKey)
+                ? state.mySave.completedMaps
+                : [...(state.mySave?.completedMaps ?? []), this.mapKey],
+            veteranShips: veterans,
+        }
+        state.setSave(campaign)
+        saveFile(campaign)
+        this.syncShipSummaries()
     }
 
     // Pushes a fresh low-frequency summary of every ship into the store — see ShipSummary's own doc
@@ -1157,10 +1192,11 @@ export default class MapScene extends Scene {
 
         const time = this.time.now
         const x = missile.x, y = missile.y, damage = missile.getData('damage')
+        const sourceShip = this.shipSprites.get(missile.getData('sourceShipId'))
         missile.destroy()
         this.impactFlashes.push({ x, y, createdAt:time, damage })
 
-        if(ship.takeDamage(damage)) this.killIfDead(ship)
+        if(ship.takeDamage(damage)) this.killIfDead(ship, sourceShip)
     }
 
     // A PDF bullet is hostile to any missile of a different faction — same as an offensive missile is to
@@ -1202,10 +1238,11 @@ export default class MapScene extends Scene {
 
         const time = this.time.now
         const x = bullet.x, y = bullet.y, damage = bullet.getData('damage')
+        const sourceShip = this.shipSprites.get(bullet.getData('sourceShipId'))
         bullet.destroy()
         this.impactFlashes.push({ x, y, createdAt:time, damage })
 
-        if(ship.takeDamage(damage)) this.killIfDead(ship)
+        if(ship.takeDamage(damage)) this.killIfDead(ship, sourceShip)
     }
 
     // Shared by findNearestHostileShip/findNearestThreat below — nearest in-sight body matching `eligible`.
@@ -1259,7 +1296,7 @@ export default class MapScene extends Scene {
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!ship.active) return
-                    this.spawnMissile(ship.faction, ship.x, ship.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY)
+                    this.spawnMissile(ship.faction, ship.x, ship.y, targetId, ShipData[ShipType.SPR].damage, aimX, aimY, ship.id)
                 })
             }
         })
@@ -1287,7 +1324,7 @@ export default class MapScene extends Scene {
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!ship.active) return
-                    this.spawnBullet(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].damage, aimX, aimY)
+                    this.spawnBullet(ship.faction, ship.x, ship.y, ShipData[ShipType.PDF].damage, aimX, aimY, ship.id)
                 })
             }
         })
@@ -1312,7 +1349,7 @@ export default class MapScene extends Scene {
             for(let i=0; i<shots; i++){
                 this.time.delayedCall(i*SALVO_STAGGER_MS, () => {
                     if(!ship.active) return
-                    this.spawnBullet(ship.faction, ship.x, ship.y, stats.damage, aimX, aimY)
+                    this.spawnBullet(ship.faction, ship.x, ship.y, stats.damage, aimX, aimY, ship.id)
                 })
             }
         })
@@ -1340,7 +1377,7 @@ export default class MapScene extends Scene {
                     const liveTarget = this.shipSprites.get(targetId)
                     if(!liveTarget || !liveTarget.isAlive()) return
                     this.spawnBeam(ship.x, ship.y, liveTarget.x, liveTarget.y)
-                    if(liveTarget.takeDamage(stats.damage)) this.killIfDead(liveTarget)
+                    if(liveTarget.takeDamage(stats.damage)) this.killIfDead(liveTarget, ship)
                 })
             }
         })
@@ -1367,11 +1404,12 @@ export default class MapScene extends Scene {
     // offensive missile is) — it either physically reaches and hits a hostile missile (onBulletMissileContact)
     // or ship (onBulletShipContact) itself, whichever it touches first, or is despawned by updateBullets
     // once it's been flying for BULLET_MAX_LIFETIME_MS with nothing to show for it.
-    spawnBullet = (faction:Faction, x:number, y:number, damage:number, aimX:number, aimY:number) => {
+    spawnBullet = (faction:Faction, x:number, y:number, damage:number, aimX:number, aimY:number, sourceShipId:string) => {
         const bullet = this.physics.add.sprite(x, y, 'bullet_dot')
         bullet.setData('kind', 'bullet' as BodyKind)
         bullet.setData('faction', faction)
         bullet.setData('damage', damage)
+        bullet.setData('sourceShipId', sourceShipId)
         bullet.setData('createdAt', this.time.now)
         this.bulletsGroup.add(bullet)
         this.physics.moveTo(bullet, aimX, aimY, BULLET_SPEED_PX_S)
@@ -1510,13 +1548,14 @@ export default class MapScene extends Scene {
     // if the target has since died and nothing else was there to retarget onto by spawn time, the live
     // lookup below comes back empty and this is what it aims at instead, so it still launches off in a
     // sensible direction.
-    spawnMissile = (faction:Faction, x:number, y:number, targetId:string, damage:number, aimX:number, aimY:number) => {
+    spawnMissile = (faction:Faction, x:number, y:number, targetId:string, damage:number, aimX:number, aimY:number, sourceShipId:string) => {
         const missile = this.physics.add.sprite(x, y, 'missile_dot')
         missile.setData('kind', 'missile' as BodyKind)
         missile.setData('id', v4())
         missile.setData('faction', faction)
         missile.setData('targetId', targetId)
         missile.setData('damage', damage)
+        missile.setData('sourceShipId', sourceShipId)
         missile.setData('createdAt', this.time.now)
         this.missilesGroup.add(missile)
 
@@ -1558,6 +1597,7 @@ export default class MapScene extends Scene {
             if(rawProgress > 1){
                 const faction:Faction = child.getData('faction')
                 const damage = child.getData('damage')
+                const sourceShip = this.shipSprites.get(child.getData('sourceShipId'))
                 child.destroy()
                 this.impactFlashes.push({ x:legTargetX, y:legTargetY, createdAt:time, damage })
 
@@ -1575,7 +1615,7 @@ export default class MapScene extends Scene {
                     if(!obj.active || obj.getData('kind') !== 'ship') return
                     const hitShip = this.getShipEntry(obj)
                     if(!hitShip || hitShip.faction === faction) return
-                    if(hitShip.takeDamage(damage)) this.killIfDead(hitShip)
+                    if(hitShip.takeDamage(damage)) this.killIfDead(hitShip, sourceShip)
                 })
 
                 return true

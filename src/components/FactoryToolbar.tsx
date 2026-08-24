@@ -96,7 +96,7 @@ export default () => {
                 {selectedShipIds.length > 0 ? (
                         <div style={{display:'flex'}}>
                             {selectedShips.map(s =>
-                                <div key={s.id} style={{ cursor:'pointer', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}</div>
+                                <div key={s.id} style={{ cursor:'pointer', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
                             )}
                         </div>
                 ) : <div style={{marginBottom:'10px'}}>Drag to select units</div>}

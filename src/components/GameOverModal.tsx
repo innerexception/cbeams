@@ -5,16 +5,22 @@ import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles';
 import { useAppStore } from '../common/store';
 import { MAP_METADATA } from '../assets/MapMetadata';
+import { saveFile } from '../common/Utils';
 
 // Shown once either faction's base is destroyed (see MapScene's handleBaseDestroyed) — the match is
 // paused underneath this the moment it appears. Quit is the only way out: back to the NewGame menu.
 export default (props:{ won:boolean }) => {
-    const { setActiveMapKey, activeMapKey } = useAppStore.getState()
+    const { setActiveMapKey, activeMapKey, mySave, setSave } = useAppStore.getState()
 
     const loadNext = () => {
         const currentMap = MAP_METADATA[activeMapKey]
         const nextMap = props.won ? currentMap.victory : currentMap.defeat
         if(nextMap){
+            if(mySave){
+                const updatedSave = { ...mySave, currentMap:nextMap }
+                setSave(updatedSave)
+                saveFile(updatedSave)
+            }
             setActiveMapKey(nextMap)
             onShowModal(Modal.Briefing)
         }

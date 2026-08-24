@@ -6,7 +6,9 @@ interface PhaserResource {
 }
 
 interface SaveFile {
-
+    currentMap: import('./enum').Maps
+    completedMaps: Array<import('./enum').Maps>
+    veteranShips: Array<VeteranShip>
 }
 
 // A minimal subset of a Tiled (mapeditor.org) JSON map export — just enough to read tile GIDs back out
@@ -110,8 +112,18 @@ interface ShipSummary {
     id: string
     faction: import('./enum').Faction
     type: import('./enum').ShipType
+    killCount: number
+    rank: number
     // Only ever populated on a Base (see ShipType.CATH) — see ShipSprite's own queue field.
     queue?: Array<ProductionQueueItem>
+}
+
+// Campaign state carried by a surviving player ship from one victorious map to the next. Its map
+// position is intentionally not retained: the next map supplies the appropriate spawn location.
+interface VeteranShip {
+    type: import('./enum').ShipType
+    killCount: number
+    rank: number
 }
 
 // A gatherable Asteroid — spawned at world coordinates converted once from an AsteroidSpriteIndexesLarge
