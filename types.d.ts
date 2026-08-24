@@ -143,6 +143,8 @@ interface MapMetadata {
     // The map image pans/animates through these points in order over the course of the briefing — not
     // wired up to any actual animation yet, just the data it'll eventually drive.
     imageKeyframes: Array<MapImageKeyframe>
+    victory: import('./enum').Maps
+    defeat?: import('./enum').Maps
 }
 
 interface RState {

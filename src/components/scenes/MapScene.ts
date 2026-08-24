@@ -9,7 +9,7 @@ import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
 import {
-    MAP_SIZE, CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
+    CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
     MAX_QUEUE, MAX_WAYPOINTS,
     DOUBLE_CLICK_MS,
     BULLET_SPEED_PX_S, BULLET_MAX_LIFETIME_MS,
@@ -212,7 +212,7 @@ export default class MapScene extends Scene {
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
 
         this.generateTextures()
-        this.rangeShadeDither = this.add.tileSprite(0, 0, MAP_SIZE*CELL_SIZE, MAP_SIZE*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
+        this.rangeShadeDither = this.add.tileSprite(0, 0, 10*CELL_SIZE, 10*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
         this.rangeShadeDither.setMask(this.rangeShadeBrush.createGeometryMask())
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
@@ -224,7 +224,7 @@ export default class MapScene extends Scene {
         this.physics.add.overlap(this.bulletsGroup, this.shipsGroup, this.onBulletShipContact, this.isHostileBulletShipPair, this)
 
         this.mapKey = useAppStore.getState().activeMapKey || Maps.Sandbox
-        this.mapData = useAppStore.getState().activeMap || { width:MAP_SIZE, height:MAP_SIZE, objectives:[], terrain:null }
+        this.mapData = { width:0, height:0, objectives:[], terrain:null }
         const tiledMap = this.make.tilemap({ key: this.mapKey })
         if(tiledMap.width && tiledMap.height){
             this.mapData.width = tiledMap.width
@@ -747,10 +747,6 @@ export default class MapScene extends Scene {
 
             changed = true
             this.objectiveSprites.get(objective.id)?.setTint(this.getObjectiveOwnerColor(contestingFaction))
-            // The one and only source of Machine Relics — see store's machineRelics/addMachineRelics.
-            // Only ever awarded once per Objective, to whichever faction captures it first (owner was
-            // still null) — a later recapture (the objective changing hands after that) doesn't pay out
-            // again, or fighting back and forth over one Objective would out-earn actually holding it.
             if(objective.owner === null) useAppStore.getState().addMachineRelics(contestingFaction, 1)
             return { ...objective, owner: contestingFaction }
         })
@@ -805,11 +801,6 @@ export default class MapScene extends Scene {
             label.setVisible(selectedShipIds.includes(id) && !!this.shipSprites.get(id)?.visible)
         })
     }
-
-    // --- Physics sprite lifecycle -------------------------------------------------------------------
-    // Every ShipSprite is created exactly once (spawnShip; spawnEntitiesFromMap for a faction's Base
-    // and every map-placed starting ship), and destroyed exactly once, the instant damage actually
-    // drops its hp to 0 (killIfDead/detonateDrone).
 
     createShipSprite = (id:string, faction:Faction, type:ShipType, x:number, y:number):ShipSprite => {
         const isFriend = faction === Faction.Player

@@ -10,6 +10,7 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             { x: 30, y: 40 },
             { x: 70, y: 60 },
         ],
+        victory: Maps.Ambush
     },
     [Maps.Ambush]: {
         briefingText: `And he made himself into a god, each one his own, and took to the stars for Man wanted to be alone.
@@ -19,5 +20,6 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             { x: 900, y: 0 },
             { x: 1400, y: -200 },
         ],
+        victory: Maps.Sandbox
     },
 }

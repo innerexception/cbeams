@@ -2,14 +2,8 @@ import { create } from 'zustand';
 import type MapScene from '../components/scenes/MapScene';
 import { Faction, Maps, Modal, ShipType } from '../../enum';
 
-// Player-adjustable settings, as opposed to AppState's other fields which are all derived/runtime —
-// this is the one bit of it meant to eventually be persisted/exposed via a settings UI.
 export interface PlayerSettings {
-  // Master volume every sound.play() call is given as its `volume` config — see Thunks' onPlaySound.
   volume: number;
-  // Same idea as volume, but for the looping music tracks (briefing.mp3/main.mp3) specifically — see
-  // Briefing and MapScene.create's own sound.play() calls. Kept separate so music can be tuned down
-  // independently of SFX like Click/the ack lines, rather than sharing one master knob with them.
   musicVolume: number;
 }
 
@@ -19,31 +13,14 @@ export interface AppState {
   scene: MapScene | null;
   playerSettings: PlayerSettings;
   mySave: SaveFile | null;
-  activeMap: MapData | null;
-  // Which Tiled map key MapScene's own create() actually loads — set before starting the scene (see
-  // NewGame/Briefing), read once there. Defaults to Sandbox so nothing that starts the scene without
-  // explicitly picking one (there isn't one currently) silently breaks.
   activeMapKey: Maps;
   // A low-frequency summary of every ship in the match, both factions' — see ShipSummary's own doc
   // comment (types.d.ts) for why this isn't the real ship data. Pushed by MapScene's
   // syncShipSummaries, never mutated directly here.
   ships: Array<ShipSummary>;
-  // The live (owner) half of every Objective on the map — see ObjectiveSpawn (in mapData/activeMap)
-  // for each one's fixed id/position/sprite, decided once at generation and never duplicated here.
   objectives: Array<ObjectiveData>;
-  // Every Asteroid currently on the map (see MapScene's spawnEntitiesFromMap) — removed from this array
-  // outright once a Harvester drains its metal to 0 (see updateHarvesters). There's no faction-wide
-  // metal stockpile anymore — a GAIN ship carries what it mines itself (see ShipSprite's metalCarried).
   resourceNodes: Array<ResourceNodeData>;
-  // The player's currently selected ship(s) — either a drag-selected group of combat ships (see
-  // MapScene's drag-select box) taking move orders, or a single clicked Base opening its production
-  // panel (see FactoryToolbar). Both go through this same field/setter; there's no separate
-  // "selected building" concept anymore.
   selectedShipIds: Array<string>;
-  // Each faction's own running Machine Relics count — starts at zero, gains one every time that faction
-  // captures an Objective (see MapScene's updateObjectives), and is spent building ships (see MapScene's
-  // tickProduction/Utils' getShipRelicCost). A simple stockpile, not a per-ship-in-the-field upkeep cap
-  // the way logistics used to be — there's nothing that hands relics back once spent.
   machineRelics: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
@@ -51,13 +28,8 @@ export interface AppState {
   setMusicVolume: (musicVolume: number) => void;
   setSave: (save: SaveFile | null) => void;
   setLoaded: (loaded: boolean) => void;
-  setActiveMap: (map: MapData | null) => void;
   setActiveMapKey: (key: Maps) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
-  // Every one of these actually mutates a real ShipSprite instance on the scene (see MapScene's own
-  // methods of the same name) — none of it lives in this store. Kept here purely as the stable,
-  // store-shaped API surface React components (FactoryToolbar) and MapScene's own AI helpers
-  // (AIPlayers.ts) already call through, same as any other store action.
   addShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   setShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   removeShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
@@ -69,8 +41,6 @@ export interface AppState {
   setObjectives: (objectives: Array<ObjectiveData>) => void;
   addResourceNode: (node: ResourceNodeData) => void;
   setResourceNodes: (nodes: Array<ResourceNodeData>) => void;
-  // Positive to award (an Objective capture), negative to spend (a completed build) — either way just a
-  // delta against that faction's current total, never a replace.
   addMachineRelics: (faction: Faction, amount: number) => void;
 }
 
@@ -100,7 +70,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMusicVolume: (musicVolume) => set((state) => ({ playerSettings: { ...state.playerSettings, musicVolume } })),
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
-  setActiveMap: (activeMap) => set({ activeMap }),
   setActiveMapKey: (activeMapKey) => set({ activeMapKey }),
   setSelectedShipIds: (selectedShipIds) => set({ selectedShipIds }),
   addShipWaypoints: (shipIds, x, y) => get().scene?.addShipWaypoints(shipIds, x, y),

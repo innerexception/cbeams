@@ -1,4 +1,3 @@
-export const MAP_SIZE = 100
 export const CELL_SIZE = 32
 
 export const gridToWorld = (x:number, y:number) => ({ x: x*CELL_SIZE + CELL_SIZE/2, y: y*CELL_SIZE + CELL_SIZE/2 })

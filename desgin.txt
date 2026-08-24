@@ -43,7 +43,7 @@ Missions:
     -HUSKS emerge from the nebula at the top right and attempt to escort the three enemy ZELs to the artifact sites.
 
 2. Dark Portal
-    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after uncovering a Morning Star ruin.
+    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after network traffice from a Morning Star unit.
         Objective: Destroy infected ZELs before they can escape.
 
     -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH.
@@ -51,10 +51,40 @@ Missions:
 3. City of sighs
 
     The main force of the Morning Stars has begun its attempt to unravel the first seal of the prison. 
-    The vanguard are going to attempt to draw off the enemy's left flank sby silencing their sensors in the area.
+    The vanguard are going to attempt to draw off the enemy's left flank by silencing their sensors in the area.
         Objective: Destroy all EYEs in the area. Then escape the way you came in.
 
     -Once you destroy the final EYE, a wave of BOMs (reanimated machines) will spawn to block your escape route.
+    -If you lose all units but the objective is complete, you still win
+
+4. Desperate measures
+
+    The second seal is now threatened, and most of our forces were lost defending the frontier. 
+    Our only hope now was to activate the DR device to imprison everyone here in the lower dimension.
+    We find ourselves in a warped space full of angry creatures. We must fight our way out or be consumed.
+
+    -Destroy the portal guardian and escape. Use the nebulas to hide from superior enemies.
+
+5. The heretics at the gate were imprisoned inside the DR device, giving our forces a reprieve. 
+    We must now transport the DR device to a nearby singularity for disposal before they find a way out.
+
+    -Escort the MATER to the objective. 
+
+
+Sequence:
+    1   -If any objective was captured by the enemy -> 2
+        -If failure -> END
+        -> 3
+    2   -If failure -> END
+        -If you converted the ZELs -> 5
+        -> 3
+    3   -If failure -> 4
+        -> 5
+    4   -If failure -> END
+        -> 5
+    5   Any outcome -> 6
+    6    
+
 
 
 
