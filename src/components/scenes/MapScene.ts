@@ -7,7 +7,8 @@ import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, update
 import { drawSightRadii } from "../../common/SightRadius";
 import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
+import { MAP_METADATA } from "../../assets/MapMetadata";
 import {
     CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
     MAX_QUEUE, MAX_WAYPOINTS,
@@ -137,7 +138,13 @@ export default class MapScene extends Scene {
     ammoLabels: Map<string, GameObjects.Text> = new Map()
     objectiveSprites: Map<string, GameObjects.Image> = new Map()
     objectiveLabels: Map<string, GameObjects.Text> = new Map()
+    portalSprites: Map<string, GameObjects.Image> = new Map()
     resourceNodeSprites: Map<string, GameObjects.Image> = new Map()
+
+    missionShips: Map<string, { faction:Faction, type:ShipType }> = new Map()
+    destroyedMissionShipIds: Set<string> = new Set()
+    escapedMissionShipIds: Set<string> = new Set()
+    escapedVeterans: Array<VeteranShip> = []
 
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
@@ -214,8 +221,10 @@ export default class MapScene extends Scene {
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
 
+        this.mapKey = useAppStore.getState().activeMapKey
+        this.mapData = { width:0, height:0, objectives:[], portals:[], terrain:null }
         this.generateTextures()
-        this.rangeShadeDither = this.add.tileSprite(0, 0, 10*CELL_SIZE, 10*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
+        this.rangeShadeDither = this.add.tileSprite(0, 0, this.mapData.width*CELL_SIZE, this.mapData.height*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
         this.rangeShadeDither.setMask(this.rangeShadeBrush.createGeometryMask())
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
@@ -226,8 +235,6 @@ export default class MapScene extends Scene {
         this.physics.add.overlap(this.bulletsGroup, this.missilesGroup, this.onBulletMissileContact, this.isHostileBulletMissilePair, this)
         this.physics.add.overlap(this.bulletsGroup, this.shipsGroup, this.onBulletShipContact, this.isHostileBulletShipPair, this)
 
-        this.mapKey = useAppStore.getState().activeMapKey || Maps.Sandbox
-        this.mapData = { width:0, height:0, objectives:[], terrain:null }
         const tiledMap = this.make.tilemap({ key: this.mapKey })
         if(tiledMap.width && tiledMap.height){
             this.mapData.width = tiledMap.width
@@ -244,6 +251,7 @@ export default class MapScene extends Scene {
         this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-10).setScrollFactor(0.5)
         //this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'grid').setDepth(-500).setScrollFactor(0.8)
         this.spawnEntitiesFromMap()
+        this.initializeObjectiveTargets()
         this.drawMap()
         this.enableCameraControls()
         this.enableSelectionControls()
@@ -343,6 +351,7 @@ export default class MapScene extends Scene {
         this.updateHarvesterSupport(time)
         this.updateObjectives(time)
         this.updateShipCaptures(time)
+        this.updatePortals()
         this.updateMissiles(time, delta)
         checkEnemyRaid(this)
         updateEnemyZel(this)
@@ -358,6 +367,7 @@ export default class MapScene extends Scene {
             sightRadiusOverride: this.isPointUnderNebula(s.x, s.y) ? NEBULA_SIGHT_RADIUS_PX : undefined,
         })), this.rangeShadeBrush)
         this.drawObjectiveCaptureProgress(time)
+        this.updateMissionObjectives()
 
         this.drawProductionProgress()
         this.drawShipHealth()
@@ -677,6 +687,13 @@ export default class MapScene extends Scene {
                     this.nebulaSprites.push(this.add.image(x,y,NebulaResource[localIndex]).setDepth(1))
                 }
 
+                if(localIndex === PortalSpriteIndex){
+                    const spawn:PortalSpawn = { id:v4(), x:tx, y:ty }
+                    this.mapData.portals.push(spawn)
+                    this.createPortalSprite(spawn)
+                    continue
+                }
+
                 const spriteName = ObjectiveSpriteIndex[localIndex] as ObjectiveSprite | undefined
                 if(!spriteName) continue
 
@@ -714,6 +731,30 @@ export default class MapScene extends Scene {
     destroyResourceNodeSprite = (id:string) => {
         this.resourceNodeSprites.get(id)?.destroy()
         this.resourceNodeSprites.delete(id)
+    }
+
+    createPortalSprite = (spawn:PortalSpawn) => {
+        const { x, y } = this.toWorld(spawn.x, spawn.y)
+        this.portalSprites.set(spawn.id, this.add.image(x, y, 'tiles', PortalSpriteIndex).setDepth(2))
+    }
+
+    // Portal entry is cell-based, exactly matching the entity tile authored on the map.
+    updatePortals = () => {
+        if(this.mapData.portals.length === 0) return
+        const portals = new Set(this.mapData.portals.map(portal => `${portal.x},${portal.y}`))
+        this.ships.forEach(ship => {
+            const cell = this.toGrid(ship.x, ship.y)
+            if(portals.has(`${cell.x},${cell.y}`)) this.escapeShip(ship.id)
+        })
+    }
+
+    escapeShip = (id:string) => {
+        const ship = this.shipSprites.get(id)
+        if(!ship) return
+        if(this.missionShips.has(id)) this.escapedMissionShipIds.add(id)
+        if(ship.faction === Faction.Player) this.escapedVeterans.push(ship.toVeteran())
+        this.destroyShipSprite(id, 'escaped')
+        this.syncShipSummaries()
     }
 
     getObjectiveOwnerColor = (owner:Faction | null) => owner === Faction.Player ? GREEN_HEX : owner === Faction.Enemy ? RED_HEX : YELLOW_HEX
@@ -772,16 +813,59 @@ export default class MapScene extends Scene {
 
         if(changed) setObjectives(updated)
 
-        const owners = updated.map(o => o.owner)
-        if(owners.length > 0 && owners[0] && owners.every(owner => owner === owners[0])) this.handleAllObjectivesCaptured(owners[0])
     }
 
-    handleAllObjectivesCaptured = (faction:Faction) => {
+    initializeObjectiveTargets = () => {
+        this.missionShips.clear()
+        this.ships.forEach(ship => this.missionShips.set(ship.id, { faction:ship.faction, type:ship.type }))
+    }
+
+    // Victory conditions are conjunctive; a single defeat condition ends the mission.
+    updateMissionObjectives = () => {
+        if(this.gameOver) return
+        const metadata = MAP_METADATA[this.mapKey]
+        if(metadata.defeat.conditions.some(condition => this.isConditionMet(condition))) return this.endMission(false)
+        if(metadata.victory.conditions.every(condition => this.isConditionMet(condition))) this.endMission(true)
+    }
+
+    isConditionMet = (condition:MapCondition) => {
+        const targets = [...this.missionShips.entries()]
+        // Bases are stationary infrastructure, not extractable fleet units. They can still be named
+        // explicitly in a typed destroy/lose condition.
+        const mobileTargets = targets.filter(([, ship]) => ship.type !== ShipType.CATH)
+        const units = new Set(condition.units ?? [])
+        const matching = (faction:Faction, requireUnits:boolean) => targets.filter(([, ship]) =>
+            ship.faction === faction && (!requireUnits || units.has(ship.type)))
+        const allDestroyed = (ships:Array<[string, { faction:Faction, type:ShipType }]>) =>
+            ships.length > 0 && ships.every(([id]) => this.destroyedMissionShipIds.has(id))
+        const allEscaped = (ships:Array<[string, { faction:Faction, type:ShipType }]>) =>
+            ships.length > 0 && ships.every(([id]) => this.escapedMissionShipIds.has(id))
+
+        switch(condition.type){
+            case ObjectiveType.DESTROY_SHIPS: return allDestroyed(matching(Faction.Enemy, true))
+            case ObjectiveType.LOSE_ALL_UNITS: return allDestroyed(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
+            case ObjectiveType.ALL_SHIPS_ESCAPED: return allEscaped(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
+            case ObjectiveType.LOSE_UNITS: return allDestroyed(matching(Faction.Player, true))
+            case ObjectiveType.CAPTURE_OBJECTIVES: return this.allObjectivesOwnedBy(Faction.Player)
+            case ObjectiveType.LOSE_OBJECTIVES: return this.allObjectivesOwnedBy(Faction.Enemy)
+            // A single target breaking through is enough to fail an enemy-escape objective.
+            case ObjectiveType.ENEMY_SHIPS_ESCAPED:
+                return matching(Faction.Enemy, true).some(([id]) => this.escapedMissionShipIds.has(id))
+            default: return false
+        }
+    }
+
+    allObjectivesOwnedBy = (faction:Faction) => {
+        const objectives = useAppStore.getState().objectives
+        return objectives.length > 0 && objectives.every(objective => objective.owner === faction)
+    }
+
+    endMission = (won:boolean) => {
         if(this.gameOver) return
         this.gameOver = true
         this.scene.pause()
-        if(faction === Faction.Player) this.promoteSurvivingShips()
-        onShowModal(faction === Faction.Player ? Modal.Victory : Modal.Defeat)
+        if(won) this.promoteSurvivingShips()
+        onShowModal(won ? Modal.Victory : Modal.Defeat)
     }
 
     drawObjectiveCaptureProgress = (time:number) => {
@@ -853,8 +937,9 @@ export default class MapScene extends Scene {
 
     shipLabelOffsetPx = (sprite:Physics.Arcade.Sprite) => sprite.displayHeight/2 + SHIP_LABEL_GAP_PX
 
-    destroyShipSprite = (id:string) => {
+    destroyShipSprite = (id:string, reason:'destroyed'|'escaped' = 'destroyed') => {
         this.releaseShipCapture(id)
+        if(reason === 'destroyed' && this.missionShips.has(id)) this.destroyedMissionShipIds.add(id)
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
         this.shipLabels.get(id)?.destroy()
@@ -959,9 +1044,9 @@ export default class MapScene extends Scene {
     // authored player spawn slots; enemy survivors are not carried across the campaign.
     promoteSurvivingShips = () => {
         this.ships.forEach(ship => ship.rank++)
-        const veterans = this.ships
+        const veterans = [...this.escapedVeterans, ...this.ships
             .filter(ship => ship.faction === Faction.Player)
-            .map(ship => ship.toVeteran())
+            .map(ship => ship.toVeteran())]
         const state = useAppStore.getState()
         const campaign:SaveFile = {
             currentMap: this.mapKey,

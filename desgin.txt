@@ -43,7 +43,7 @@ Missions:
     -HUSKS emerge from the nebula at the top right and attempt to escort the three enemy ZELs to the artifact sites.
 
 2. Dark Portal
-    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after network traffice from a Morning Star unit.
+    In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after network traffic from a Morning Star unit.
         Objective: Destroy infected ZELs, and any units they capture before they can escape.
 
     -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH.

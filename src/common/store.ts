@@ -54,7 +54,7 @@ const initialState = {
   playerSettings: { volume: DEFAULT_VOLUME, musicVolume: DEFAULT_MUSIC_VOLUME } as PlayerSettings,
   mySave: null as SaveFile | null,
   activeMap: null as MapData | null,
-  activeMapKey: Maps.Sandbox as Maps,
+  activeMapKey: null,
   ships: [] as Array<ShipSummary>,
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,

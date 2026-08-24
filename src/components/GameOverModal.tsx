@@ -14,7 +14,7 @@ export default (props:{ won:boolean }) => {
 
     const loadNext = () => {
         const currentMap = MAP_METADATA[activeMapKey]
-        const nextMap = props.won ? currentMap.victory : currentMap.defeat
+        const nextMap = props.won ? currentMap.victory.targetMap : currentMap.defeat.target
         if(nextMap){
             if(mySave){
                 const updatedSave = { ...mySave, currentMap:nextMap }

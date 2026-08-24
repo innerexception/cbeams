@@ -37,10 +37,17 @@ interface ObjectiveSpawn {
     sprite: import('./enum').ObjectiveSprite
 }
 
+interface PortalSpawn {
+    id: string
+    x: number
+    y: number
+}
+
 interface MapData {
     width: number
     height: number
     objectives: Array<ObjectiveSpawn>
+    portals: Array<PortalSpawn>
     terrain: TiledMap | null
 }
 
@@ -141,16 +148,18 @@ interface MapImageKeyframe {
     y: number
 }
 
-// Per-map flavor content for the Briefing screen (see src/assets/MapMetadata.ts for the actual per-Maps
-// entries) — everything about a given map that isn't gameplay data (that's MapData/the Tiled file
-// itself), just what Briefing needs to introduce it.
+interface MapCondition {
+    type: import('./enum').ObjectiveType
+    units?: import('./enum').ShipType[]
+}
+
 interface MapMetadata {
     briefingText: string
     // The map image pans/animates through these points in order over the course of the briefing — not
     // wired up to any actual animation yet, just the data it'll eventually drive.
     imageKeyframes: Array<MapImageKeyframe>
-    victory: import('./enum').Maps
-    defeat?: import('./enum').Maps
+    victory: {conditions: MapCondition[], targetMap: import('./enum').Maps}
+    defeat: {conditions: MapCondition[], target: import('./enum').Maps}
     tip:string
 }
 

@@ -15,7 +15,7 @@ export enum SoundEffects {
 export const ShipAckSounds = [SoundEffects.Ack1, SoundEffects.Ack2, SoundEffects.Ack3, SoundEffects.Ack4, SoundEffects.Ack5, SoundEffects.Ack6]
 
 export enum Maps {
-    Sandbox='Sandbox', Ambush='Ambush'
+    Ambush='Ambush', Infiltration='Infiltration', AtTheGates='AtTheGates'
 }
 
 export enum IconIndexes {
@@ -37,6 +37,8 @@ export enum ObjectiveSpriteIndex {
     Crypt=86,Shrine=87,NuclearReactor=88
 }
 
+export const PortalSpriteIndex = 81
+
 export const NebulaResource = {
     117:'nebula1',
     118:'nebula2',
@@ -46,6 +48,11 @@ export const NebulaResource = {
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
     DRN='DRN', PDF='PDF', HUSK='HUSK', BEH='BEH', BLADE='BLADE'
+}
+
+export enum ObjectiveType {
+    DESTROY_SHIPS, CAPTURE_OBJECTIVES, PROTECT_SHIPS, CAPTURE_SHIPS, PROTECT_OBJECTIVES, LOSE_OBJECTIVES, LOSE_UNITS,
+    SHIPS_ESCAPED, LOSE_ALL_UNITS, ALL_SHIPS_ESCAPED, ENEMY_SHIPS_ESCAPED
 }
 
 export enum ShipTypeSpriteIndex {
