@@ -11,11 +11,6 @@ interface SaveFile {
     veteranShips: Array<VeteranShip>
 }
 
-// A minimal subset of a Tiled (mapeditor.org) JSON map export — just enough to read tile GIDs back out
-// of a hand-authored, annotated map file. Only the plain array/CSV `data` layer format is supported
-// (not Tiled's base64/compressed export options). See MapScene's drawTerrain for how it's actually
-// drawn — a plain wireframe outline per occupied tile, not real tileset artwork, since this game has no
-// tile image assets, only vector Graphics.
 interface TiledLayer {
     name: string
     width: number
@@ -46,8 +41,6 @@ interface MapData {
     width: number
     height: number
     objectives: Array<ObjectiveSpawn>
-    // No procedurally-generated terrain anymore — this is either null (the default: an empty map,
-    // until a real Tiled file exists and is passed to generateMap) or a parsed Tiled JSON export.
     terrain: TiledMap | null
 }
 

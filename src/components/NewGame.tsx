@@ -35,6 +35,7 @@ export default () => {
 
     return (
         <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
+            <div>TOMB OF ADAM</div>
             <div style={{ display:'flex' }}>
                 {saveFile && <ToolButton onClick={continueGame}>Continue</ToolButton>}
                 <ToolButton onClick={startNewGame}>New</ToolButton>

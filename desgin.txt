@@ -44,7 +44,7 @@ Missions:
 
 2. Dark Portal
     In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after network traffice from a Morning Star unit.
-        Objective: Destroy infected ZELs before they can escape.
+        Objective: Destroy infected ZELs, and any units they capture before they can escape.
 
     -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH.
 
@@ -102,3 +102,7 @@ General AI notes:
         move HUSKs into range and fire
         move ZEL/GAIN ships away if nearby
         move BLADEs around to the rear or side to flank
+
+
+ZEL should try to capture nearby enemy ships if they are alone. 
+When ZEL is latched on, target ship cannot move or attack.
