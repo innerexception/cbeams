@@ -50,6 +50,7 @@ const LABEL_TEXT_RESOLUTION = 4
 const MAP_FONT_SIZE = '12px'
 
 const IDLE_TURN_RATE_PER_MS = 0.002
+const MOUSE_CAMERA_PAN_SPEED_MULTIPLIER = 1.5
 // A moving ship's turn rate scales with its own speed rather than being one flat number for every ship
 // type — a fast KKZ snaps toward its heading much quicker than a sluggish DRN does. 20px/s (SPR/EYE/BEH's
 // own speed) is the reference point this is tuned against: a ship moving at exactly that speed turns at
@@ -2155,8 +2156,8 @@ export default class MapScene extends Scene {
             const pointer = this.input.activePointer
             if(pointer.rightButtonDown() || pointer.leftButtonDown()){
                 if(this.origDragPoint){
-                    this.cameras.main.scrollX += (this.origDragPoint.x - pointer.position.x) / this.cameras.main.zoom
-                    this.cameras.main.scrollY += (this.origDragPoint.y - pointer.position.y) / this.cameras.main.zoom
+                    this.cameras.main.scrollX += (this.origDragPoint.x - pointer.position.x) / this.cameras.main.zoom * MOUSE_CAMERA_PAN_SPEED_MULTIPLIER
+                    this.cameras.main.scrollY += (this.origDragPoint.y - pointer.position.y) / this.cameras.main.zoom * MOUSE_CAMERA_PAN_SPEED_MULTIPLIER
                 }
                 this.origDragPoint = pointer.position.clone()
             }

@@ -4,6 +4,7 @@ import { SceneNames, SoundEffects } from '../../enum';
 import { useAppStore } from '../common/store';
 import { colors, MODAL_PADDING_PX } from '../styles/AppStyles';
 import { MAP_METADATA } from '../assets/MapMetadata';
+import { defaultCursor } from '../assets/Assets';
 
 const stars = require('../assets/img/stars.png')
 
@@ -126,7 +127,7 @@ export default () => {
             display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column',
             opacity: fadingOut ? 0 : (mounted ? 1 : 0),
             transition: `opacity ${(fadingOut ? FADE_OUT_MS : FADE_IN_MS)}ms ease`,
-            cursor:'pointer',
+            cursor:`url(${defaultCursor}), pointer`,
         }}>
             <div style={{ width:'80%', maxWidth:1100, height:'65%', display:'flex' }}>
                 <div style={{ width:'60%', position:'relative', overflow:'hidden' }}>

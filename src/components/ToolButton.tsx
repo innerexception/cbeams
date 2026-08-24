@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { colors } from '../styles/AppStyles'
+import { defaultCursor } from '../assets/Assets'
 
 // The game's one button look — transparent/green-bordered, filled green when active — used by every
 // HUD panel (FactoryToolbar, NewGame, ...) so the style only has to be defined once.
@@ -9,7 +10,7 @@ export const toolButtonStyle = (active:boolean, disabled?:boolean):React.CSSProp
     background: active ? colors.green : 'black',
     color: active ? '#000' : colors.yellow,
     border: '2px solid '+colors.green,
-    cursor: disabled ? 'default' : 'pointer',
+    cursor: disabled ? 'default' : `url(${defaultCursor}), pointer`,
     opacity: disabled ? 0.4 : 1,
     userSelect: 'none',
 })
