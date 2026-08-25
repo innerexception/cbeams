@@ -2,7 +2,7 @@ import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS, ESCORT_ATTACK_ALERT_MS } from "./Constants"
 import { useAppStore } from "./store"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
@@ -169,14 +169,26 @@ const assignZelEscorts = (scene:MapScene) => {
 // Falls back to standing near whichever ZEL `ship` is currently assigned to escort (see
 // assignZelEscorts) — every combat type below only calls this once it's already confirmed it has no
 // hostile target of its own to deal with first, so escort duty never pulls a ship out of a fight it's
-// already in. Offset off dead-center by a per-ship stable angle (same idea as ZEL's own
-// stableApproachAngle) so escorts of different ZELs — or, once there's ever more than one per ZEL —
-// don't all converge on the same point either.
+// already in. If that ZEL was hit recently (see ShipSprite's lastAttackedFrom/lastAttackedAtMs, set by
+// MapScene wherever damage lands) the escort heads for the attacker's last known position instead of
+// just standing next to the ZEL — this is what actually gets it moving when the attacker is outside its
+// own sight (effectiveSightRadiusPx) but the ZEL still took the hit. Once that alert goes stale
+// (ESCORT_ATTACK_ALERT_MS) or the ZEL hasn't been hit, it reverts to the plain standoff point: offset off
+// dead-center by a per-ship stable angle (same idea as ZEL's own stableApproachAngle) so escorts of
+// different ZELs — or, once there's ever more than one per ZEL — don't all converge on the same point
+// either.
 const escortZel = (scene:MapScene, ship:ShipSprite) => {
     const zelId = scene.escortAssignments.get(ship.id)
     if(!zelId) return
     const zel = scene.ships.find(s => s.id === zelId)
     if(!zel) return
+
+    if(zel.lastAttackedFrom && zel.lastAttackedAtMs !== undefined && scene.time.now - zel.lastAttackedAtMs < ESCORT_ATTACK_ALERT_MS){
+        const clamped = clampToMapWorld(scene, zel.lastAttackedFrom.x, zel.lastAttackedFrom.y)
+        routeTowards(scene, ship, clamped.x, clamped.y)
+        return
+    }
+
     const angle = stableApproachAngle(ship.id)
     const ESCORT_STANDOFF_PX = 40
     const point = { x: zel.x + Math.cos(angle)*ESCORT_STANDOFF_PX, y: zel.y + Math.sin(angle)*ESCORT_STANDOFF_PX }

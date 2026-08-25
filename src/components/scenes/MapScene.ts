@@ -204,7 +204,56 @@ export default class MapScene extends Scene {
         return Array.from(this.shipSprites.values())
     }
 
+    // Loading a new map calls scene.start on this same running scene (see Briefing), which re-runs
+    // create() on the existing MapScene instance rather than constructing a fresh one — the class-field
+    // initializers above only ever run once, in the constructor. Phaser's own shutdown destroys every
+    // GameObject it was tracking (sprites, graphics, texts), but everything here is our own bookkeeping
+    // on top of that: without this reset, these Maps/Sets/arrays keep holding onto last map's now-
+    // destroyed ShipSprites and other objects indefinitely (never garbage collected, since this instance
+    // is still reachable via onSetScene), and code that iterates them (e.g. `ships`, which reads straight
+    // off shipSprites) ends up touching dead objects and crashing the next time a ship is created.
+    resetSceneState = () => {
+        this.shipSprites = new Map()
+        this.shipLabels = new Map()
+        this.ammoLabels = new Map()
+        this.objectiveSprites = new Map()
+        this.objectiveLabels = new Map()
+        this.portalSprites = new Map()
+        this.resourceNodeSprites = new Map()
+        this.nebulaSprites = []
+
+        this.missionShips = new Map()
+        this.destroyedMissionShipIds = new Set()
+        this.escapedMissionShipIds = new Set()
+        this.escapedVeterans = []
+
+        this.orderLabels = []
+        this.lastOrdersKey = ''
+        this.shiftDown = false
+        this.dragSelectStart = null
+        this.dragSelectCurrent = null
+        this.pointerDownWorld = null
+        this.lastClickShipId = null
+        this.lastClickAtMs = 0
+        this.impactFlashes = []
+        this.contrails = []
+        this.beamFlashes = []
+
+        this.harvesterMiningTarget = new Map()
+        this.harvesterInRangeIds = new Set()
+        this.harvesterBeamState = new Map()
+        this.harvesterSupportTarget = new Map()
+        this.harvesterSupportBeamState = new Map()
+
+        this.escortAssignments = new Map()
+
+        this.enemyBaseId = undefined
+        this.enemyRaidLaunched = false
+        this.gameOver = false
+    }
+
     create = () => {
+        this.resetSceneState()
         this.input.mouse.disableContextMenu()
         this.g = this.add.graphics()
         this.rangeG = this.add.graphics()
@@ -286,7 +335,11 @@ export default class MapScene extends Scene {
 
     generateTextures = () => {
         const tmp = this.add.graphics()
+        // The texture manager is global to the Game, not this scene, so it's still holding onto every
+        // key baked on a previous map load — bake() and generateHostileShipTexture skip a key that's
+        // already there instead of re-baking (and warning) into one Phaser refuses to overwrite.
         const bake = (key:string, size:number, draw:(g:GameObjects.Graphics, cx:number, cy:number) => void) => {
+            if(this.textures.exists(key)) return
             tmp.clear()
             draw(tmp, size/2, size/2)
             tmp.generateTexture(key, size, size)
@@ -310,6 +363,7 @@ export default class MapScene extends Scene {
     }
 
     generateHostileShipTexture = (key:string) => {
+        if(this.textures.exists(key+'_enemy')) return
         const source = this.textures.get(key).getSourceImage() as HTMLImageElement | HTMLCanvasElement
         const w = source.width, h = source.height
         const canvas = document.createElement('canvas')
@@ -1342,21 +1396,26 @@ export default class MapScene extends Scene {
     detonateDrone = (drone:ShipSprite, primary:ShipSprite | null) => {
         const time = this.time.now
         const damage = ShipData[drone.type].damage
+        const droneX = drone.x, droneY = drone.y
 
-        this.impactFlashes.push({ x:drone.x, y:drone.y, createdAt:time, damage })
+        this.impactFlashes.push({ x:droneX, y:droneY, createdAt:time, damage })
         this.destroyShipSprite(drone.id)
         this.syncShipSummaries()
 
         if(drone.type === ShipType.KKZ && primary){
+            primary.lastAttackedFrom = { x:droneX, y:droneY }
+            primary.lastAttackedAtMs = time
             if(primary.takeDamage(damage)) this.killIfDead(primary)
         }
         else if(drone.type === ShipType.BOM){
-            const hits = this.physics.overlapCirc(drone.x, drone.y, ATD_BLAST_RADIUS_PX, true, false)
+            const hits = this.physics.overlapCirc(droneX, droneY, ATD_BLAST_RADIUS_PX, true, false)
             hits.forEach(body => {
                 const obj = (body as Physics.Arcade.Body).gameObject
                 if(obj.getData('kind') !== 'ship') return
                 const hitShip = this.getShipEntry(obj as Phaser.Types.Physics.Arcade.GameObjectWithBody)
                 if(hitShip && hitShip.faction !== drone.faction){
+                    hitShip.lastAttackedFrom = { x:droneX, y:droneY }
+                    hitShip.lastAttackedAtMs = time
                     if(hitShip.takeDamage(damage)) this.killIfDead(hitShip)
                 }
             })
@@ -1375,6 +1434,7 @@ export default class MapScene extends Scene {
         missile.destroy()
         this.impactFlashes.push({ x, y, createdAt:time, damage })
 
+        if(sourceShip){ ship.lastAttackedFrom = { x:sourceShip.x, y:sourceShip.y }; ship.lastAttackedAtMs = time }
         if(ship.takeDamage(damage)) this.killIfDead(ship, sourceShip)
     }
 
@@ -1421,6 +1481,7 @@ export default class MapScene extends Scene {
         bullet.destroy()
         this.impactFlashes.push({ x, y, createdAt:time, damage })
 
+        if(sourceShip){ ship.lastAttackedFrom = { x:sourceShip.x, y:sourceShip.y }; ship.lastAttackedAtMs = time }
         if(ship.takeDamage(damage)) this.killIfDead(ship, sourceShip)
     }
 
@@ -1560,6 +1621,8 @@ export default class MapScene extends Scene {
                     const liveTarget = this.shipSprites.get(targetId)
                     if(!liveTarget || !liveTarget.isAlive()) return
                     this.spawnBeam(ship.x, ship.y, liveTarget.x, liveTarget.y)
+                    liveTarget.lastAttackedFrom = { x:ship.x, y:ship.y }
+                    liveTarget.lastAttackedAtMs = this.time.now
                     if(liveTarget.takeDamage(stats.damage)) this.killIfDead(liveTarget, ship)
                 })
             }
@@ -1819,6 +1882,7 @@ export default class MapScene extends Scene {
                     if(!obj.active || obj.getData('kind') !== 'ship') return
                     const hitShip = this.getShipEntry(obj)
                     if(!hitShip || hitShip.faction === faction) return
+                    if(sourceShip){ hitShip.lastAttackedFrom = { x:sourceShip.x, y:sourceShip.y }; hitShip.lastAttackedAtMs = time }
                     if(hitShip.takeDamage(damage)) this.killIfDead(hitShip, sourceShip)
                 })
 

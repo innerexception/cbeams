@@ -60,6 +60,12 @@ export const ZEL_CAPTURE_ISOLATION_RADIUS_PX = 150
 
 export const ENEMY_RAID_SIZE = 3
 
+// How long an escort keeps heading for wherever an attack on its escorted ship last came from (see
+// AIPlayers' escortZel) before that alert goes stale and it falls back to standing near the ship again —
+// covers the common case where the attacker is out of the escort's own sight (see effectiveSightRadiusPx)
+// entirely, so the escort would otherwise never react to it at all.
+export const ESCORT_ATTACK_ALERT_MS = 8000
+
 // AI retreat destinations are intentionally refreshed sparingly. Reissuing a new escape route every
 // frame near the edge of an enemy's sight range makes ships visibly jitter back and forth.
 export const AI_FLEE_ORDER_INTERVAL_MS = 5000

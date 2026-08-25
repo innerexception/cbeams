@@ -25,6 +25,13 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     lastFiredAtMs?: number
     // AI only — timestamp of the last retreat order. See AIPlayers' fleeFrom.
     lastFleeOrderAtMs?: number
+    // Where (and when) this ship was last actually hit for damage, set by MapScene wherever takeDamage is
+    // called — not just "who hit it", since drones/beams/missiles/bullets have all fully resolved (or
+    // even destroyed themselves) by the time an escort would react. AI only — see AIPlayers' escortZel,
+    // which sends an escort here instead of just standing by, e.g. when the attacker is out of the
+    // escort's own sight but the ship it's protecting still saw it coming.
+    lastAttackedFrom?: { x:number, y:number }
+    lastAttackedAtMs?: number
     // GAIN only — when it last spent metal supporting another ship (ammo or repair), gating that to one
     // action per HARVESTER_RESUPPLY_INTERVAL_MS instead of a continuous per-frame fractional rate.
     lastResupplyAtMs?: number
