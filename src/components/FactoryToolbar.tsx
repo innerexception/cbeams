@@ -93,15 +93,15 @@ export default () => {
                 )
             })()}
         </div>
-            <div style={{ position:'absolute', bottom:80, left:160, zIndex:13, width:'75vw', background:'black' }}>
-                {selectedShipIds.length > 0 ? (
-                        <div style={{display:'flex'}}>
+            <div style={{ position:'absolute', top:230, right:60, zIndex:13, width:200 }}>
+                {selectedShipIds.length > 0 && (
+                        <div style={{display:'flex', flexWrap:'wrap'}}>
                             {selectedShips.map(s =>
                                 <div key={s.id} style={{ cursor:`url(${defaultCursor}), pointer`, margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
                             )}
                         </div>
-                ) : <div style={{marginBottom:'10px'}}>Drag to select units</div>}
-                {selectedShip ? <div>{ShipData[selectedShip.type].description}</div>:<div>{MAP_METADATA[activeMapKey]?.tip}</div>}
+                )}
+                {/* {selectedShip ? <div>{ShipData[selectedShip.type].description}</div>:<div>{MAP_METADATA[activeMapKey]?.tip}</div>} */}
             </div>
         </>
     )

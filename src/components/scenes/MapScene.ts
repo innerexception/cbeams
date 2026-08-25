@@ -163,6 +163,11 @@ export default class MapScene extends Scene {
     beamFlashes: Array<{ x1:number, y1:number, x2:number, y2:number, createdAt:number }> = []
 
     harvesterMiningTarget: Map<string, string> = new Map()
+    // GAIN ids within mining range as of the last updateHarvesterMiningTargets pass — lets that function
+    // tell a harvester newly *entering* range (which should interrupt its route and start mining) apart
+    // from one that's simply still sitting in range after an order stopped it mining (which shouldn't
+    // have that order immediately re-clobbered just because it hasn't moved out of range yet).
+    harvesterInRangeIds: Set<string> = new Set()
     harvesterBeamState: Map<string, { on:boolean, nextToggleAt:number }> = new Map()
     // Whichever ship each GAIN is currently in range of and actively resupplying/repairing — recomputed
     // every frame by updateHarvesterSupport regardless of its own spend cooldown, purely so
@@ -297,10 +302,8 @@ export default class MapScene extends Scene {
         // BULLET_MAX_LIFETIME_MS and covers its whole (short) range in well under a second, so it needs
         // to read clearly at a glance or PDF actually firing is easy to miss entirely.
         bake('bullet_dot', 5, (g, cx, cy) => {
-            g.fillStyle(YELLOW_HEX, 0.35)
-            g.fillCircle(cx, cy, 2.5)
             g.fillStyle(YELLOW_HEX, 1)
-            g.fillCircle(cx, cy, 1.25)
+            g.fillCircle(cx, cy, 2)
         })
 
         Object.values(ShipType).filter(type => type !== ShipType.CATH).forEach(type => this.generateHostileShipTexture(type))
@@ -884,6 +887,22 @@ export default class MapScene extends Scene {
             const barX = x - w/2, barY = y - OBJECTIVE_ICON_SIZE*0.5 - 20 - h
             this.drawBar(g, barX, barY, w, h, percent, color)
         })
+
+        // Ship boarding has no static map entity to anchor to. Draw its indicator from the target's
+        // live sprite instead, so the yellow bar travels with the ship being captured rather than the
+        // ZEL doing the capturing.
+        this.ships.filter(zel => zel.type === ShipType.ZEL && zel.shipCaptureAttached
+            && zel.shipCaptureStartedAtMs !== undefined && zel.latchedShipId).forEach(zel => {
+            const target = this.shipSprites.get(zel.latchedShipId)
+            if(!target) return
+
+            const percent = PhaserMath.Clamp((time-zel.shipCaptureStartedAtMs) / ZEL_SHIP_CAPTURE_TIME_MS, 0, 1)
+            const w = Math.max(OBJECTIVE_ICON_SIZE, target.displayWidth)
+            const h = 4
+            const barX = target.x - w/2
+            const barY = target.y - target.displayHeight/2 - h - 4
+            this.drawBar(g, barX, barY, w, h, percent, YELLOW_HEX)
+        })
     }
 
     handleBaseDestroyed = (faction:Faction) => {
@@ -1243,7 +1262,9 @@ export default class MapScene extends Scene {
     // are left alone here: a kamikaze drone (KKZ/BOM) has to actually reach physics-overlap distance
     // with its hostile target to detonate (see onDroneShipContact) — pushing hostiles apart the instant
     // they're about to touch, same as friendlies, meant it could never quite close that last bit of gap
-    // and just paced its target forever instead.
+    // and just paced its target forever instead. CATH (the Base) is skipped entirely — every other ship
+    // should be free to fly straight through it rather than getting shoved off course by its huge,
+    // permanently-immovable body.
     applyShipSeparation = () => {
         const ships = this.ships
         for(let i=0; i<ships.length; i++){
@@ -1251,8 +1272,11 @@ export default class MapScene extends Scene {
             const bodyA = a.body as Physics.Arcade.Body
             const immovableA = ShipData[a.type].speed === 0
 
+            if(a.type === ShipType.CATH) continue
+
             for(let j=i+1; j<ships.length; j++){
                 const b = ships[j]
+                if(b.type === ShipType.CATH) continue
                 if(a.faction !== b.faction) continue
                 const bodyB = b.body as Physics.Arcade.Body
                 const immovableB = ShipData[b.type].speed === 0
@@ -1601,19 +1625,40 @@ export default class MapScene extends Scene {
 
     updateHarvesterMiningTargets = () => {
         const { resourceNodes } = useAppStore.getState()
+        const wasMining = new Set(this.harvesterMiningTarget.keys())
+        const wasInRange = this.harvesterInRangeIds
+        const nowInRange = new Set<string>()
         this.harvesterMiningTarget.clear()
-        this.ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
-            if((harvester.metalCarried ?? 0) >= HARVESTER_METAL_CAPACITY) return
 
+        this.ships.filter(s => s.type === ShipType.GAIN).forEach(harvester => {
             let nearest:ResourceNodeData = null
-            let nearestDist = Infinity
-            resourceNodes.forEach(node => {
-                if((node.metal ?? 0) <= 0) return
-                const d = Phaser.Math.Distance.Between(harvester.x, harvester.y, node.x, node.y)
-                if(d <= HARVESTER_RANGE_PX && d < nearestDist){ nearestDist = d; nearest = node }
-            })
-            if(nearest) this.harvesterMiningTarget.set(harvester.id, nearest.id)
+            if((harvester.metalCarried ?? 0) < HARVESTER_METAL_CAPACITY){
+                let nearestDist = Infinity
+                resourceNodes.forEach(node => {
+                    if((node.metal ?? 0) <= 0) return
+                    const d = Phaser.Math.Distance.Between(harvester.x, harvester.y, node.x, node.y)
+                    if(d <= HARVESTER_RANGE_PX && d < nearestDist){ nearestDist = d; nearest = node }
+                })
+            }
+            if(nearest) nowInRange.add(harvester.id)
+
+            // A route given while mining takes over immediately — moveShips prefers the mining orbit
+            // over waypoints, so dropping the target here (rather than reassigning it below) is what
+            // actually lets the new order take effect.
+            if(wasMining.has(harvester.id) && harvester.waypoints.length > 0) return
+            if(!nearest) return
+
+            // Only a fresh arrival into range (re-)starts mining. A harvester that's still sitting in
+            // range after an order stopped it above stays stopped until it actually leaves and
+            // re-enters, rather than having that order immediately undone next tick.
+            const justEntered = !wasInRange.has(harvester.id)
+            if(!wasMining.has(harvester.id) && !justEntered) return
+
+            if(justEntered){ harvester.waypoints = []; harvester.pathIndex = 0 }
+            this.harvesterMiningTarget.set(harvester.id, nearest.id)
         })
+
+        this.harvesterInRangeIds = nowInRange
     }
 
     // A Harvester carries what it mines itself (see ShipSprite's metalCarried), capped at
