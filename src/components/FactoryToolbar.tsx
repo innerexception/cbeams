@@ -35,7 +35,7 @@ export default () => {
 
     return (
         <>
-        <div style={{ position:'absolute', top:MINIMAP_MARGIN_PX, right:MINIMAP_MARGIN_PX+MINIMAP_SIZE_PX+16, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+        <div style={{ position:'absolute', top:233, right:72, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueActive = queue.length > 0
@@ -78,15 +78,15 @@ export default () => {
                 )
             })()}
         </div>
-            <div style={{ position:'absolute', top:230, right:54, zIndex:13, width:170 }}>
+            <div style={{ position:'absolute', top:70, right:232, zIndex:13, width:500, display:'flex', justifyContent:'flex-end', alignItems:'flex-start' }}>
                 {selectedShipIds.length > 0 && (
-                        <div style={{display:'flex', flexWrap:'wrap'}}>
+                        <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end'}}>
                             {selectedShips.map(s =>
                                 <div key={s.id} style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
                             )}
                         </div>
                 )}
-                {selectedShips.length === 1 && <div>{ShipData[selectedShips[0].type].description}</div>}
+                {selectedShips.length === 1 && <div style={{background:'black', marginLeft:'1em'}}>{ShipData[selectedShips[0].type].description}</div>}
             </div>
         </>
     )
