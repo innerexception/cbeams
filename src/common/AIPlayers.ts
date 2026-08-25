@@ -4,6 +4,7 @@ import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
 import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, ZEL_CLAIM_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS, ESCORT_ATTACK_ALERT_MS } from "./Constants"
 import { useAppStore } from "./store"
+import { stableHash01, stableAngularPhase } from "./Utils"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
 // for a ship that has one set, since it overrides all of them.
@@ -130,16 +131,6 @@ const findNearestCapturableObjectiveSpawn = (scene:MapScene, zel:ShipSprite) => 
         })
 }
 
-// A per-ship stable angle (not re-rolled every frame), same deterministic-hash idea as BLADE's own
-// stableFlankOffset below, just spread across the full circle instead of a rear half-arc — this is what
-// keeps a handful of ZEL routed at the same Objective from all approaching its exact center point and
-// getting wedged against each other/applyShipSeparation on the way in.
-const stableApproachAngle = (id:string) => {
-    let h = 0
-    for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
-    return ((h >>> 0) % 1000) / 1000 * Math.PI * 2
-}
-
 // A point exactly `distance` from `target`, along the direction target->from — approaching moves
 // straight at the target, retreating (a `distance` larger than the current gap) backs straight away.
 const pointAtDistance = (from:{x:number,y:number}, target:{x:number,y:number}, distance:number) => {
@@ -202,9 +193,8 @@ const assignZelEscorts = (scene:MapScene) => {
 // just standing next to the ZEL — this is what actually gets it moving when the attacker is outside its
 // own sight (effectiveSightRadiusPx) but the ZEL still took the hit. Once that alert goes stale
 // (ESCORT_ATTACK_ALERT_MS) or the ZEL hasn't been hit, it reverts to the plain standoff point: offset off
-// dead-center by a per-ship stable angle (same idea as ZEL's own stableApproachAngle) so escorts of
-// different ZELs — or, once there's ever more than one per ZEL — don't all converge on the same point
-// either.
+// dead-center by a per-ship stable angle (see Utils' own stableAngularPhase) so escorts of different
+// ZELs — or, once there's ever more than one per ZEL — don't all converge on the same point either.
 const escortZel = (scene:MapScene, ship:ShipSprite) => {
     const zelId = scene.escortAssignments.get(ship.id)
     if(!zelId) return
@@ -217,7 +207,7 @@ const escortZel = (scene:MapScene, ship:ShipSprite) => {
         return
     }
 
-    const angle = stableApproachAngle(ship.id)
+    const angle = stableAngularPhase(ship.id)
     const ESCORT_STANDOFF_PX = 40
     const point = { x: zel.x + Math.cos(angle)*ESCORT_STANDOFF_PX, y: zel.y + Math.sin(angle)*ESCORT_STANDOFF_PX }
     const clamped = clampToMapWorld(scene, point.x, point.y)
@@ -270,7 +260,7 @@ export const updateEnemyZel = (scene:MapScene) => {
         // comfortably inside OBJECTIVE_CAPTURE_RADIUS_PX, so it counts as latched just the same, but
         // several ZEL converging on the same Objective spread out around it instead of all fighting to
         // stand on the one same pixel.
-        const angle = stableApproachAngle(zel.id)
+        const angle = stableAngularPhase(zel.id)
         const approachRadius = OBJECTIVE_CAPTURE_RADIUS_PX * 0.4
         const clamped = clampToMapWorld(scene, x + Math.cos(angle)*approachRadius, y + Math.sin(angle)*approachRadius)
         routeTowards(scene, zel, clamped.x, clamped.y)
@@ -372,14 +362,9 @@ export const updateEnemyHusk = (scene:MapScene) => {
     })
 }
 
-// A per-ship stable angle (not re-rolled every frame) so a given BLADE always works the same side of its
-// target's rear arc instead of jittering between them frame to frame — same deterministic-hash idea
-// MapScene's own stableAngularPhase uses, just kept local here since it's the only thing that needs it.
-const stableFlankOffset = (id:string) => {
-    let h = 0
-    for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
-    return (((h >>> 0) % 1000) / 1000 - 0.5) * Math.PI // -90°..+90° off dead-rear
-}
+// A per-ship stable angle (not re-rolled every frame, see Utils' own stableHash01) so a given BLADE
+// always works the same side of its target's rear arc instead of jittering between them frame to frame.
+const stableFlankOffset = (id:string) => (stableHash01(id) - 0.5) * Math.PI // -90°..+90° off dead-rear
 
 // BLADE: continuously maneuvers to a point at its own weapon range, somewhere in the target's rear
 // half — never straight in front of it — recomputed every frame off the target's live position and

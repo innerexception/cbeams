@@ -50,6 +50,11 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     shipCaptureStartedAtMs?: number
     latchedByZelId?: string
 
+    // however close by it still is, so "disengage and move towards the order" actually sticks instead of
+    // snapping straight back the moment it goes idle again. Cleared the instant it latches onto anything
+    // else, so it's a one-shot "don't immediately backtrack", not a standing ban.
+    avoidLatchId?: string
+
     // EYE only — set the instant it finishes its very first route and comes to a stop. From then on it's
     // permanently immobile and can't be given new orders — see moveShips/MapScene's handleClick.
     movementLocked?: boolean

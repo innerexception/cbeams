@@ -6,18 +6,14 @@ import { MAX_QUEUE } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
-import ResourceHUD from './ResourceHUD'
-import { MAP_METADATA } from '../assets/MapMetadata'
 import { defaultCursor } from '../assets/Assets'
 
 export default () => {
-    const { selectedShipIds, ships, queueShip, clearShipWaypoints, machineRelics, activeMapKey } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, machineRelics } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
-        clearShipWaypoints: state.clearShipWaypoints,
         machineRelics: state.machineRelics,
-        activeMapKey: state.activeMapKey,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -36,12 +32,10 @@ export default () => {
     // from selectedShipIds the way it used to be.
     const playerBase = ships.find(s => s.faction === Faction.Player && s.type === ShipType.CATH)
     const selectedShips = ships.filter(s => selectedShipIds.includes(s.id))
-    const selectedShip = selectedShips[0]
 
     return (
         <>
         <div style={{ position:'absolute', top:75, left:75, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
-            <ResourceHUD />
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueFull = queue.length >= MAX_QUEUE
@@ -101,7 +95,6 @@ export default () => {
                             )}
                         </div>
                 )}
-                {/* {selectedShip ? <div>{ShipData[selectedShip.type].description}</div>:<div>{MAP_METADATA[activeMapKey]?.tip}</div>} */}
             </div>
         </>
     )

@@ -1,8 +1,6 @@
 import { GameObjects, Math as PhaserMath } from "phaser"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { GREEN_HEX, RED_HEX } from "./Constants"
-
-const TWO_PI = Math.PI*2
+import { GREEN_HEX, RED_HEX, TWO_PI } from "./Constants"
 
 // Used by drawSightRadii to trim a circle's stroked boundary wherever a SAME-faction circle covers it,
 // so same-faction sight bubbles merge into one seamless shape with no interior line (opposing-faction

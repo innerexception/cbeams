@@ -30,51 +30,26 @@ const ColumnBorder = ({ side }: { side: 'left' | 'right' }) => (
     }} />
 )
 
-// Ground strip along the viewport's bottom edge, mirroring Ceiling's own left/right split — base-l.png
-// tiling the left half and the plain base texture tiling the right, at the same render scale as
-// everything else here.
-const Base = () => (
+// A horizontal strip along the viewport's top or bottom edge, split straight down the middle — leftImage
+// tiles the left half, rightImage tiles the right half, both at the same render scale as everything else
+// here. Base and Ceiling are both just this, mirrored: Base is bottom/base-l.png/base.png, Ceiling is
+// top/ceiling-l.png/ceiling.png.
+const EdgeStrip = ({ edge, leftImage, rightImage }: { edge: 'top' | 'bottom', leftImage: string, rightImage: string }) => (
     <>
         <div style={{
-            position: 'absolute', left: 0, width: '50%', bottom: 0, height: COLUMN_RENDER_PX, zIndex: 10,
-            backgroundImage: `url(${baseLeft})`,
+            position: 'absolute', left: 0, width: '50%', [edge]: 0, height: COLUMN_RENDER_PX, zIndex: 10,
+            backgroundImage: `url(${leftImage})`,
             backgroundRepeat: 'repeat-x',
-            backgroundPosition: 'bottom',
+            backgroundPosition: edge,
             backgroundSize: `${COLUMN_RENDER_PX}px ${COLUMN_RENDER_PX}px`,
             imageRendering: 'pixelated',
             pointerEvents: 'none',
         }} />
         <div style={{
-            position: 'absolute', right: 0, width: '50%', bottom: 0, height: COLUMN_RENDER_PX, zIndex: 10,
-            backgroundImage: `url(${base})`,
+            position: 'absolute', right: 0, width: '50%', [edge]: 0, height: COLUMN_RENDER_PX, zIndex: 10,
+            backgroundImage: `url(${rightImage})`,
             backgroundRepeat: 'repeat-x',
-            backgroundPosition: 'bottom',
-            backgroundSize: `${COLUMN_RENDER_PX}px ${COLUMN_RENDER_PX}px`,
-            imageRendering: 'pixelated',
-            pointerEvents: 'none',
-        }} />
-    </>
-)
-
-// Same as Base but along the top edge, resting on the columns rather than the other way around — split
-// straight down the middle, ceiling-l.png tiling the left half and the plain ceiling texture tiling the
-// right, each independently at the same render scale as everything else here.
-const Ceiling = () => (
-    <>
-        <div style={{
-            position: 'absolute', left: 0, width: '50%', top: 0, height: COLUMN_RENDER_PX, zIndex: 10,
-            backgroundImage: `url(${ceilingLeft})`,
-            backgroundRepeat: 'repeat-x',
-            backgroundPosition: 'top',
-            backgroundSize: `${COLUMN_RENDER_PX}px ${COLUMN_RENDER_PX}px`,
-            imageRendering: 'pixelated',
-            pointerEvents: 'none',
-        }} />
-        <div style={{
-            position: 'absolute', right: 0, width: '50%', top: 0, height: COLUMN_RENDER_PX, zIndex: 10,
-            backgroundImage: `url(${ceiling})`,
-            backgroundRepeat: 'repeat-x',
-            backgroundPosition: 'top',
+            backgroundPosition: edge,
             backgroundSize: `${COLUMN_RENDER_PX}px ${COLUMN_RENDER_PX}px`,
             imageRendering: 'pixelated',
             pointerEvents: 'none',
@@ -113,8 +88,8 @@ export default () => {
             <div ref={containerRef} id='canvasEl' style={{width:'100vw', height:'100vh'}}/>
             <ColumnBorder side='left' />
             <ColumnBorder side='right' />
-            <Base />
-            <Ceiling />
+            <EdgeStrip edge='bottom' leftImage={baseLeft} rightImage={base} />
+            <EdgeStrip edge='top' leftImage={ceilingLeft} rightImage={ceiling} />
             <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:0, left:-100, zIndex:12, backgroundImage:'url('+decal+')', width:'348px', height:'456px'}}/>
             <div style={{pointerEvents:'none', position:'absolute', backgroundSize:'contain', bottom:-55, right:-50, zIndex:12, backgroundImage:'url('+decal2+')', width:'282px', height:'356px'}}/>
         </div>

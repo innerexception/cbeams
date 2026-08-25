@@ -2,10 +2,9 @@ import { Scene, GameObjects, Physics, Math as PhaserMath } from "phaser";
 import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSelectShips, onSetScene, onShowModal } from "../../common/Thunks";
-import { getShipRelicCost, saveFile } from "../../common/Utils";
+import { getShipRelicCost, saveFile, stableAngularPhase } from "../../common/Utils";
 import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
-import { NEBULA_KEYS } from "../../assets/Assets";
 import ShipSprite from "../sprites/ShipSprite";
 import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
 import { MAP_METADATA } from "../../assets/MapMetadata";
@@ -31,10 +30,6 @@ import {
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
-const TWO_PI = Math.PI*2
-
-const ZOOM_LEVELS = [1, 2]
-
 // A ship standing right at the map's own edge still draws its full sight-radius circle (drawSightRadii
 // doesn't clip to map bounds) — so rangeShadeDither, the tiled texture that overlap shading actually
 // gets masked against, has to extend at least this far past every edge too, or the mask geometry says
@@ -47,14 +42,6 @@ const SHIP_LABEL_GAP_PX = 10
 
 const AMMO_LABEL_GAP_PX = 4
 
-// Phaser Text renders its glyphs through the browser's own canvas font rasterizer, which always
-// anti-aliases curve edges — pixelArt/roundPixels (see Viewport's game config) only stop the resulting
-// texture from being blurred further on scale-up, they can't remove AA baked into the glyph pixels
-// themselves. Rendering at a higher internal resolution (canvas text drawn N times larger, then Phaser
-// scales the texture back down to the same on-screen size) shrinks how many display pixels that soft AA
-// edge actually spans, so it reads as meaningfully crisper at these label sizes — not the *zero*-AA a
-// bitmap font would give, but a real improvement for a one-line change to every label below. Bumping
-// this further has a real (if fairly small, at this text volume) generated-texture memory cost per Text.
 const LABEL_TEXT_RESOLUTION = 4
 const MAP_FONT_SIZE = '8px'
 
@@ -65,12 +52,6 @@ const MOUSE_CAMERA_PAN_SPEED_MULTIPLIER = 1.5
 // own speed) is the reference point this is tuned against: a ship moving at exactly that speed turns at
 // the same 0.001 rad/ms every ship used to, uniformly, before this scaled by speed at all.
 const MOVE_TURN_RATE_PER_SPEED_PX_S = 0.001 / 20
-
-const stableAngularPhase = (id:string) => {
-    let h = 0
-    for(let i=0; i<id.length; i++) h = (h*31 + id.charCodeAt(i)) | 0
-    return ((h >>> 0) % 1000) / 1000 * TWO_PI
-}
 
 const ASTEROID_TIER_FRAMES = { large:AsteroidSpriteIndexesLarge, med:AsteroidSpriteIndexesMed, small:AsteroidSpriteIndexesSmall }
 type AsteroidTier = keyof typeof ASTEROID_TIER_FRAMES
@@ -137,6 +118,13 @@ export default class MapScene extends Scene {
     // Iterate via `this.ships` (a fresh array snapshot) rather than this Map directly wherever a system
     // might spawn/destroy ships mid-iteration.
     shipSprites: Map<string, ShipSprite> = new Map()
+    // Backs the `ships` getter below — invalidated (set null) at every one of the handful of places that
+    // actually mutate shipSprites (createShipSprite/destroyShipSprite/resetSceneState), rather than
+    // rebuilt on every single access. `this.ships`/`scene.ships` is read dozens of times a frame across
+    // MapScene and AIPlayers' AI functions; re-running Array.from(shipSprites.values()) on every one of
+    // those, every frame, was allocating a fresh full-length array each time even though the underlying
+    // Map only actually changes on a spawn or death — comparatively rare events.
+    shipsCache: Array<ShipSprite> | null = null
     // A ShipType's footprint radius, in real px — derived from its own texture the first time it's
     // asked for (see getShipFootprintRadiusPx) rather than hand-maintained per type, so a selection
     // ring, click hitbox, or spacing check can never drift out of sync with what the art actually looks
@@ -204,24 +192,20 @@ export default class MapScene extends Scene {
         onSetScene(this)
     }
 
-    // A fresh array snapshot of every ship — safe to iterate even when the system doing so might spawn
-    // or destroy ships partway through (spawning appends to shipSprites but never to a snapshot already
+    // An array snapshot of every ship — safe to iterate even when the system doing so might spawn or
+    // destroy ships partway through (spawning appends to shipSprites but never to a snapshot already
     // taken; destroying doesn't retroactively remove an entry from one either), unlike iterating
-    // shipSprites directly. Every per-frame system reads through this rather than the Map.
+    // shipSprites directly. Every per-frame system reads through this rather than the Map. Cached in
+    // shipsCache (see its own comment) — still always a *fresh* snapshot relative to the actual roster,
+    // just not literally re-materialized on every one of a frame's many reads of it.
     get ships():Array<ShipSprite> {
-        return Array.from(this.shipSprites.values())
+        if(!this.shipsCache) this.shipsCache = Array.from(this.shipSprites.values())
+        return this.shipsCache
     }
 
-    // Loading a new map calls scene.start on this same running scene (see Briefing), which re-runs
-    // create() on the existing MapScene instance rather than constructing a fresh one — the class-field
-    // initializers above only ever run once, in the constructor. Phaser's own shutdown destroys every
-    // GameObject it was tracking (sprites, graphics, texts), but everything here is our own bookkeeping
-    // on top of that: without this reset, these Maps/Sets/arrays keep holding onto last map's now-
-    // destroyed ShipSprites and other objects indefinitely (never garbage collected, since this instance
-    // is still reachable via onSetScene), and code that iterates them (e.g. `ships`, which reads straight
-    // off shipSprites) ends up touching dead objects and crashing the next time a ship is created.
     resetSceneState = () => {
         this.shipSprites = new Map()
+        this.shipsCache = null
         this.shipLabels = new Map()
         this.ammoLabels = new Map()
         this.objectiveSprites = new Map()
@@ -314,10 +298,8 @@ export default class MapScene extends Scene {
 
         const bounds = this.cameras.main.getBounds()
         this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-10).setScrollFactor(0.5)
-        //this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'grid').setDepth(-500).setScrollFactor(0.8)
         this.spawnEntitiesFromMap()
         this.initializeObjectiveTargets()
-        this.drawMap()
         this.enableCameraControls()
         this.enableSelectionControls()
 
@@ -1006,6 +988,7 @@ export default class MapScene extends Scene {
         ship.setData('id', id)
         this.shipsGroup.add(ship)
         this.shipSprites.set(id, ship)
+        this.shipsCache = null
 
         const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
         this.shipLabels.set(id, label)
@@ -1026,6 +1009,7 @@ export default class MapScene extends Scene {
         if(reason === 'destroyed' && this.missionShips.has(id)) this.destroyedMissionShipIds.add(id)
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
+        this.shipsCache = null
         this.shipLabels.get(id)?.destroy()
         this.shipLabels.delete(id)
         this.ammoLabels.get(id)?.destroy()
@@ -1241,7 +1225,7 @@ export default class MapScene extends Scene {
                 // is still exactly the old behavior.
                 if(!latchedObjectiveId && !latchedShip && idle){
                     latchedShip = this.ships
-                        .filter(candidate => candidate.type !== ShipType.CATH && candidate.faction !== ship.faction && !candidate.latchedByZelId)
+                        .filter(candidate => candidate.type !== ShipType.CATH && candidate.faction !== ship.faction && !candidate.latchedByZelId && candidate.id !== ship.avoidLatchId)
                         .filter(candidate => Phaser.Math.Distance.Between(ship.x, ship.y, candidate.x, candidate.y) <= ZEL_SHIP_CAPTURE_RADIUS_PX)
                         .sort((a, b) => Phaser.Math.Distance.Between(ship.x, ship.y, a.x, a.y) - Phaser.Math.Distance.Between(ship.x, ship.y, b.x, b.y))[0]
                     if(latchedShip){
@@ -1251,6 +1235,7 @@ export default class MapScene extends Scene {
                 }
                 if(!latchedObjectiveId && !latchedShip && idle){
                     const spawn = this.mapData.objectives.find(sp => {
+                        if(sp.id === ship.avoidLatchId) return false
                         const candidate = objectives.find(o => o.id === sp.id)
                         if(!candidate || candidate.owner === ship.faction) return false
                         const { x, y } = this.toWorld(sp.x, sp.y)
@@ -2008,32 +1993,6 @@ export default class MapScene extends Scene {
     toWorld = gridToWorld
     toGrid = worldToGrid
 
-    drawMap = () => {
-        // const g = this.g
-        // g.clear()
-
-        // const worldW = this.mapData.width * CELL_SIZE
-        // const worldH = this.mapData.height * CELL_SIZE
-
-        // for(let i=0; i<=this.mapData.width; i++){
-        //     const isMajor = i % 5 === 0
-        //     g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.3)
-        //     g.lineBetween(i*CELL_SIZE, 0, i*CELL_SIZE, worldH)
-        // }
-        // for(let i=0; i<=this.mapData.height; i++){
-        //     const isMajor = i % 5 === 0
-        //     g.lineStyle(1, GREEN_HEX, isMajor ? 0.6 : 0.3)
-        //     g.lineBetween(0, i*CELL_SIZE, worldW, i*CELL_SIZE)
-        // }
-
-        // this.drawTerrain()
-    }
-
-    drawTerrain = () => {
-
-
-    }
-
     drawOrders = () => {
         const { selectedShipIds } = useAppStore.getState()
 
@@ -2165,6 +2124,22 @@ export default class MapScene extends Scene {
         return formation
     }
 
+    // A new order overrides ZEL's own Objective/ship latch the same way it overrides anything else the
+    // ship was doing — releases the capture and clears both latch fields, same as always, but also
+    // records whatever it was actually latched onto (if anything) as avoidLatchId first, so moveShips'
+    // auto-latch won't immediately re-claim that exact same target purely because the ship hasn't
+    // physically left its capture radius yet (see avoidLatchId's own doc comment on ShipSprite).
+    disengageZelLatch = (ship:ShipSprite) => {
+        // Always overwritten, not just set — an order given while NOT currently latched onto anything
+        // (e.g. re-ordering an already-idle-elsewhere ZEL right back toward the very thing it was
+        // avoiding) clears any stale avoidance from a previous order instead of leaving it stuck
+        // forever unable to return there even when explicitly told to.
+        ship.avoidLatchId = ship.latchedObjectiveId ?? ship.latchedShipId
+        this.releaseShipCapture(ship.id)
+        ship.latchedObjectiveId = undefined
+        ship.objectiveAttached = undefined
+    }
+
     // Appends one waypoint onto each selected ship's own route — used for a drag-selected group of
     // combat ships (a Base itself is never included; MapScene's handleClick filters it out before
     // calling this, since it never actually moves and doesn't hand orders down to newly produced ships
@@ -2176,12 +2151,8 @@ export default class MapScene extends Scene {
         shipIds.forEach(id => {
             const ship = this.shipSprites.get(id)
             if(!ship || ship.waypoints.length >= MAX_WAYPOINTS) return
-            // A new order overrides ZEL's own Objective-latch the same way it overrides anything else it
-            // was doing — see ShipSprite's latchedObjectiveId/objectiveAttached.
             ship.waypoints = [...ship.waypoints, formation.get(id) ?? { x, y }]
-            this.releaseShipCapture(ship.id)
-            ship.latchedObjectiveId = undefined
-            ship.objectiveAttached = undefined
+            this.disengageZelLatch(ship)
             ship.orderSpeedPxS = speed
         })
     }
@@ -2197,9 +2168,7 @@ export default class MapScene extends Scene {
             if(!ship) return
             ship.waypoints = [formation.get(id) ?? { x, y }]
             ship.pathIndex = 0
-            this.releaseShipCapture(ship.id)
-            ship.latchedObjectiveId = undefined
-            ship.objectiveAttached = undefined
+            this.disengageZelLatch(ship)
             ship.orderSpeedPxS = speed
         })
     }
@@ -2219,9 +2188,7 @@ export default class MapScene extends Scene {
             const minIndex = p > index ? p-1 : p
             ship.pathIndex = minIndex >= newWaypoints.length ? newWaypoints.length : nearestWaypointIndex(ship.x, ship.y, newWaypoints, minIndex)
             ship.waypoints = newWaypoints
-            this.releaseShipCapture(ship.id)
-            ship.latchedObjectiveId = undefined
-            ship.objectiveAttached = undefined
+            this.disengageZelLatch(ship)
         })
     }
 
@@ -2232,9 +2199,7 @@ export default class MapScene extends Scene {
             if(!ship) return
             ship.waypoints = []
             ship.pathIndex = 0
-            this.releaseShipCapture(ship.id)
-            ship.latchedObjectiveId = undefined
-            ship.objectiveAttached = undefined
+            this.disengageZelLatch(ship)
         })
     }
 
@@ -2409,10 +2374,6 @@ export default class MapScene extends Scene {
                 .map(s => s.id)
             onSelectShips(hitIds)
         })
-
-        // this.input.on('wheel', (_pointer, _objs, _dx, dy:number) => {
-        //     this.cameras.main.setZoom(dy < 0 ? ZOOM_LEVELS[ZOOM_LEVELS.length-1] : ZOOM_LEVELS[0])
-        // })
     }
 
     drawDragSelectBox = () => {

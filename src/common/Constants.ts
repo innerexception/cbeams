@@ -17,8 +17,6 @@ export const WAYPOINT_ARRIVAL_RADIUS_PX = 8
 
 export const SAVE_NAME = 'xeno3_save'
 
-export const SHIPS_SYNC_INTERVAL_MS = 150
-
 export const MAX_QUEUE = 1
 export const MAX_WAYPOINTS = 5
 
@@ -95,9 +93,12 @@ export const ASTEROID_AVG_METAL = 50
 export const ASTEROID_METAL_VARIANCE = 15
 
 export const GREEN_HEX = 0x55FF55
-// export const GREEN_DIM_HEX = 0x006500
 export const YELLOW_HEX = 0xFFFF55
 export const RED_HEX=0xff5555
+
+// Shared by MapScene/SightRadius (angle-wrapping math, drawing full circles) instead of each defining
+// its own copy.
+export const TWO_PI = Math.PI*2
 
 export const HARVESTER_BEAM_FLICKER_MIN_MS = 250
 export const HARVESTER_BEAM_FLICKER_MAX_MS = 1000

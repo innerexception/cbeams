@@ -16,21 +16,24 @@ export default () => {
         getSave()
     },[])
 
-    const startNewGame = () => {
-        const save:SaveFile = { currentMap:Maps.Ambush, completedMaps:[], veteranShips:[] }
+    // Loads `save` into the store and hands off to Briefing for whichever map it's currently on — shared
+    // by both New (a freshly-created save) and Continue (the one already on disk).
+    const enterGame = (save:SaveFile) => {
         const { setActiveMapKey, setSave } = useAppStore.getState()
         setSave(save)
-        writeSaveFile(save)
         setActiveMapKey(save.currentMap)
         onShowModal(Modal.Briefing)
     }
 
+    const startNewGame = () => {
+        const save:SaveFile = { currentMap:Maps.Ambush, completedMaps:[], veteranShips:[] }
+        writeSaveFile(save)
+        enterGame(save)
+    }
+
     const continueGame = () => {
         if(!saveFile) return
-        const { setActiveMapKey, setSave } = useAppStore.getState()
-        setSave(saveFile)
-        setActiveMapKey(saveFile.currentMap)
-        onShowModal(Modal.Briefing)
+        enterGame(saveFile)
     }
 
     return (
