@@ -9,6 +9,7 @@ export const defaultCursor = require('./img/default.png')
 export const pointerCursor = require('./img/pointer.png')
 export const invalidCursor = require('./img/invalid.png')
 export const iconSheet = require('./img/tiles.png')
+export const stars = require('./img/stars2.png')
 
 // Background parallax dressing (see MapScene's spawnNebulaLayer) — picked two at random per match, so
 // this is just the full pool of art they're drawn from, not anything tied to a specific ShipType/map key.

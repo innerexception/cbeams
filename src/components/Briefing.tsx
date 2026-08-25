@@ -143,11 +143,11 @@ export default () => {
                             <span key={i} style={{ fontFamily:'Body' }}>{sentence}</span>
                         )}
                         {!sequenceComplete && phase === 'phase1' &&
-                            <span style={{ fontFamily:'Phase1' }}>{sentences[sentenceIndex].slice(0, charIndex)}</span>
+                            <span style={{ fontFamily:'Phase1', fontSize:'24px' }}>{sentences[sentenceIndex].slice(0, charIndex)}</span>
                         }
                         {!sequenceComplete && phase === 'atc' && <>
                             <span style={{ fontFamily:'Body' }}>{sentences[sentenceIndex].slice(0, charIndex)}</span>
-                            <span style={{ fontFamily:'Phase1' }}>{sentences[sentenceIndex].slice(charIndex)}</span>
+                            <span style={{ fontFamily:'Phase1', fontSize:'24px' }}>{sentences[sentenceIndex].slice(charIndex)}</span>
                         </>}
                     </div>
                 </div>

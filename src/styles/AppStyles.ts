@@ -1,4 +1,4 @@
-export const FONT_SIZE = '18px'
+export const FONT_SIZE = '12px'
 
 export const colors = {
     black:'#000000',

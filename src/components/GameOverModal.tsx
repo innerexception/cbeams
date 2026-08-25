@@ -14,7 +14,7 @@ export default (props:{ won:boolean }) => {
 
     const loadNext = () => {
         const currentMap = MAP_METADATA[activeMapKey]
-        const nextMap = props.won ? currentMap.victory.targetMap : currentMap.defeat.target
+        const nextMap = props.won ? currentMap.victory.targetMap : currentMap.defeat.targetMap
         if(nextMap){
             if(mySave){
                 const updatedSave = { ...mySave, currentMap:nextMap }
@@ -24,10 +24,11 @@ export default (props:{ won:boolean }) => {
             setActiveMapKey(nextMap)
             onShowModal(Modal.Briefing)
         }
+        else onShowModal(Modal.NewGame)
     }
 
     return (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
             <div style={{ color:colors.green, fontFamily:'Body', marginBottom:16, letterSpacing:2 }}>
                 {props.won ? 'VICTORY' : 'DEFEAT'}
             </div>

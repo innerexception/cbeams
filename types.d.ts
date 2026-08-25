@@ -159,7 +159,7 @@ interface MapMetadata {
     // wired up to any actual animation yet, just the data it'll eventually drive.
     imageKeyframes: Array<MapImageKeyframe>
     victory: {conditions: MapCondition[], targetMap: import('./enum').Maps}
-    defeat: {conditions: MapCondition[], target: import('./enum').Maps}
+    defeat: {conditions: MapCondition[], targetMap: import('./enum').Maps}
     tip:string
 }
 

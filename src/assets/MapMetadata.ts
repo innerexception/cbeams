@@ -16,7 +16,7 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             conditions: [{type: ObjectiveType.CAPTURE_OBJECTIVES}]
         },
         defeat: {
-            target: null,
+            targetMap: null,
             conditions: [{type: ObjectiveType.LOSE_OBJECTIVES}, {type: ObjectiveType.LOSE_UNITS, units: [ShipType.ZEL]}]
         },
         tip: `Prevent the heretics from capturing the places of power to spread their message. Your ZEL must survive. 
@@ -34,7 +34,7 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             conditions: [{type: ObjectiveType.DESTROY_SHIPS, units: [ShipType.ZEL]}]
         },
         defeat: {
-            target: null,
+            targetMap: null,
             conditions: [{type: ObjectiveType.ENEMY_SHIPS_ESCAPED, units: [ShipType.ZEL]}]
         },
         tip: `Prevent the heretic ZELs from escaping. Use your ZEL to cleanse corrupted ships.`
@@ -50,7 +50,7 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             conditions: [{type: ObjectiveType.DESTROY_SHIPS, units:[ShipType.EYE]}, {type: ObjectiveType.ALL_SHIPS_ESCAPED}]
         },
         defeat: {
-            target: null,
+            targetMap: null,
             conditions: [{type: ObjectiveType.LOSE_ALL_UNITS}]
         },
         tip: `Prevent the heretics from capturing the places of power to spread their message. 

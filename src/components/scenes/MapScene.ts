@@ -35,6 +35,14 @@ const TWO_PI = Math.PI*2
 
 const ZOOM_LEVELS = [1, 2]
 
+// A ship standing right at the map's own edge still draws its full sight-radius circle (drawSightRadii
+// doesn't clip to map bounds) — so rangeShadeDither, the tiled texture that overlap shading actually
+// gets masked against, has to extend at least this far past every edge too, or the mask geometry says
+// "shaded" out there but there's no dither texture underneath to actually show it, leaving a gap right
+// where a large sight radius crosses the map boundary. The single biggest sightRadius any ShipData
+// entry has is the worst case that could ever need covering.
+const SIGHT_OVERFLOW_MARGIN_PX = Math.max(...Object.values(ShipData).map(s => s.sightRadius))
+
 const SHIP_LABEL_GAP_PX = 10
 
 const AMMO_LABEL_GAP_PX = 4
@@ -48,7 +56,7 @@ const AMMO_LABEL_GAP_PX = 4
 // bitmap font would give, but a real improvement for a one-line change to every label below. Bumping
 // this further has a real (if fairly small, at this text volume) generated-texture memory cost per Text.
 const LABEL_TEXT_RESOLUTION = 4
-const MAP_FONT_SIZE = '12px'
+const MAP_FONT_SIZE = '8px'
 
 const IDLE_TURN_RATE_PER_MS = 0.002
 const MOUSE_CAMERA_PAN_SPEED_MULTIPLIER = 1.5
@@ -278,7 +286,7 @@ export default class MapScene extends Scene {
         this.mapKey = useAppStore.getState().activeMapKey
         this.mapData = { width:0, height:0, objectives:[], portals:[], terrain:null }
         this.generateTextures()
-        this.rangeShadeDither = this.add.tileSprite(0, 0, this.mapData.width*CELL_SIZE, this.mapData.height*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
+        this.rangeShadeDither = this.add.tileSprite(-SIGHT_OVERFLOW_MARGIN_PX, -SIGHT_OVERFLOW_MARGIN_PX, this.mapData.width*CELL_SIZE, this.mapData.height*CELL_SIZE, 'dither_red').setOrigin(0, 0).setDepth(-1)
         this.rangeShadeDither.setMask(this.rangeShadeBrush.createGeometryMask())
         this.shipsGroup = this.physics.add.group()
         this.missilesGroup = this.physics.add.group()
@@ -294,9 +302,12 @@ export default class MapScene extends Scene {
             this.mapData.width = tiledMap.width
             this.mapData.height = tiledMap.height
         }
-        // The red dither is masked to enemy/player sight overlap. It must span the entire loaded map,
-        // not the old fixed 10×10-cell fallback, or overlaps outside that small corner have no dots.
-        this.rangeShadeDither.setSize(this.mapData.width * CELL_SIZE, this.mapData.height * CELL_SIZE)
+        // The red dither is masked to enemy/player sight overlap. It must span the entire loaded map
+        // plus SIGHT_OVERFLOW_MARGIN_PX past every edge (see that const's own comment) — not just the
+        // map bounds themselves, or an overlap that spills past the edge has no dither underneath it to
+        // actually show.
+        this.rangeShadeDither.setPosition(-SIGHT_OVERFLOW_MARGIN_PX, -SIGHT_OVERFLOW_MARGIN_PX)
+        this.rangeShadeDither.setSize(this.mapData.width*CELL_SIZE + SIGHT_OVERFLOW_MARGIN_PX*2, this.mapData.height*CELL_SIZE + SIGHT_OVERFLOW_MARGIN_PX*2)
 
         this.cameras.main.setZoom(2)
         this.centerCameraBounds()
