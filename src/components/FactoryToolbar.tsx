@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useAppStore } from '../common/store'
 import { onSelectShips } from '../common/Thunks'
 import { Faction, ShipType, ShipData } from '../../enum'
-import { MAX_QUEUE } from '../common/Constants'
+import { MAX_QUEUE, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
@@ -35,10 +35,10 @@ export default () => {
 
     return (
         <>
-        <div style={{ position:'absolute', top:75, left:75, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+        <div style={{ position:'absolute', top:MINIMAP_MARGIN_PX, right:MINIMAP_MARGIN_PX+MINIMAP_SIZE_PX+16, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
             {playerBase && (() => {
                 const queue = playerBase.queue || []
-                const queueFull = queue.length >= MAX_QUEUE
+                const queueActive = queue.length > 0
 
                 // Recomputed every render (this component already re-renders on its 200ms tick) so a
                 // button disables the instant the faction's Machine Relics can no longer cover that ship's cost.
@@ -48,31 +48,13 @@ export default () => {
                     <div style={{display:'flex', flexDirection:'column'}}>
                         <div>
                             <div style={{ display:'flex', alignItems:'center', gap:8, position:'relative' }}>
-                                    {relicsAvailable > 0 && <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>Relics Available</ToolButton>}
-                                    {buildMenuMinimized && relicsAvailable > 0 && (
-                                        // Hint badge so the player still knows there's unspent Machine Relics
-                                        // without having to reopen the panel.
-                                        <div style={{
-                                            width:20, height:20, borderRadius:'50%', background:colors.yellow,
-                                            color:'#000', fontFamily:'Body', fontWeight:'bold',
-                                            display:'flex', alignItems:'center', justifyContent:'center',
-                                        }}>{relicsAvailable}</div>
-                                    )}
-                            </div>
-                            {!buildMenuMinimized && (
-                                <>
-                                    <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
-                                        {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
-                                            <ToolButton key={type} disabled={queueFull || relicsAvailable < getShipRelicCost(type)} onClick={()=>queueShip(playerBase.id, type)}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
-                                        ))}
-                                    </div>
-                                    <div style={{ marginTop:8, display:'flex', gap:8 }}>
-                                        {Array.from({ length: MAX_QUEUE }).map((_, i) => {
-                                            const item = queue[i]
+                                {queueActive ? (
+                                    <div style={{ display:'flex', gap:8 }}>
+                                        {queue.map((item, i) => {
                                             const percent = item?.startedAt ? Math.min(100, ((Date.now()-item.startedAt)/ShipData[item.type].productionTimeMs)*100) : 0
                                             return (
                                                 <div key={i} style={{ width:150, border:'2px solid '+colors.green, padding:4, fontFamily:'Body', color:colors.green }}>
-                                                    <div>{item ? ShipData[item.type].name : '—'}</div>
+                                                    <div>{ShipData[item.type].name}</div>
                                                     <div style={{ width:'100%', height:6, border:'1px solid '+colors.green, marginTop:4 }}>
                                                         {item?.startedAt && <div style={{ width:percent+'%', height:'100%', background:colors.green }}/>}
                                                     </div>
@@ -80,21 +62,31 @@ export default () => {
                                             )
                                         })}
                                     </div>
-                                </>
+                                ) : (
+                                    relicsAvailable > 0 && <ToolButton onClick={() => setBuildMenuMinimized(m => !m)}>Relic Insertion ({relicsAvailable})</ToolButton>
+                                )}
+                            </div>
+                            {!buildMenuMinimized && !queueActive && (
+                                <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
+                                    {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
+                                        <ToolButton key={type} disabled={queueActive || relicsAvailable < getShipRelicCost(type)} onClick={()=>{queueShip(playerBase.id, type);setBuildMenuMinimized(true)}}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
+                                    ))}
+                                </div>
                             )}
                         </div>
                     </div>
                 )
             })()}
         </div>
-            <div style={{ position:'absolute', top:230, right:60, zIndex:13, width:200 }}>
+            <div style={{ position:'absolute', top:230, right:54, zIndex:13, width:170 }}>
                 {selectedShipIds.length > 0 && (
                         <div style={{display:'flex', flexWrap:'wrap'}}>
                             {selectedShips.map(s =>
-                                <div key={s.id} style={{ cursor:`url(${defaultCursor}), pointer`, margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
+                                <div key={s.id} style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
                             )}
                         </div>
                 )}
+                {selectedShips.length === 1 && <div>{ShipData[selectedShips[0].type].description}</div>}
             </div>
         </>
     )

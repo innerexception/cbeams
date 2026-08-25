@@ -102,3 +102,9 @@ export const TWO_PI = Math.PI*2
 
 export const HARVESTER_BEAM_FLICKER_MIN_MS = 250
 export const HARVESTER_BEAM_FLICKER_MAX_MS = 1000
+
+// The in-canvas minimap's own screen rect (see MapScene's getMinimapRect, which composes these into
+// {originX, originY, size}) — also read directly by FactoryToolbar (a plain DOM/React overlay, not
+// Phaser) so its own top-right panel can sit flush against the minimap without the two drifting apart.
+export const MINIMAP_SIZE_PX = 150
+export const MINIMAP_MARGIN_PX = 72

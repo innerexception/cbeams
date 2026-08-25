@@ -26,7 +26,7 @@ import {
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     NEBULA_SIGHT_RADIUS_PX,
-    GREEN_HEX, YELLOW_HEX, RED_HEX,
+    GREEN_HEX, YELLOW_HEX, RED_HEX, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -463,9 +463,7 @@ export default class MapScene extends Scene {
     // two can never drift apart on where the thing actually is/how big it looks on screen.
     getMinimapRect = () => {
         const cam = this.cameras.main
-        const size = 150
-        const margin = 72
-        return { originX: cam.width-size-margin, originY: margin, size }
+        return { originX: cam.width-MINIMAP_SIZE_PX-MINIMAP_MARGIN_PX, originY: MINIMAP_MARGIN_PX, size: MINIMAP_SIZE_PX }
     }
 
     // Toggled by 'M' (see enableSelectionControls) — the whole map's own coordinate space (its full
