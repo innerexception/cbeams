@@ -57,6 +57,7 @@ export const ZEL_SHIP_CAPTURE_RADIUS_PX = 32
 export const ZEL_SHIP_CAPTURE_TIME_MS = OBJECTIVE_CAPTURE_TIME_MS
 // Enemy ZELs board targets only when no nearby allied escort can protect them.
 export const ZEL_CAPTURE_ISOLATION_RADIUS_PX = 150
+export const ZEL_CLAIM_RADIUS_PX = OBJECTIVE_CAPTURE_RADIUS_PX
 
 export const ENEMY_RAID_SIZE = 3
 

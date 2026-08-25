@@ -2,7 +2,7 @@ import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
 import { Faction, ShipType, ShipData } from "../../enum"
-import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS, ESCORT_ATTACK_ALERT_MS } from "./Constants"
+import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, ZEL_CLAIM_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS, ESCORT_ATTACK_ALERT_MS } from "./Constants"
 import { useAppStore } from "./store"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
@@ -94,12 +94,40 @@ const findNearest = <T>(items:Iterable<T>, worldX:number, worldY:number, pos:(it
     return nearest
 }
 
-// Nearest Objective spawn this faction doesn't already own.
-const findNearestCapturableObjectiveSpawn = (scene:MapScene, faction:Faction, x:number, y:number) => {
+// True if some other same-faction ZEL already has a stronger claim on the point at (x,y) than `zel`
+// does — either already latched onto whatever's there (matched by id, so a false-positive on mere
+// distance can't exclude a target some other ZEL merely happens to be passing near) or simply within
+// ZEL_CLAIM_RADIUS_PX of it — so a second ZEL picks a different Objective/ship instead of piling onto
+// the same one mid-approach, before either of them is actually close enough to have latched yet.
+const isClaimedByAnotherZel = (scene:MapScene, zel:ShipSprite, x:number, y:number, latchId?:string) =>
+    scene.ships.some(other => other.id !== zel.id && other.faction === zel.faction && other.type === ShipType.ZEL && (
+        (!!latchId && (other.latchedObjectiveId === latchId || other.latchedShipId === latchId))
+        || Math.hypot(other.x-x, other.y-y) <= ZEL_CLAIM_RADIUS_PX
+    ))
+
+// A hostile ship (any type) sitting within OBJECTIVE_CAPTURE_RADIUS_PX of an Objective is effectively
+// guarding it — without this, a ZEL approaching a guarded Objective flees the instant that guard comes
+// into its own sight range (see updateEnemyZel's own threat check, which runs first), then — the moment
+// it's fled far enough to lose sight of the guard again — immediately turns straight back around for
+// the very same Objective, since nothing else about it disqualifies it as "nearest capturable". Forever,
+// for as long as the guard just sits there. Treating a guarded Objective as not worth going for at all
+// (rather than something to keep bouncing off of) breaks that loop — it'll go for a different,
+// undefended one instead, or just sit still if there isn't one.
+const isObjectiveGuarded = (scene:MapScene, faction:Faction, x:number, y:number) =>
+    scene.ships.some(s => s.faction !== faction && Math.hypot(s.x-x, s.y-y) <= OBJECTIVE_CAPTURE_RADIUS_PX)
+
+// Nearest Objective spawn this faction doesn't already own, isn't guarded (see isObjectiveGuarded), and
+// that no other ZEL has already claimed (see isClaimedByAnotherZel).
+const findNearestCapturableObjectiveSpawn = (scene:MapScene, zel:ShipSprite) => {
     const { objectives } = useAppStore.getState()
-    return findNearest(scene.mapData.objectives, x, y,
+    return findNearest(scene.mapData.objectives, zel.x, zel.y,
         spawn => scene.toWorld(spawn.x, spawn.y),
-        spawn => objectives.find(o => o.id === spawn.id)?.owner !== faction)
+        spawn => {
+            if(objectives.find(o => o.id === spawn.id)?.owner === zel.faction) return false
+            const { x, y } = scene.toWorld(spawn.x, spawn.y)
+            if(isObjectiveGuarded(scene, zel.faction, x, y)) return false
+            return !isClaimedByAnotherZel(scene, zel, x, y, spawn.id)
+        })
 }
 
 // A per-ship stable angle (not re-rolled every frame), same deterministic-hash idea as BLADE's own
@@ -207,7 +235,11 @@ const escortZel = (scene:MapScene, ship:ShipSprite) => {
 const findNearestIsolatedHostileShip = (scene:MapScene, zel:ShipSprite) => {
     const searchRadius = effectiveSightRadiusPx(scene, zel)
     return findNearest(scene.ships, zel.x, zel.y, ship => ship, ship => {
+        // ship.latchedByZelId only ever gets set once a ZEL is actually close enough to board — this
+        // additionally checks isClaimedByAnotherZel so a second ZEL doesn't also start closing in on the
+        // very same target during the approach, before either of them has actually latched yet.
         if(ship.type === ShipType.CATH || ship.faction === zel.faction || ship.latchedByZelId) return false
+        if(isClaimedByAnotherZel(scene, zel, ship.x, ship.y, ship.id)) return false
         if(Math.hypot(ship.x-zel.x, ship.y-zel.y) > searchRadius) return false
         if(!scene.isWithinFactionSightRange(ship.x, ship.y, zel.faction)) return false
         return !scene.ships.some(escort => escort.id !== ship.id && escort.faction === ship.faction
@@ -231,7 +263,7 @@ export const updateEnemyZel = (scene:MapScene) => {
         const threat = scene.findNearestHostileShip(zel.faction, zel.x, zel.y, effectiveSightRadiusPx(scene, zel))
         if(threat){ fleeFrom(scene, zel, threat); return }
 
-        const spawn = findNearestCapturableObjectiveSpawn(scene, zel.faction, zel.x, zel.y)
+        const spawn = findNearestCapturableObjectiveSpawn(scene, zel)
         if(!spawn) return
         const { x, y } = scene.toWorld(spawn.x, spawn.y)
         // Routed at a per-ship point on a ring around the Objective, not its exact center — still

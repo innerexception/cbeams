@@ -131,10 +131,6 @@ export default () => {
         }}>
             <div style={{ width:'80%', maxWidth:1100, height:'65%', display:'flex' }}>
                 <div style={{ width:'60%', position:'relative', overflow:'hidden' }}>
-                    {/* Every already-finished sentence sits fully in its ATC (Body) form. The sentence
-                        currently in play is either being typed fresh in Phase1, or — once that's done —
-                        being overwritten in place: the same characters, just split at charIndex between
-                        the ATC span already retyped and the Phase1 span still waiting its turn. */}
                     <div style={{
                         position:'absolute', left:0, right:0,
                         color:colors.green, lineHeight:1.6, whiteSpace:'pre-wrap',
@@ -154,9 +150,6 @@ export default () => {
 
                 <div style={{ width:'10%' }}/>
 
-                {/* The frame itself (border/sizing) never transforms — only the map div inside it zooms,
-                    clipped to the frame's own bounds by this div's overflow:hidden, so the zoom reads as
-                    the map growing within a fixed window rather than the whole frame growing too. */}
                 <div style={{
                     width:'30%', border:`2px dashed ${colors.green}`, opacity:0.6, overflow:'hidden',
                     position:'relative', color:colors.green, fontFamily:'Body',

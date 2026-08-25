@@ -1231,7 +1231,15 @@ export default class MapScene extends Scene {
                     const held = objectives.find(o => o.id === latchedObjectiveId)
                     if(!held || held.owner === ship.faction) latchedObjectiveId = undefined
                 }
-                if(!latchedObjectiveId && !latchedShip){
+                // Only ever auto-latches onto something new while idle (no live order of its own) — a
+                // ZEL just handed a fresh order (see setShipWaypoints etc., which clear both latch
+                // fields the instant a new order comes in) is very likely still standing inside the
+                // capture radius of whatever it was just pulled off of, since it hasn't had time to
+                // actually move away yet. Without this, it would just re-latch onto that same
+                // objective/ship right back on this very frame, making "disengage and move towards the
+                // order" impossible. An idle ZEL auto-latching onto whatever it's simply standing next to
+                // is still exactly the old behavior.
+                if(!latchedObjectiveId && !latchedShip && idle){
                     latchedShip = this.ships
                         .filter(candidate => candidate.type !== ShipType.CATH && candidate.faction !== ship.faction && !candidate.latchedByZelId)
                         .filter(candidate => Phaser.Math.Distance.Between(ship.x, ship.y, candidate.x, candidate.y) <= ZEL_SHIP_CAPTURE_RADIUS_PX)
@@ -1241,7 +1249,7 @@ export default class MapScene extends Scene {
                         latchedShip.latchedByZelId = ship.id
                     }
                 }
-                if(!latchedObjectiveId && !latchedShip){
+                if(!latchedObjectiveId && !latchedShip && idle){
                     const spawn = this.mapData.objectives.find(sp => {
                         const candidate = objectives.find(o => o.id === sp.id)
                         if(!candidate || candidate.owner === ship.faction) return false
