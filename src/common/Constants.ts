@@ -22,6 +22,13 @@ export const MAX_WAYPOINTS = 5
 
 export const DOUBLE_CLICK_MS = 350
 
+// Delay of the TimerEvent driving MapScene's own slow tick (see its runSlowTick, created in create()) —
+// everything that decides something (AI orders, Objective/ship-capture bookkeeping, win/lose checks)
+// rather than moving or drawing a sprite lives there instead of the 60Hz update(), since none of it
+// needs to be fresher than this to look or play right, and re-running it every single frame was pure
+// wasted work.
+export const SLOW_TICK_INTERVAL_MS = 1000
+
 export const ATD_BLAST_RADIUS_PX = 20
 
 export const MISSILE_SPEED_PX_S = 110

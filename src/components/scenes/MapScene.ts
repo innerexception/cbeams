@@ -306,6 +306,7 @@ export default class MapScene extends Scene {
         spawnEnemyRaid(this)
 
         this.time.addEvent({ delay: 500, loop: true, callback: this.tickProduction })
+        this.time.addEvent({ delay: 1000, loop: true, callback: () => this.runSlowTick(this.time.now) })
 
         this.unsubscribe = useAppStore.subscribe((state, prevState) => {
             if(state.selectedShipIds.length > 0 && state.ships.length !== prevState.ships.length){
@@ -398,27 +399,16 @@ export default class MapScene extends Scene {
         this.updateBeamWeapons(time)
         this.updateBullets(time)
         this.updateHarvesters(delta)
-        this.updateHarvesterSupport(time)
-        this.updateObjectives(time)
-        this.updateShipCaptures(time)
         this.updatePortals()
         this.updateMissiles(time, delta)
-        checkEnemyRaid(this)
-        updateEnemyZel(this)
-        updateEnemyGain(this)
-        updateEnemyDrones(this)
-        updateEnemyBeh(this)
-        updateEnemyHusk(this)
-        updateEnemyBlade(this)
-        updateEnemyCaptureEscape(this)
         this.updateFogOfWar()
         this.updateShipLabels()
+
         drawSightRadii(this.rangeG, this.ships.map(s => ({
             x: s.x, y: s.y, type: s.type, faction: s.faction,
             sightRadiusOverride: this.isPointUnderNebula(s.x, s.y) ? NEBULA_SIGHT_RADIUS_PX : undefined,
         })), this.rangeShadeBrush)
         this.drawObjectiveCaptureProgress(time)
-        this.updateMissionObjectives()
 
         this.drawProductionProgress()
         this.drawShipHealth()
@@ -440,6 +430,30 @@ export default class MapScene extends Scene {
         })
 
         this.drawMinimap(time)
+    }
+
+    // Driven by its own TimerEvent (see create()) instead of update()'s 60Hz loop. Everything here
+    // decides something rather than moving or drawing a sprite: AI orders, Objective/ship-capture
+    // bookkeeping, and win/lose checks. None of it needs to be fresher than SLOW_TICK_INTERVAL_MS to
+    // look or play right — every AI function here only ever issues an order to an enemy-controlled ship
+    // (routeTowards already no-ops if that order hasn't actually changed), so a player's own orders are
+    // never delayed waiting on this, and the 30-second Objective/ship-capture timers don't care which
+    // particular second they're checked on. Splitting these out matters because they're the expensive
+    // per-ship scans (nearest-hostile/nearest-Objective searches, sight-range checks) that don't need to
+    // re-run 60 times a second just to re-confirm the same decision.
+    runSlowTick = (time:number) => {
+        this.updateHarvesterSupport(time)
+        this.updateObjectives(time)
+        this.updateShipCaptures(time)
+        checkEnemyRaid(this)
+        updateEnemyZel(this)
+        updateEnemyGain(this)
+        updateEnemyDrones(this)
+        updateEnemyBeh(this)
+        updateEnemyHusk(this)
+        updateEnemyBlade(this)
+        updateEnemyCaptureEscape(this)
+        this.updateMissionObjectives()
     }
 
     // Phaser's Graphics has no native dashed-stroke option — strokeRect is always solid — so a dashed
