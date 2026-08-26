@@ -27,6 +27,8 @@ const isSaveFile = (value:unknown):value is SaveFile => {
         && Array.isArray(save.veteranShips)
         && save.veteranShips.every(ship => typeof ship?.type === 'string'
             && typeof ship.killCount === 'number' && typeof ship.rank === 'number')
+        && Array.isArray(save.buildableTypes)
+        && save.buildableTypes.every(type => typeof type === 'string')
 }
 
 export const tryLoadFile = ():SaveFile | null => {

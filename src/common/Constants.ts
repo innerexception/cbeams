@@ -38,7 +38,7 @@ export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60
 export const CONTRAIL_LIFETIME_MS = 5000
 
-export const BULLET_SPEED_PX_S = 600
+export const BULLET_SPEED_PX_S = 400
 export const BULLET_MAX_LIFETIME_MS = 1000
 
 export const BEAM_LIFETIME_MS = 150
@@ -96,6 +96,10 @@ export const HARVESTER_METAL_CAPACITY = 50
 export const HARVESTER_RESUPPLY_RANGE_PX = 100
 export const HARVESTER_RESUPPLY_INTERVAL_MS = 1000
 export const HARVESTER_REPAIR_METAL_COST = 2
+// Every other ammo-limited ship (SPR, PDF) resupplies at the flat 1-metal-per-1-ammo rate
+// updateHarvesterSupport otherwise uses — a DRN costs more per unit since what it's actually rearming is
+// its own KKZ-manufacturing capacity, not a single shot.
+export const DRN_AMMO_METAL_COST = 5
 export const ASTEROID_AVG_METAL = 50
 export const ASTEROID_METAL_VARIANCE = 15
 

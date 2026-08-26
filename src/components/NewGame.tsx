@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { onShowModal } from '../common/Thunks';
-import { Maps, Modal } from '../../enum';
+import { Maps, Modal, DEFAULT_BUILDABLE } from '../../enum';
 import { saveFile as writeSaveFile, tryLoadFile } from '../common/Utils';
 import { useAppStore } from '../common/store';
 import ToolButton from './ToolButton'
@@ -25,8 +25,8 @@ export default () => {
         onShowModal(Modal.Briefing)
     }
 
-    const startNewGame = () => {
-        const save:SaveFile = { currentMap:Maps.Ambush, completedMaps:[], veteranShips:[] }
+    const startNewGame = (map:Maps) => {
+        const save:SaveFile = { currentMap:map, completedMaps:[], veteranShips:[], buildableTypes:[...DEFAULT_BUILDABLE] }
         writeSaveFile(save)
         enterGame(save)
     }
@@ -42,7 +42,9 @@ export default () => {
             <div style={{fontSize:'24px', marginBottom:'1em'}}>TOMB OF ADAM</div>
             <div style={{ display:'flex' }}>
                 {saveFile && <ToolButton onClick={continueGame}>Continue</ToolButton>}
-                <ToolButton onClick={startNewGame}>New</ToolButton>
+                {Object.values(Maps).map(map =>
+                    <ToolButton key={map} onClick={()=>startNewGame(map)}>New: {map}</ToolButton>
+                )}
                 <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
             </div>
         </div>

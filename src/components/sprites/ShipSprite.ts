@@ -62,10 +62,6 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     // else, so it's a one-shot "don't immediately backtrack", not a standing ban.
     avoidLatchId?: string
 
-    // EYE only — set the instant it finishes its very first route and comes to a stop. From then on it's
-    // permanently immobile and can't be given new orders — see moveShips/MapScene's handleClick.
-    movementLocked?: boolean
-
     // GAIN only — how much metal it's currently carrying, up to HARVESTER_METAL_CAPACITY. There's no
     // faction-wide stockpile; this carried amount is the only metal that exists.
     metalCarried?: number

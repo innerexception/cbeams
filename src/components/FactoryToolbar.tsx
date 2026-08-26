@@ -9,11 +9,12 @@ import { colors } from '../styles/AppStyles'
 import { defaultCursor } from '../assets/Assets'
 
 export default () => {
-    const { selectedShipIds, ships, queueShip, machineRelics } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, machineRelics, buildableTypes } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         machineRelics: state.machineRelics,
+        buildableTypes: state.mySave?.buildableTypes ?? [],
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -68,7 +69,7 @@ export default () => {
                             </div>
                             {!buildMenuMinimized && !queueActive && (
                                 <div style={{ display:'flex', flexDirection:'column', marginTop:8 }}>
-                                    {Object.values(ShipType).filter(type => ShipData[type].relicCost).map(type => (
+                                    {Object.values(ShipType).filter(type => ShipData[type].relicCost && buildableTypes.includes(type)).map(type => (
                                         <ToolButton key={type} disabled={queueActive || relicsAvailable < getShipRelicCost(type)} onClick={()=>{queueShip(playerBase.id, type);setBuildMenuMinimized(true)}}>{ShipData[type].name} ({ShipData[type].relicCost})</ToolButton>
                                     ))}
                                 </div>

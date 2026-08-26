@@ -39,7 +39,7 @@ export const resources:Array<PhaserResource> = [
     { key: ShipType.GAIN, resource: require('./img/ships/Harvester.png'), type: 'image' },
     { key: ShipType.KKZ, resource: require('./img/ships/K.png'), type: 'image' },
     { key: ShipType.ZEL, resource: require('./img/ships/KE.png'), type: 'image' },
-    { key: ShipType.EYE, resource: require('./img/ships/DRONE.png'), type: 'image' },
+    { key: ShipType.EYE, resource: require('./img/ships/eye.png'), type: 'image' },
     { key: ShipType.CATH, resource: require('./img/ships/baseA.png'), type: 'image' },
     { key: ShipType.SPR, resource: require('./img/ships/DD.png'), type: 'image' },
     { key: ShipType.BOM, resource: require('./img/ships/SSG-icon.png'), type: 'image' },

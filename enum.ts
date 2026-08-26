@@ -50,6 +50,8 @@ export enum ShipType {
     DRN='DRN', PDF='PDF', HUSK='HUSK', BEH='BEH', BLADE='BLADE'
 }
 
+export const DEFAULT_BUILDABLE = [ShipType.DRN, ShipType.GAIN, ShipType.PDF, ShipType.SPR, ShipType.ZEL]
+
 export enum ObjectiveType {
     DESTROY_SHIPS, CAPTURE_OBJECTIVES, PROTECT_SHIPS, CAPTURE_SHIPS, PROTECT_OBJECTIVES, LOSE_OBJECTIVES, LOSE_UNITS,
     SHIPS_ESCAPED, LOSE_ALL_UNITS, ALL_SHIPS_ESCAPED, ENEMY_SHIPS_ESCAPED
@@ -106,7 +108,7 @@ export const ShipData:Record<ShipType, ShipStats> = {
         description: 'Replenishment of the fleet, digests debris into fuel and parts.',
         portraitIndex: 10
      },
-     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:8000, relicCost:2,
+     [ShipType.PDF]: { name:'Targe', speed:14, sightRadius:200, armor:0, hp:10, damage:1, cooldownMs:400, rangePx:100, productionTimeMs:8000, relicCost:2,
         weaponType:'bullet', burstSize:1,
         description: 'A thousand needles rise up in defense.',
         portraitIndex: 11

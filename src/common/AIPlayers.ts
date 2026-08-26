@@ -215,6 +215,23 @@ const escortZel = (scene:MapScene, ship:ShipSprite) => {
     routeTowards(scene, ship, clamped.x, clamped.y)
 }
 
+// Ship types with no AI update function driving their movement at all otherwise — SPR/PDF's own weapon
+// firing (MapScene's updateMlrs/updatePdf) never actually moves them into range on its own, and DRN has
+// no combat AI either. A captured one of these (see MapScene's updateShipCaptures, which assigns it
+// straight into scene.escortAssignments) would otherwise just sit frozen forever under its new faction.
+// EYE is deliberately excluded — it never moves at all, captured or not (see moveShips' own
+// movementLocked), so an escort assignment on one would never actually do anything.
+const ESCORT_ONLY_TYPES = new Set([ShipType.SPR, ShipType.PDF, ShipType.DRN])
+
+// Drives movement for any of ESCORT_ONLY_TYPES that's been assigned to escort a ZEL — same escortZel
+// fallback BEH/HUSK/BLADE already use, just as this type's *entire* behavior rather than a no-target
+// fallback, since it has no other behavior to fall back from. BEH/HUSK/BLADE don't need handling here
+// too — they already call escortZel themselves.
+export const updateEnemyEscorts = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && ESCORT_ONLY_TYPES.has(s.type) && hasNoDirective(s)
+        && scene.escortAssignments.has(s.id)).forEach(ship => escortZel(scene, ship))
+}
+
 // The current map's enemyOrder for `ship`'s type, if MAP_METADATA set one — see MapMetadata's own
 // enemyOrders doc comment. A ship with a CAPTURE_ESCAPE order runs updateEnemyCaptureEscape instead of
 // its type's normal default behavior (see that function's own callers' filters below). Exported so

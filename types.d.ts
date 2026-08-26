@@ -9,6 +9,7 @@ interface SaveFile {
     currentMap: import('./enum').Maps
     completedMaps: Array<import('./enum').Maps>
     veteranShips: Array<VeteranShip>
+    buildableTypes: Array<import('./enum').ShipType>
 }
 
 interface TiledLayer {

@@ -3,10 +3,10 @@ import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSelectShips, onSetScene, onShowModal } from "../../common/Thunks";
 import { getShipRelicCost, saveFile, stableAngularPhase } from "../../common/Utils";
-import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade, updateEnemyCaptureEscape, enemyOrderFor } from "../../common/AIPlayers";
+import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade, updateEnemyEscorts, updateEnemyCaptureEscape, enemyOrderFor } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import ShipSprite from "../sprites/ShipSprite";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, OrderType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, OrderType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects, DEFAULT_BUILDABLE } from "../../../enum";
 import { MAP_METADATA } from "../../assets/MapMetadata";
 import {
     CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
@@ -22,7 +22,7 @@ import {
     OBJECTIVE_CAPTURE_RADIUS_PX, OBJECTIVE_ICON_SIZE, OBJECTIVE_CAPTURE_TIME_MS,
     ZEL_SHIP_CAPTURE_RADIUS_PX, ZEL_SHIP_CAPTURE_TIME_MS,
     HARVESTER_RANGE_PX, HARVESTER_COLLECTION_RATE_PER_S,
-    HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST,
+    HARVESTER_METAL_CAPACITY, HARVESTER_RESUPPLY_RANGE_PX, HARVESTER_RESUPPLY_INTERVAL_MS, HARVESTER_REPAIR_METAL_COST, DRN_AMMO_METAL_COST,
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     NEBULA_SIGHT_RADIUS_PX,
@@ -452,6 +452,7 @@ export default class MapScene extends Scene {
         updateEnemyBeh(this)
         updateEnemyHusk(this)
         updateEnemyBlade(this)
+        updateEnemyEscorts(this)
         updateEnemyCaptureEscape(this)
         this.updateMissionObjectives()
     }
@@ -683,7 +684,13 @@ export default class MapScene extends Scene {
             if(!overlapsShip){ pos = candidate; break }
         }
 
-        this.createShipSprite(v4(), base.faction, type, pos.x, pos.y)
+        // A KKZ built by a DRN spawns right at the DRN's own position, rather than already out at its
+        // resting point, then gets a one-shot order out to that point — so it visibly flies out from
+        // under the DRN instead of just appearing next to it fully formed. Every other producer/type
+        // pairing (a Base's own queue) is unaffected — those still just appear at pos directly.
+        const flyOut = base.type === ShipType.DRN && type === ShipType.KKZ
+        const ship = this.createShipSprite(v4(), base.faction, type, flyOut ? center.x : pos.x, flyOut ? center.y : pos.y)
+        if(flyOut) ship.waypoints = [this.toGrid(pos.x, pos.y)]
         this.syncShipSummaries()
     }
 
@@ -1135,6 +1142,7 @@ export default class MapScene extends Scene {
                 ? state.mySave.completedMaps
                 : [...(state.mySave?.completedMaps ?? []), this.mapKey],
             veteranShips: veterans,
+            buildableTypes: state.mySave?.buildableTypes ?? [...DEFAULT_BUILDABLE],
         }
         state.setSave(campaign)
         saveFile(campaign)
@@ -1194,6 +1202,25 @@ export default class MapScene extends Scene {
             // which reads this to switch from hunting a ship to running for the nearest Portal) — never
             // set for anything else, so a player-controlled ZEL can still capture any number of ships.
             if(enemyOrderFor(this, zel) === OrderType.CAPTURE_ESCAPE) zel.captureEscapeDone = true
+            // From here on the captured ship escorts its captor — same escortAssignments AIPlayers'
+            // assignZelEscorts/escortZel already drive BEH/HUSK/BLADE through, just assigned directly
+            // here instead of picked by that function's own nearest-idle-eligible-ship search. Enemy-only:
+            // there's no AI at all driving a Player-faction ship's movement (the player just orders it
+            // manually, same as anything else they own), so this would be a no-op assignment for a
+            // player-controlled ZEL's own captures anyway.
+            if(target.faction === Faction.Enemy) this.escortAssignments.set(target.id, zel.id)
+            // The flip side, for the player's own ZEL: capturing a type they can't already build unlocks
+            // it into their save's buildableTypes for good, the same permanent-progress way a promoted
+            // veteran or a completed map is recorded — see FactoryToolbar's own build list, which is
+            // filtered down to just this collection.
+            if(target.faction === Faction.Player){
+                const state = useAppStore.getState()
+                if(state.mySave && !state.mySave.buildableTypes.includes(target.type)){
+                    const updatedSave:SaveFile = { ...state.mySave, buildableTypes: [...state.mySave.buildableTypes, target.type] }
+                    state.setSave(updatedSave)
+                    saveFile(updatedSave)
+                }
+            }
             this.releaseShipCapture(zel.id)
             this.syncShipSummaries()
         })
@@ -1202,8 +1229,9 @@ export default class MapScene extends Scene {
     // Advances every ship one step towards its own route (see ShipSprite's waypoints/pathIndex), then
     // sits idle at the end of it — except ZEL, which instead heads for and latches onto a capturable
     // Objective the instant it's in range (overriding its route entirely while latched), GAIN, which
-    // orbits whichever Asteroid updateHarvesterMiningTargets assigned it, and EYE, which permanently
-    // locks in place the moment it finishes its very first route.
+    // orbits whichever Asteroid updateHarvesterMiningTargets assigned it, and EYE, which never moves at
+    // all (see movementLocked below) — a fixed sentry with a huge sightRadius, wherever it's placed or
+    // captured, not a mobile unit.
     moveShips = (time:number, deltaMs:number) => {
         const { resourceNodes, objectives } = useAppStore.getState()
         const arrivedBoms:Array<ShipSprite> = []
@@ -1215,7 +1243,7 @@ export default class MapScene extends Scene {
             const speed = ship.orderSpeedPxS ?? ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
-            const movementLocked = (ship.type === ShipType.EYE && !!ship.movementLocked) || !!ship.latchedByZelId
+            const movementLocked = ship.type === ShipType.EYE || !!ship.latchedByZelId
             const idle = movementLocked || pathIndex >= waypoints.length
             const miningNodeId = this.harvesterMiningTarget.get(ship.id)
             const miningNode = miningNodeId ? resourceNodes.find(n => n.id === miningNodeId) : undefined
@@ -1240,7 +1268,16 @@ export default class MapScene extends Scene {
                 // objective/ship right back on this very frame, making "disengage and move towards the
                 // order" impossible. An idle ZEL auto-latching onto whatever it's simply standing next to
                 // is still exactly the old behavior.
-                if(!latchedObjectiveId && !latchedShip && idle){
+                // Deliberately NOT gated on `idle`, unlike the Objective auto-latch just below — a ship
+                // target moves, so AIPlayers' updateEnemyZel/updateEnemyCaptureEscape re-route toward it
+                // (routeTowards -> setShipWaypoints) every time it crosses into a new grid cell, which
+                // for an actively-moving target can mean this ZEL rarely if ever goes idle before it's
+                // re-routed again. Requiring idle here meant it could get right up next to its target and
+                // just never actually latch — CAPTURE_ESCAPE (and ordinary ZEL ship-boarding) chasing a
+                // moving hostile ship, effectively never boarding it. avoidLatchId (see disengageZelLatch)
+                // already covers the "don't immediately re-latch onto the exact thing a new order just
+                // pulled this ZEL off of" case idle was originally added for, so it isn't needed here too.
+                if(!latchedObjectiveId && !latchedShip){
                     latchedShip = this.ships
                         .filter(candidate => candidate.type !== ShipType.CATH && candidate.faction !== ship.faction && !candidate.latchedByZelId && candidate.id !== ship.avoidLatchId)
                         .filter(candidate => Phaser.Math.Distance.Between(ship.x, ship.y, candidate.x, candidate.y) <= ZEL_SHIP_CAPTURE_RADIUS_PX)
@@ -1324,7 +1361,6 @@ export default class MapScene extends Scene {
             ship.latchedObjectiveId = latchedObjectiveId
             ship.shipCaptureAttached = !!latchedShip && arrived
             ship.pathIndex = arrived ? nextPathIndex : pathIndex
-            if(ship.type === ShipType.EYE && !movementLocked && arrivedAtRouteEnd && arrived) ship.movementLocked = true
         })
 
         this.applyShipSeparation()
@@ -1691,19 +1727,31 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Each DRN, on cooldown, spends one unit of its own ammo (4 total — same ammo/ammoRemaining stat
-    // every other ammo-limited ship uses, so it's refilled by a nearby GAIN via updateHarvesterSupport
-    // exactly the same way SPR's is) to spawn a KKZ near itself. Once its ammo is fully spent it stops
-    // producing until resupplied, same as SPR runs dry — there's no separate lifetime cap beyond that.
+    // Each DRN, on cooldown and once it's not already mid-build, spends one unit of its own ammo (4
+    // total — same ammo/ammoRemaining stat every other ammo-limited ship uses, so it's refilled by a
+    // nearby GAIN via updateHarvesterSupport, at ShipData[DRN]'s own DRN_AMMO_METAL_COST rather than the
+    // flat 1-for-1 rate everything else resupplies at) to queue up a KKZ. Queuing it (rather than
+    // spawning it outright) reuses the exact same ship.queue/tickProduction machinery a Base's own build
+    // queue runs on — drawProductionProgress already draws a bar over *any* ship with a live queue[0], so
+    // a DRN gets one for free, ticking at KKZ's own productionTimeMs; tickProduction completing it calls
+    // spawnShip, which is what actually gives the finished KKZ its under-the-DRN fly-out (see spawnShip's
+    // own comment). Once its ammo is fully spent it stops producing until resupplied, same as SPR runs
+    // dry — there's no separate lifetime cap beyond that.
     updateDrn = (time:number) => {
         this.ships.forEach(ship => {
             if(ship.type !== ShipType.DRN) return
+            if(ship.queue.length > 0) return
             if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.DRN].cooldownMs) return
             if(!ship.ammoRemaining) return
 
             ship.lastFiredAtMs = time
             ship.ammoRemaining -= 1
-            this.spawnShip(ship, ShipType.KKZ)
+            // Date.now(), not the Phaser scene-time `time` this function otherwise runs on — the queue
+            // this feeds (tickProduction/drawProductionProgress, same as a Base's own) is timed against
+            // wall-clock Date.now() throughout, and mixing the two clocks would make a fresh item read as
+            // wildly, instantly overdue.
+            ship.queue = [{ id:v4(), type:ShipType.KKZ, startedAt:Date.now() }]
+            this.syncShipSummaries()
         })
     }
 
@@ -1796,6 +1844,10 @@ export default class MapScene extends Scene {
     // does at most one thing per tick: it prefers topping up an ammo-short target 1-for-1, and only falls
     // back to repairing a damaged target (1 hp for HARVESTER_REPAIR_METAL_COST metal) if no ammo-short
     // target was in range, or it couldn't fully afford one anyway.
+    // DRN costs more per unit of ammo than SPR/PDF's flat 1 metal (see DRN_AMMO_METAL_COST's own
+    // comment) — everything else still resupplies at that flat rate.
+    ammoResupplyMetalCost = (type:ShipType) => type === ShipType.DRN ? DRN_AMMO_METAL_COST : 1
+
     updateHarvesterSupport = (time:number) => {
         const ships = this.ships
         this.harvesterSupportTarget.clear()
@@ -1808,7 +1860,8 @@ export default class MapScene extends Scene {
         // lastResupplyAtMs below, same one-unit-per-interval cap as before.
         ships.filter(s => s.type === ShipType.GAIN && (s.metalCarried ?? 0) >= 1).forEach(harvester => {
             const ammoTarget = ships.find(t => inRange(harvester, t)
-                && ShipData[t.type].ammo && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo)
+                && ShipData[t.type].ammo && (t.ammoRemaining ?? 0) < ShipData[t.type].ammo
+                && (harvester.metalCarried ?? 0) >= this.ammoResupplyMetalCost(t.type))
             const repairTarget = !ammoTarget && (harvester.metalCarried ?? 0) >= HARVESTER_REPAIR_METAL_COST
                 ? ships.find(t => inRange(harvester, t) && t.hp < ShipData[t.type].hp)
                 : undefined
@@ -1819,7 +1872,7 @@ export default class MapScene extends Scene {
             if(harvester.lastResupplyAtMs && time - harvester.lastResupplyAtMs < HARVESTER_RESUPPLY_INTERVAL_MS) return
             harvester.lastResupplyAtMs = time
             if(ammoTarget){
-                harvester.metalCarried = (harvester.metalCarried ?? 0) - 1
+                harvester.metalCarried = (harvester.metalCarried ?? 0) - this.ammoResupplyMetalCost(ammoTarget.type)
                 ammoTarget.gainAmmo(1)
             }
             else {
@@ -2304,7 +2357,7 @@ export default class MapScene extends Scene {
         if(selectedShipIds.length > 0){
             const { x, y } = this.hoveredCell
             if(x < 0 || y < 0 || x >= this.mapData.width || y >= this.mapData.height) return
-            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && !s.movementLocked && !s.latchedByZelId).map(s => s.id)
+            const orderableIds = this.ships.filter(s => selectedShipIds.includes(s.id) && s.type !== ShipType.CATH && s.type !== ShipType.EYE && !s.latchedByZelId).map(s => s.id)
             if(orderableIds.length === 0) return
 
             // Clicking directly on an existing waypoint marker always removes it — for every selected
