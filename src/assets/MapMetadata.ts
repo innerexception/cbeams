@@ -1,4 +1,4 @@
-import { Maps, ObjectiveType, ShipType } from '../../enum'
+import { Maps, ObjectiveType, OrderType, ShipType } from '../../enum'
 
 // One MapMetadata entry per Maps key — see its own doc comment (types.d.ts) for what each field is for.
 // Briefing (once wired up) reads this off whichever map NewGame's startNewGame set as activeMapKey.
@@ -37,6 +37,9 @@ export const MAP_METADATA: Record<Maps, MapMetadata> = {
             targetMap: null,
             conditions: [{type: ObjectiveType.ENEMY_SHIPS_ESCAPED, units: [ShipType.ZEL]}]
         },
+        enemyOrders: [
+            { type: ShipType.ZEL, order: OrderType.CAPTURE_ESCAPE }
+        ],
         tip: `Prevent the heretic ZELs from escaping. Use your ZEL to cleanse corrupted ships.`
     },
     [Maps.AtTheGates]: {

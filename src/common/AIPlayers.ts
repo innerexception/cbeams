@@ -1,10 +1,11 @@
 import type MapScene from "../components/scenes/MapScene"
 import type ShipSprite from "../components/sprites/ShipSprite"
 import { DRONE_TYPES } from "../components/scenes/MapScene"
-import { Faction, ShipType, ShipData } from "../../enum"
+import { Faction, ShipType, ShipData, OrderType } from "../../enum"
 import { ENEMY_RAID_SIZE, NEBULA_SIGHT_RADIUS_PX, AI_ALLIED_SPOTTING_RANGE_PX, CELL_SIZE, OBJECTIVE_CAPTURE_RADIUS_PX, ZEL_CAPTURE_ISOLATION_RADIUS_PX, ZEL_CLAIM_RADIUS_PX, AI_FLEE_ORDER_INTERVAL_MS, ESCORT_ATTACK_ALERT_MS } from "./Constants"
 import { useAppStore } from "./store"
 import { stableHash01, stableAngularPhase } from "./Utils"
+import { MAP_METADATA } from "../assets/MapMetadata"
 
 // See PrimeDirective's own doc comment (types.d.ts) — every default behavior below bails out entirely
 // for a ship that has one set, since it overrides all of them.
@@ -214,6 +215,14 @@ const escortZel = (scene:MapScene, ship:ShipSprite) => {
     routeTowards(scene, ship, clamped.x, clamped.y)
 }
 
+// The current map's enemyOrder for `ship`'s type, if MAP_METADATA set one — see MapMetadata's own
+// enemyOrders doc comment. A ship with a CAPTURE_ESCAPE order runs updateEnemyCaptureEscape instead of
+// its type's normal default behavior (see that function's own callers' filters below). Exported so
+// MapScene's updateShipCaptures can tell, at the moment a capture completes, whether to set the capturing
+// ship's captureEscapeDone flag.
+export const enemyOrderFor = (scene:MapScene, ship:ShipSprite) =>
+    MAP_METADATA[scene.mapKey].enemyOrders?.find(o => o.type === ship.type)?.order
+
 // ZEL: unarmed, so a nearby hostile ship (see effectiveSightRadiusPx) is something to flee straight away
 // from, ahead of anything else it would otherwise be doing. Failing that, it heads for and captures the
 // nearest Objective it doesn't already own — the actual latch-on/capture logic all lives on MapScene's
@@ -240,7 +249,10 @@ const findNearestIsolatedHostileShip = (scene:MapScene, zel:ShipSprite) => {
 export const updateEnemyZel = (scene:MapScene) => {
     assignZelEscorts(scene)
 
-    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL && hasNoDirective(s)).forEach(zel => {
+    // A ZEL under CAPTURE_ESCAPE runs updateEnemyCaptureEscape instead — this default behavior (endless
+    // Objective-capturing, no escape) would otherwise fight it for the same ship every frame.
+    scene.ships.filter(s => s.faction === Faction.Enemy && s.type === ShipType.ZEL && hasNoDirective(s)
+        && enemyOrderFor(scene, s) !== OrderType.CAPTURE_ESCAPE).forEach(zel => {
         // MapScene owns the latch and capture timer. Do not replace its route mid-boarding.
         if(zel.latchedShipId || zel.latchedObjectiveId) return
 
@@ -264,6 +276,40 @@ export const updateEnemyZel = (scene:MapScene) => {
         const approachRadius = OBJECTIVE_CAPTURE_RADIUS_PX * 0.4
         const clamped = clampToMapWorld(scene, x + Math.cos(angle)*approachRadius, y + Math.sin(angle)*approachRadius)
         routeTowards(scene, zel, clamped.x, clamped.y)
+    })
+}
+
+// Nearest Portal to `ship`, in world coordinates — mirrors findNearestCapturableObjectiveSpawn's own
+// "return the spawn, let the caller toWorld it" shape, since Portals (like Objective spawns) are only
+// ever stored in the map's own grid coordinates.
+const findNearestPortalSpawn = (scene:MapScene, ship:ShipSprite) =>
+    findNearest(scene.mapData.portals, ship.x, ship.y, spawn => scene.toWorld(spawn.x, spawn.y), () => true)
+
+// CAPTURE_ESCAPE: a one-shot mission rather than a standing behavior — board exactly one enemy ship
+// (the same latch/board flow updateEnemyZel uses, just without its "go find another Objective/ship
+// forever" tail), then, once MapScene's updateShipCaptures marks that capture done (ship.captureEscapeDone),
+// beeline for the nearest Portal and let updatePortals' own cell check do the actual escaping the instant
+// it steps onto it. Runs instead of the ship type's own default behavior — see that behavior's own
+// enemyOrderFor filter — for every ship of a type this map assigns the order to.
+export const updateEnemyCaptureEscape = (scene:MapScene) => {
+    scene.ships.filter(s => s.faction === Faction.Enemy && hasNoDirective(s)
+        && enemyOrderFor(scene, s) === OrderType.CAPTURE_ESCAPE).forEach(ship => {
+        if(ship.captureEscapeDone){
+            const spawn = findNearestPortalSpawn(scene, ship)
+            if(!spawn) return
+            const { x, y } = scene.toWorld(spawn.x, spawn.y)
+            routeTowards(scene, ship, x, y)
+            return
+        }
+
+        // MapScene owns the latch and capture timer. Do not replace its route mid-boarding.
+        if(ship.latchedShipId) return
+
+        const threat = scene.findNearestHostileShip(ship.faction, ship.x, ship.y, effectiveSightRadiusPx(scene, ship))
+        if(threat){ fleeFrom(scene, ship, threat); return }
+
+        const target = findNearestIsolatedHostileShip(scene, ship)
+        if(target) routeTowards(scene, ship, target.x, target.y)
     })
 }
 

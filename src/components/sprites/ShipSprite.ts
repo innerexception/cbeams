@@ -50,6 +50,13 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     shipCaptureStartedAtMs?: number
     latchedByZelId?: string
 
+    // AI only — set true the instant this ship completes a ship capture while under a CAPTURE_ESCAPE
+    // enemyOrder (see MapScene's updateShipCaptures, which sets it, and AIPlayers' updateEnemyCaptureEscape,
+    // which reads it to switch from hunting a ship to running for the nearest Portal). Never set — and
+    // never checked — for a ship without that order, so it has no effect on a player-controlled ZEL's
+    // ability to capture more than once.
+    captureEscapeDone?: boolean
+
     // however close by it still is, so "disengage and move towards the order" actually sticks instead of
     // snapping straight back the moment it goes idle again. Cleared the instant it latches onto anything
     // else, so it's a one-shot "don't immediately backtrack", not a standing ban.

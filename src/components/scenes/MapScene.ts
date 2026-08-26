@@ -3,10 +3,10 @@ import { v4 } from "uuid";
 import { useAppStore } from "../../common/store";
 import { onSelectShips, onSetScene, onShowModal } from "../../common/Thunks";
 import { getShipRelicCost, saveFile, stableAngularPhase } from "../../common/Utils";
-import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade } from "../../common/AIPlayers";
+import { spawnEnemyRaid, checkEnemyRaid, updateEnemyZel, updateEnemyGain, updateEnemyDrones, updateEnemyBeh, updateEnemyHusk, updateEnemyBlade, updateEnemyCaptureEscape, enemyOrderFor } from "../../common/AIPlayers";
 import { drawSightRadii } from "../../common/SightRadius";
 import ShipSprite from "../sprites/ShipSprite";
-import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
+import { Faction, ShipType, Modal, ShipData, ObjectiveSprite, ObjectiveSpriteIndex, ObjectiveType, OrderType, PortalSpriteIndex, AsteroidSpriteIndexesLarge, AsteroidSpriteIndexesMed, AsteroidSpriteIndexesSmall, ShipTypeSpriteIndex, ShipTypeSpriteIndexEnemy, Maps, NebulaResource, SoundEffects } from "../../../enum";
 import { MAP_METADATA } from "../../assets/MapMetadata";
 import {
     CELL_SIZE, gridToWorld, worldToGrid, SHIP_SEPARATION_PX, WAYPOINT_ARRIVAL_RADIUS_PX,
@@ -410,6 +410,7 @@ export default class MapScene extends Scene {
         updateEnemyBeh(this)
         updateEnemyHusk(this)
         updateEnemyBlade(this)
+        updateEnemyCaptureEscape(this)
         this.updateFogOfWar()
         this.updateShipLabels()
         drawSightRadii(this.rangeG, this.ships.map(s => ({
@@ -1175,6 +1176,10 @@ export default class MapScene extends Scene {
             target.pathIndex = 0
             target.orderSpeedPxS = undefined
             target.setTexture(target.faction === Faction.Player ? target.type : target.type+'_enemy')
+            // Only meaningful for a ship under CAPTURE_ESCAPE (see AIPlayers' own updateEnemyCaptureEscape,
+            // which reads this to switch from hunting a ship to running for the nearest Portal) — never
+            // set for anything else, so a player-controlled ZEL can still capture any number of ships.
+            if(enemyOrderFor(this, zel) === OrderType.CAPTURE_ESCAPE) zel.captureEscapeDone = true
             this.releaseShipCapture(zel.id)
             this.syncShipSummaries()
         })

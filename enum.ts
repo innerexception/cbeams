@@ -37,7 +37,7 @@ export enum ObjectiveSpriteIndex {
     Crypt=86,Shrine=87,NuclearReactor=88
 }
 
-export const PortalSpriteIndex = 81
+export const PortalSpriteIndex = 90
 
 export const NebulaResource = {
     117:'nebula1',
@@ -53,6 +53,10 @@ export enum ShipType {
 export enum ObjectiveType {
     DESTROY_SHIPS, CAPTURE_OBJECTIVES, PROTECT_SHIPS, CAPTURE_SHIPS, PROTECT_OBJECTIVES, LOSE_OBJECTIVES, LOSE_UNITS,
     SHIPS_ESCAPED, LOSE_ALL_UNITS, ALL_SHIPS_ESCAPED, ENEMY_SHIPS_ESCAPED
+}
+
+export enum OrderType {
+    CAPTURE_ESCAPE
 }
 
 export enum ShipTypeSpriteIndex {

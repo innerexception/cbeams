@@ -51,14 +51,6 @@ interface MapData {
     terrain: TiledMap | null
 }
 
-// The live half of a capturable Objective — see ObjectiveSpawn for its fixed id/position/sprite (never
-// duplicated here). owner is null until some faction actually captures it, which takes a full
-// OBJECTIVE_CAPTURE_TIME_MS of that faction holding it uncontested (ARMOR of that faction within
-// OBJECTIVE_CAPTURE_RADIUS_PX of it, and no hostile ship also within that radius) — see MapScene's
-// updateObjectives for the live tracking of that hold via capturingFaction/captureStartedAtMs. owner
-// never reverts to null on its own once captured — only the other faction completing that same hold
-// changes it. capturingFaction/captureStartedAtMs reset to null the instant the hold breaks (ARMOR
-// leaves/dies, or an enemy shows up), even mid-count — no partial credit carries over to a later attempt.
 interface ObjectiveData {
     id: string
     owner: import('./enum').Faction | null
@@ -102,12 +94,6 @@ interface ShipStats {
     portraitIndex: number
 }
 
-// A ship's own real, high-frequency simulation state (hp, position, cooldowns, route, ...) lives on
-// ShipSprite (src/components/sprites/ShipSprite.ts) now, mutated directly every frame — never in the
-// Zustand store. This is the low-frequency summary MapScene pushes into the store instead, purely for
-// React (ResourceHUD, FactoryToolbar) to render from: just enough to show a ship's type/description, tell
-// factions apart, and drive a Base's production panel. Pushed on the rare discrete events that actually
-// change one of these fields — a ship spawns, dies, or its queue changes — never on a physics tick.
 interface ShipSummary {
     id: string
     faction: import('./enum').Faction
@@ -126,12 +112,6 @@ interface VeteranShip {
     rank: number
 }
 
-// A gatherable Asteroid — spawned at world coordinates converted once from an AsteroidSpriteIndexesLarge
-// tile's grid cell on the map's entities layer (see MapScene's spawnEntitiesFromMap), same as a ship;
-// there's no live link back to that tile afterward, unlike ObjectiveSpawn which keeps its grid (x,y)
-// around. metal is the live remaining stockpile a nearby Harvester draws down (see MapScene's
-// updateHarvesters); maxMetal is what it started with, kept around purely so its sprite can be scaled
-// down proportionally as it depletes.
 interface ResourceNodeData {
     id: string
     x: number
@@ -160,6 +140,7 @@ interface MapMetadata {
     imageKeyframes: Array<MapImageKeyframe>
     victory: {conditions: MapCondition[], targetMap: import('./enum').Maps}
     defeat: {conditions: MapCondition[], targetMap: import('./enum').Maps}
+    enemyOrders?: { type: import('./enum').ShipType, order: import('./enum').OrderType }[]
     tip:string
 }
 
