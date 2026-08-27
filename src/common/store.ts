@@ -21,6 +21,12 @@ export interface AppState {
   objectives: Array<ObjectiveData>;
   resourceNodes: Array<ResourceNodeData>;
   selectedShipIds: Array<string>;
+  // The STL currently armed and awaiting a manual strike target (see Thunks' onToggleStrikeTargeting,
+  // MapScene's own handleClick, and FactoryToolbar's Strike button) — null when nothing's targeting.
+  // Only ever the sole selected ship's id; setSelectedShipIds itself clears this the instant the
+  // selection changes to anything else, so "changing the selection ends targeting" holds regardless of
+  // which code path actually changed it (a fresh order, ESC, a ship dying, ...).
+  targetingShipId: string | null;
   machineRelics: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
@@ -30,6 +36,7 @@ export interface AppState {
   setLoaded: (loaded: boolean) => void;
   setActiveMapKey: (key: Maps) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
+  setTargetingShipId: (id: string | null) => void;
   addShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   setShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   removeShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
@@ -58,6 +65,7 @@ const initialState = {
   objectives: [] as Array<ObjectiveData>,
   resourceNodes: [] as Array<ResourceNodeData>,
   selectedShipIds: [] as Array<string>,
+  targetingShipId: null as string | null,
   machineRelics: { [Faction.Player]: 0, [Faction.Enemy]: 0 } as Record<Faction, number>,
 };
 
@@ -70,7 +78,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMapKey: (activeMapKey) => set({ activeMapKey }),
-  setSelectedShipIds: (selectedShipIds) => set({ selectedShipIds }),
+  setSelectedShipIds: (selectedShipIds) => set((state) => ({
+    selectedShipIds,
+    targetingShipId: (state.targetingShipId && selectedShipIds.length === 1 && selectedShipIds[0] === state.targetingShipId)
+      ? state.targetingShipId : null,
+  })),
+  setTargetingShipId: (targetingShipId) => set({ targetingShipId }),
   addShipWaypoints: (shipIds, x, y) => get().scene?.addShipWaypoints(shipIds, x, y),
   setShipWaypoints: (shipIds, x, y) => get().scene?.setShipWaypoints(shipIds, x, y),
   removeShipWaypoints: (shipIds, x, y) => get().scene?.removeShipWaypoints(shipIds, x, y),

@@ -76,10 +76,12 @@ export const ESCORT_ATTACK_ALERT_MS = 8000
 // frame near the edge of an enemy's sight range makes ships visibly jitter back and forth.
 export const AI_FLEE_ORDER_INTERVAL_MS = 5000
 
-// How long an enemy ZEL executing CAPTURE_ESCAPE is revealed (camera panned to it, visible regardless of
-// fog-of-war) once it actually reaches a Portal, before its escape — and the defeat it triggers — is
-// actually registered. See MapScene's updatePortals/resolvePendingCaptureEscape.
-export const CAPTURE_ESCAPE_REVEAL_MS = 5000
+// How long the mission holds on a pan-and-ping reveal before actually ending — whether that's an enemy
+// ZEL executing CAPTURE_ESCAPE reaching a Portal (camera panned to it, visible regardless of fog-of-war
+// — see MapScene's updatePortals/resolvePendingCaptureEscape) or any other victory/defeat condition
+// being met (see updateMissionObjectives/startMissionEndReveal/resolvePendingMissionEnd) — so the player
+// always gets a moment to actually see what just decided the match before the results screen cuts in.
+export const MISSION_END_REVEAL_MS = 5000
 
 // One expand cycle of the minimap ping drawn over a ship actively being captured (see MapScene's own
 // drawMinimap) — repeats for as long as that capture is still ongoing, not a fixed number of times.

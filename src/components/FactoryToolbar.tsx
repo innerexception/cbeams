@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { onSelectShips } from '../common/Thunks'
+import { onSelectShips, onToggleStrikeTargeting } from '../common/Thunks'
 import { Faction, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
@@ -9,12 +9,14 @@ import { colors } from '../styles/AppStyles'
 import { defaultCursor } from '../assets/Assets'
 
 export default () => {
-    const { selectedShipIds, ships, queueShip, machineRelics, buildableTypes } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, machineRelics, buildableTypes, targetingShipId, scene } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         machineRelics: state.machineRelics,
         buildableTypes: state.mySave?.buildableTypes ?? [],
+        targetingShipId: state.targetingShipId,
+        scene: state.scene,
     }))
 
     // Re-render periodically so queue progress bars stay live.
@@ -83,7 +85,22 @@ export default () => {
                 {selectedShipIds.length > 0 && (
                         <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end'}}>
                             {selectedShips.map(s =>
-                                <div key={s.id} style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', margin:'5px', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
+                                <div key={s.id} style={{display:'flex', alignItems:'center', margin:'5px'}}>
+                                    <div style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
+                                    {/* Only ever shown when this STL is the sole selection (see onToggleStrikeTargeting's own
+                                        doc comment) — arms manual missile targeting, fired by MapScene's handleClick. Reads
+                                        ammoRemaining straight off the live ShipSprite via the scene, since ShipSummary
+                                        deliberately doesn't carry it (see store's ships doc comment). */}
+                                    {selectedShips.length === 1 && s.type === ShipType.STL && (() => {
+                                        const ammoRemaining = scene?.shipSprites.get(s.id)?.ammoRemaining ?? 0
+                                        const targeting = targetingShipId === s.id
+                                        return (
+                                            <ToolButton disabled={!targeting && ammoRemaining === 0} onClick={() => onToggleStrikeTargeting(s.id)}>
+                                                {targeting ? 'Targeting…' : `Strike (${ammoRemaining})`}
+                                            </ToolButton>
+                                        )
+                                    })()}
+                                </div>
                             )}
                         </div>
                 )}

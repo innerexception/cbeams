@@ -26,7 +26,7 @@ import {
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     NEBULA_SIGHT_RADIUS_PX,
-    GREEN_HEX, YELLOW_HEX, RED_HEX, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX, CAPTURE_ESCAPE_REVEAL_MS, MINIMAP_PING_PULSE_MS,
+    GREEN_HEX, YELLOW_HEX, RED_HEX, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX, MISSION_END_REVEAL_MS, MINIMAP_PING_PULSE_MS,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -99,6 +99,7 @@ export default class MapScene extends Scene {
     harvesterBeamG: GameObjects.Graphics
     harvesterSupportBeamG: GameObjects.Graphics
     beamG: GameObjects.Graphics
+    activePingG: GameObjects.Graphics
     starfield: GameObjects.TileSprite
     nebulaSprites: Array<GameObjects.Image> = []
     dragSelectG: GameObjects.Graphics
@@ -142,10 +143,35 @@ export default class MapScene extends Scene {
     escapedVeterans: Array<VeteranShip> = []
 
     // A CAPTURE_ESCAPE ZEL that's reached a Portal, held back from actually escaping (see updatePortals)
-    // for CAPTURE_ESCAPE_REVEAL_MS — see resolvePendingCaptureEscape, which is what actually completes
-    // the escape once that reveal window is up.
+    // for MISSION_END_REVEAL_MS — see resolvePendingCaptureEscape, which is what actually completes the
+    // escape (and ends the mission, see its own comment) once that reveal window is up. Kept as its own
+    // separate mechanism from the generic pendingMissionEnd* below rather than folded into it, because
+    // this one needs to reveal a still-*live* ship (forcing fog-of-war visibility on it — see
+    // updateFogOfWar) before it actually disappears, not just pan/ping wherever something already ended
+    // up.
     pendingCaptureEscapeShipId?: string
     pendingCaptureEscapeRevealAtMs?: number
+    // Set true only once the camera's own pan-to-it (see startCaptureEscapeReveal) has actually finished
+    // — drawActivePing won't draw anything until then, so the ring doesn't show up somewhere off-screen
+    // mid-pan.
+    captureEscapePingActive: boolean = false
+
+    // The world position of whichever mission-relevant ship died most recently (see destroyShipSprite) —
+    // just a live "last one", overwritten on every mission-ship death; startMissionEndReveal snapshots it
+    // into pendingMissionEndX/Y the instant it actually needs it; frozen from then on regardless of what
+    // dies afterward.
+    lastDestroyedShipPosition?: { x:number, y:number }
+    // Generic version of the same reveal-then-resolve shape as pendingCaptureEscapeShipId above, for
+    // every other way the mission can end (see updateMissionObjectives) — a DESTROY_SHIPS victory, or
+    // any defeat condition apart from CAPTURE_ESCAPE's own ENEMY_SHIPS_ESCAPED (which already gets its
+    // own richer live-ship reveal and ends the mission directly, see resolvePendingCaptureEscape).
+    // pendingMissionEndWon carries which outcome resolvePendingMissionEnd should actually end the
+    // mission with once the reveal's run its course.
+    pendingMissionEndRevealAtMs?: number
+    pendingMissionEndX?: number
+    pendingMissionEndY?: number
+    pendingMissionEndWon?: boolean
+    missionEndPingActive: boolean = false
 
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
@@ -229,6 +255,13 @@ export default class MapScene extends Scene {
         this.escapedVeterans = []
         this.pendingCaptureEscapeShipId = undefined
         this.pendingCaptureEscapeRevealAtMs = undefined
+        this.captureEscapePingActive = false
+        this.lastDestroyedShipPosition = undefined
+        this.pendingMissionEndWon = undefined
+        this.pendingMissionEndRevealAtMs = undefined
+        this.pendingMissionEndX = undefined
+        this.pendingMissionEndY = undefined
+        this.missionEndPingActive = false
 
         this.orderLabels = []
         this.lastOrdersKey = ''
@@ -275,6 +308,7 @@ export default class MapScene extends Scene {
         this.harvesterBeamG = this.add.graphics()
         this.harvesterSupportBeamG = this.add.graphics()
         this.beamG = this.add.graphics()
+        this.activePingG = this.add.graphics()
 
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
@@ -442,6 +476,7 @@ export default class MapScene extends Scene {
         })
 
         this.drawMinimap(time)
+        this.drawActivePing(time)
     }
 
     // Driven by its own TimerEvent (see create()) instead of update()'s 60Hz loop. Everything here
@@ -467,6 +502,7 @@ export default class MapScene extends Scene {
         updateEnemyEscorts(this)
         updateEnemyCaptureEscape(this)
         this.resolvePendingCaptureEscape(time)
+        this.resolvePendingMissionEnd(time)
         this.updateMissionObjectives()
     }
 
@@ -591,6 +627,37 @@ export default class MapScene extends Scene {
         const clampedY2 = PhaserMath.Clamp(viewBottomRight.y, originY, originY+size)
         g.lineStyle(2, YELLOW_HEX, 1)
         this.strokeDashedRect(g, clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
+    }
+
+    // General-purpose world-space alert ring — any system can point this at any map coordinate, not
+    // tied to any one feature. Expands from minRadius to maxRadius and fades out, repeating every
+    // pulseMs for as long as the caller keeps calling it with the same startedAtMs (that's what keeps
+    // the pulse phase-locked across frames rather than restarting each time) — the caller owns clearing
+    // its own Graphics layer beforehand and deciding when to stop calling this at all.
+    drawPing = (g:GameObjects.Graphics, x:number, y:number, time:number, startedAtMs:number,
+        color:number = RED_HEX, minRadius:number = 20, maxRadius:number = 80, pulseMs:number = MINIMAP_PING_PULSE_MS) => {
+        const age = ((time - startedAtMs) % pulseMs) / pulseMs
+        g.lineStyle(2, color, 1)
+        g.strokeCircle(x, y, minRadius + age*(maxRadius-minRadius))
+    }
+
+    // Both mission-end reveals (startCaptureEscapeReveal/startMissionEndReveal) share activePingG — they
+    // can never both be live at once (the mission can only end one way), so this clears it once and
+    // draws whichever (if either) is actually pending, rather than each having its own draw function
+    // separately clear the same layer and risk one wiping out the other's ring on the same frame.
+    drawActivePing = (time:number) => {
+        const g = this.activePingG
+        g.clear()
+
+        if(this.captureEscapePingActive && this.pendingCaptureEscapeShipId && this.pendingCaptureEscapeRevealAtMs !== undefined){
+            const ship = this.shipSprites.get(this.pendingCaptureEscapeShipId)
+            if(ship) this.drawPing(g, ship.x, ship.y, time, this.pendingCaptureEscapeRevealAtMs)
+            return
+        }
+
+        if(this.missionEndPingActive && this.pendingMissionEndRevealAtMs !== undefined && this.pendingMissionEndX !== undefined && this.pendingMissionEndY !== undefined){
+            this.drawPing(g, this.pendingMissionEndX, this.pendingMissionEndY, time, this.pendingMissionEndRevealAtMs, this.pendingMissionEndWon ? GREEN_HEX : RED_HEX)
+        }
     }
 
     drawSelectionRing = (x:number, y:number, baseRadius:number, time:number) => {
@@ -866,7 +933,7 @@ export default class MapScene extends Scene {
 
     // Holds a CAPTURE_ESCAPE ZEL back from actually escaping (and the defeat that would trigger) the
     // instant it reaches a Portal — instead the camera pans over to it and fog-of-war is forced off for
-    // it (see updateFogOfWar) for CAPTURE_ESCAPE_REVEAL_MS, so the player actually gets to see what's
+    // it (see updateFogOfWar) for MISSION_END_REVEAL_MS, so the player actually gets to see what's
     // slipping away before the mission ends. A no-op if one's already pending (only ever one at a time —
     // the first to reach a Portal is the one that plays out; any others just sit there on top of it,
     // already at their own destination, until this one resolves).
@@ -874,18 +941,27 @@ export default class MapScene extends Scene {
         if(this.pendingCaptureEscapeShipId) return
         this.pendingCaptureEscapeShipId = ship.id
         this.pendingCaptureEscapeRevealAtMs = this.time.now
-        this.cameras.main.pan(ship.x, ship.y, 800, 'Sine.easeInOut', true)
+        this.captureEscapePingActive = false
+        this.cameras.main.pan(ship.x, ship.y, 800, 'Sine.easeInOut', true, (_camera, progress) => {
+            if(progress === 1) this.captureEscapePingActive = true
+        })
     }
 
     // Called from runSlowTick — completes whatever startCaptureEscapeReveal started, once its own
-    // CAPTURE_ESCAPE_REVEAL_MS has actually elapsed.
+    // MISSION_END_REVEAL_MS has actually elapsed. Ends the mission directly (rather than just marking
+    // the ship escaped and letting the next updateMissionObjectives notice) — a CAPTURE_ESCAPE ship
+    // crossing a Portal always means defeat on a map that gives that order out, and ending it here
+    // avoids updateMissionObjectives' own generic reveal (see startMissionEndReveal) redundantly
+    // triggering a second pan/ping/hold for the exact same event this one already just played out.
     resolvePendingCaptureEscape = (time:number) => {
         if(!this.pendingCaptureEscapeShipId || this.pendingCaptureEscapeRevealAtMs === undefined) return
-        if(time - this.pendingCaptureEscapeRevealAtMs < CAPTURE_ESCAPE_REVEAL_MS) return
+        if(time - this.pendingCaptureEscapeRevealAtMs < MISSION_END_REVEAL_MS) return
         const id = this.pendingCaptureEscapeShipId
         this.pendingCaptureEscapeShipId = undefined
         this.pendingCaptureEscapeRevealAtMs = undefined
+        this.captureEscapePingActive = false
         this.escapeShip(id)
+        this.endMission(false)
     }
 
     escapeShip = (id:string) => {
@@ -960,19 +1036,21 @@ export default class MapScene extends Scene {
         this.ships.forEach(ship => this.missionShips.set(ship.id, { faction:ship.faction, type:ship.type }))
     }
 
-    // Victory conditions are conjunctive; a single defeat condition ends the mission.
+    // Victory conditions are conjunctive; a single defeat condition ends the mission. Either way the
+    // actual ending is deferred to startMissionEndReveal rather than called directly — see its own
+    // comment for why, and for CAPTURE_ESCAPE's own separate, richer version of the same idea.
     updateMissionObjectives = () => {
-        if(this.gameOver) return
+        if(this.gameOver || this.pendingMissionEndWon !== undefined) return
         const metadata = MAP_METADATA[this.mapKey]
-        if(metadata.defeat.conditions.some(condition => this.isConditionMet(condition))) return this.endMission(false)
-        if(metadata.victory.conditions.every(condition => this.isConditionMet(condition))) this.endMission(true)
+        if(metadata.defeat.conditions.some(condition => this.isConditionMet(condition))) return this.startMissionEndReveal(false)
+        if(metadata.victory.conditions.every(condition => this.isConditionMet(condition))) this.startMissionEndReveal(true)
     }
 
     isConditionMet = (condition:MapCondition) => {
         const targets = [...this.missionShips.entries()]
         // Bases are stationary infrastructure, not extractable fleet units. They can still be named
         // explicitly in a typed destroy/lose condition.
-        const mobileTargets = targets.filter(([, ship]) => ship.type !== ShipType.CATH)
+        const mobileTargets = targets.filter(([, ship]) => ship.type !== ShipType.CATH && ship.type !== ShipType.EYE)
         const units = new Set(condition.units ?? [])
         const matching = (faction:Faction, requireUnits:boolean) => targets.filter(([, ship]) =>
             ship.faction === faction && (!requireUnits || units.has(ship.type)))
@@ -984,6 +1062,9 @@ export default class MapScene extends Scene {
         switch(condition.type){
             case ObjectiveType.DESTROY_SHIPS: return allDestroyed(matching(Faction.Enemy, true))
             case ObjectiveType.LOSE_ALL_UNITS: return allDestroyed(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
+            // EYE is permanently immobile (see ShipSprite's movementLocked) and CATH is already excluded
+            // via mobileTargets — neither can ever reach an escape point, so both are excluded here too
+            // rather than making an escape objective impossible to complete whenever either is in the mission.
             case ObjectiveType.ALL_SHIPS_ESCAPED: return allEscaped(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
             case ObjectiveType.LOSE_UNITS: return allDestroyed(matching(Faction.Player, true))
             case ObjectiveType.CAPTURE_OBJECTIVES: return this.allObjectivesOwnedBy(Faction.Player)
@@ -1006,6 +1087,40 @@ export default class MapScene extends Scene {
         this.scene.pause()
         if(won) this.promoteSurvivingShips()
         onShowModal(won ? Modal.Victory : Modal.Defeat)
+    }
+
+    // Holds any victory/defeat outcome back from actually ending the mission — pans to and pings wherever
+    // the ship whose death most recently mattered ended up (lastDestroyedShipPosition, set by
+    // destroyShipSprite), for MISSION_END_REVEAL_MS, so the player gets a moment to actually see what
+    // just decided the match — same idea as startCaptureEscapeReveal's own separate version of this for
+    // CAPTURE_ESCAPE specifically (which needs to reveal a still-*live* ship instead, hence its own
+    // mechanism). Falls back to ending immediately, no reveal, if there's simply nothing to point the
+    // camera at (e.g. a LOSE_OBJECTIVES defeat with no ship ever destroyed this match).
+    startMissionEndReveal = (won:boolean) => {
+        const pos = this.lastDestroyedShipPosition
+        if(!pos) return this.endMission(won)
+        this.pendingMissionEndWon = won
+        this.pendingMissionEndRevealAtMs = this.time.now
+        this.pendingMissionEndX = pos.x
+        this.pendingMissionEndY = pos.y
+        this.missionEndPingActive = false
+        this.cameras.main.pan(pos.x, pos.y, 800, 'Sine.easeInOut', true, (_camera, progress) => {
+            if(progress === 1) this.missionEndPingActive = true
+        })
+    }
+
+    // Called from runSlowTick — completes whatever startMissionEndReveal started, once its own
+    // MISSION_END_REVEAL_MS has actually elapsed.
+    resolvePendingMissionEnd = (time:number) => {
+        if(this.pendingMissionEndWon === undefined || this.pendingMissionEndRevealAtMs === undefined) return
+        if(time - this.pendingMissionEndRevealAtMs < MISSION_END_REVEAL_MS) return
+        const won = this.pendingMissionEndWon
+        this.pendingMissionEndWon = undefined
+        this.pendingMissionEndRevealAtMs = undefined
+        this.pendingMissionEndX = undefined
+        this.pendingMissionEndY = undefined
+        this.missionEndPingActive = false
+        this.endMission(won)
     }
 
     drawObjectiveCaptureProgress = (time:number) => {
@@ -1051,10 +1166,23 @@ export default class MapScene extends Scene {
     }
 
     updateFogOfWar = () => {
+        // While an STL is armed and targeting (see store's targetingShipId), an enemy ship otherwise
+        // spotted normally is additionally hidden if it's out of that STL's own strike range — so the
+        // only enemies shown at all are ones actually worth clicking on. Not applied to the ship
+        // startCaptureEscapeReveal is currently forcing visible regardless — that reveal overrides fog-
+        // of-war for a specific narrative reason unrelated to whatever the player's doing with an STL.
+        const targetingShipId = useAppStore.getState().targetingShipId
+        const targetingStl = targetingShipId ? this.shipSprites.get(targetingShipId) : undefined
+        const strikeRangePx = targetingStl ? ShipData[ShipType.STL].rangePx : undefined
+
         this.ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
-            // Forced visible regardless of sight range for as long as it's the ship
-            // startCaptureEscapeReveal is currently revealing — see its own comment.
-            s.setVisible(s.id === this.pendingCaptureEscapeShipId || this.isWithinFactionSightRange(s.x, s.y, Faction.Player))
+            if(s.id === this.pendingCaptureEscapeShipId){
+                s.setVisible(true)
+                return
+            }
+            const spotted = this.isWithinFactionSightRange(s.x, s.y, Faction.Player)
+            const inStrikeRange = !targetingStl || Phaser.Math.Distance.Between(targetingStl.x, targetingStl.y, s.x, s.y) <= strikeRangePx
+            s.setVisible(spotted && inStrikeRange)
         })
     }
 
@@ -1098,7 +1226,13 @@ export default class MapScene extends Scene {
 
     destroyShipSprite = (id:string, reason:'destroyed'|'escaped' = 'destroyed') => {
         this.releaseShipCapture(id)
-        if(reason === 'destroyed' && this.missionShips.has(id)) this.destroyedMissionShipIds.add(id)
+        if(reason === 'destroyed' && this.missionShips.has(id)){
+            this.destroyedMissionShipIds.add(id)
+            // Captured before the sprite's actually destroyed below — see startMissionEndReveal, which
+            // reads this the moment a victory/defeat condition this death just completed is detected.
+            const dyingShip = this.shipSprites.get(id)
+            if(dyingShip) this.lastDestroyedShipPosition = { x:dyingShip.x, y:dyingShip.y }
+        }
         this.shipSprites.get(id)?.destroy()
         this.shipSprites.delete(id)
         this.shipsCache = null
@@ -1705,8 +1839,9 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Any other bullet-weapon ship (STL, BLADE — PDF has its own updatePdf above, with its missile-
-    // priority targeting) just fires a burst at the nearest hostile ship in range, same shape as
+    // Any other bullet-weapon ship (BLADE — PDF has its own updatePdf above, with its missile-priority
+    // targeting; STL is a missile-weapon ship, manually fired via handleClick's targeting interception,
+    // not this loop) just fires a burst at the nearest hostile ship in range, same shape as
     // updateBeamWeapons below.
     updateBulletWeapons = (time:number) => {
         this.ships.forEach(ship => {
@@ -2197,6 +2332,18 @@ export default class MapScene extends Scene {
         })
     }
 
+    // Mirrors findOwnShipAt, but for the enemy faction — used by handleClick's STL-targeting
+    // interception to resolve whatever the player just clicked on into a strike target. Doesn't itself
+    // check strike range or visibility; updateFogOfWar already hides out-of-range enemies while
+    // targeting is active, so anything actually clickable here is fair game.
+    findHostileShipAt = (worldX:number, worldY:number) => {
+        return this.ships.find(s => {
+            if(s.faction !== Faction.Enemy || !s.visible) return false
+            const r = Math.max(this.getShipFootprintRadiusPx(s.type), 10)
+            return Phaser.Math.Distance.Between(worldX, worldY, s.x, s.y) <= r
+        })
+    }
+
     // --- Store-delegated ship orders/production ------------------------------------------------------
     // store.ts's addShipWaypoints/setShipWaypoints/removeShipWaypoints/clearShipWaypoints/queueShip/
     // completeQueueItem just call straight into these — every one of them mutates a real ShipSprite
@@ -2443,7 +2590,24 @@ export default class MapScene extends Scene {
 
     handleClick = (worldX:number, worldY:number) => {
         if(!this.hoveredCell) return
-        const { selectedShipIds, setSelectedShipIds } = useAppStore.getState()
+        const { selectedShipIds, setSelectedShipIds, targetingShipId, setTargetingShipId } = useAppStore.getState()
+
+        // An armed STL (see FactoryToolbar's Strike button / Thunks' onToggleStrikeTargeting) hijacks the
+        // very next click entirely — hit or miss, targeting always ends here rather than falling through
+        // to normal selection/order handling. updateFogOfWar already hides out-of-range enemies while
+        // targeting is active, so a hit on findHostileShipAt is inherently in range; no distance re-check
+        // needed here.
+        if(targetingShipId){
+            const stl = this.shipSprites.get(targetingShipId)
+            const target = this.findHostileShipAt(worldX, worldY)
+            if(stl && target && stl.ammoRemaining){
+                this.spawnMissile(stl.faction, stl.x, stl.y, target.id, ShipData[ShipType.STL].damage, target.x, target.y, stl.id)
+                stl.lastFiredAtMs = this.time.now
+                stl.ammoRemaining -= 1
+            }
+            setTargetingShipId(null)
+            return
+        }
 
         const clicked = this.findOwnShipAt(worldX, worldY)
         if(clicked){

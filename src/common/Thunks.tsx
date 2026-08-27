@@ -24,3 +24,20 @@ export const onSelectShips = (ids: Array<string>) => {
     }
     setSelectedShipIds(ids);
 };
+
+// FactoryToolbar's own Strike button — arms/disarms an STL's manual targeting (see store's own
+// targetingShipId doc comment, and MapScene's handleClick, which is what actually fires once a valid
+// target is clicked). Reads the real ShipSprite (not the store's low-frequency ShipSummary, which
+// doesn't carry ammoRemaining at all — see that interface's own doc comment for why) so a truly
+// out-of-ammo STL can't be armed in the first place, rather than arming and then silently doing nothing
+// on the next click.
+export const onToggleStrikeTargeting = (shipId: string) => {
+    const { scene, targetingShipId, setTargetingShipId } = useAppStore.getState();
+    if(targetingShipId === shipId){
+        setTargetingShipId(null);
+        return;
+    }
+    const ship = scene?.shipSprites.get(shipId);
+    if(!ship || !ship.ammoRemaining) return;
+    setTargetingShipId(shipId);
+};

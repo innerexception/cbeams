@@ -47,7 +47,7 @@ export const NebulaResource = {
 
 export enum ShipType {
     KKZ='KKZ', BOM='BOM', SPR='SPR', EYE='EYE', ZEL='ZEL', CATH='CATH', GAIN='GAIN',
-    DRN='DRN', PDF='PDF', HUSK='HUSK', BEH='BEH', BLADE='BLADE'
+    DRN='DRN', PDF='PDF', HUSK='HUSK', BEH='BEH', BLADE='BLADE', STL='STL'
 }
 
 export const DEFAULT_BUILDABLE = [ShipType.DRN, ShipType.GAIN, ShipType.PDF, ShipType.SPR, ShipType.ZEL]
@@ -69,6 +69,11 @@ export enum ShipTypeSpriteIndexEnemy {
 }
 
 export const ShipData:Record<ShipType, ShipStats> = {
+    [ShipType.STL]: { name:'MIRV', speed:10, sightRadius:200, armor:0, hp:10, damage:20, cooldownMs:5000, rangePx:1000, productionTimeMs:5000, relicCost:3, weaponType:'missile',
+        burstSize: 1, ammo: 3,
+        description: 'Fires missile with extreme range. Manually targeted.',
+        portraitIndex: 10
+     },
     [ShipType.BLADE]: { name:'Blade', speed:40, sightRadius:150, armor:0, hp:10, damage:1, cooldownMs:500, rangePx:100, productionTimeMs:5000, relicCost:2, weaponType:'bullet',
         burstSize: 1, ammo: 20,
         description: 'Vicious flanker armed with a single nuke',
