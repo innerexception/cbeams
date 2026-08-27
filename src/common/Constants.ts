@@ -76,6 +76,15 @@ export const ESCORT_ATTACK_ALERT_MS = 8000
 // frame near the edge of an enemy's sight range makes ships visibly jitter back and forth.
 export const AI_FLEE_ORDER_INTERVAL_MS = 5000
 
+// How long an enemy ZEL executing CAPTURE_ESCAPE is revealed (camera panned to it, visible regardless of
+// fog-of-war) once it actually reaches a Portal, before its escape — and the defeat it triggers — is
+// actually registered. See MapScene's updatePortals/resolvePendingCaptureEscape.
+export const CAPTURE_ESCAPE_REVEAL_MS = 5000
+
+// One expand cycle of the minimap ping drawn over a ship actively being captured (see MapScene's own
+// drawMinimap) — repeats for as long as that capture is still ongoing, not a fixed number of times.
+export const MINIMAP_PING_PULSE_MS = 1200
+
 // A ship sitting inside a nebula has its own sight cut down to this, and is only detectable by an enemy
 // ship that's also inside a nebula (see MapScene's isWithinFactionSightRange). "Inside a nebula" is a
 // convex-hull containment test against each nebula's precomputed boundary — see assets/NebulaHulls.ts.

@@ -26,7 +26,7 @@ import {
     HARVESTER_ORBIT_RADIUS_PX, HARVESTER_ORBIT_ANGULAR_SPEED, HARVESTER_BEAM_FLICKER_MIN_MS, HARVESTER_BEAM_FLICKER_MAX_MS,
     ASTEROID_AVG_METAL, ASTEROID_METAL_VARIANCE,
     NEBULA_SIGHT_RADIUS_PX,
-    GREEN_HEX, YELLOW_HEX, RED_HEX, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX,
+    GREEN_HEX, YELLOW_HEX, RED_HEX, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX, CAPTURE_ESCAPE_REVEAL_MS, MINIMAP_PING_PULSE_MS,
 } from "../../common/Constants";
 import { colors } from "../../styles/AppStyles";
 
@@ -141,6 +141,12 @@ export default class MapScene extends Scene {
     escapedMissionShipIds: Set<string> = new Set()
     escapedVeterans: Array<VeteranShip> = []
 
+    // A CAPTURE_ESCAPE ZEL that's reached a Portal, held back from actually escaping (see updatePortals)
+    // for CAPTURE_ESCAPE_REVEAL_MS — see resolvePendingCaptureEscape, which is what actually completes
+    // the escape once that reveal window is up.
+    pendingCaptureEscapeShipId?: string
+    pendingCaptureEscapeRevealAtMs?: number
+
     orderLabels: Array<GameObjects.Text> = []
     lastOrdersKey: string = ''
     shiftDown: boolean = false
@@ -221,6 +227,8 @@ export default class MapScene extends Scene {
         this.destroyedMissionShipIds = new Set()
         this.escapedMissionShipIds = new Set()
         this.escapedVeterans = []
+        this.pendingCaptureEscapeShipId = undefined
+        this.pendingCaptureEscapeRevealAtMs = undefined
 
         this.orderLabels = []
         this.lastOrdersKey = ''
@@ -458,6 +466,7 @@ export default class MapScene extends Scene {
         updateEnemyBlade(this)
         updateEnemyEscorts(this)
         updateEnemyCaptureEscape(this)
+        this.resolvePendingCaptureEscape(time)
         this.updateMissionObjectives()
     }
 
@@ -517,22 +526,31 @@ export default class MapScene extends Scene {
         this.strokeDashedRect(g, originX, originY, size, size)
 
         // Flashes red (toggling every 250ms, off phases just skip the fillCircle so the marker actually
-        // disappears rather than merely swapping color) while some faction is actively capturing it — a
-        // held-uncontested-long-enough capture, not just any ship stood nearby (see updateObjectives'
-        // own contestingFaction). Otherwise it's whatever getObjectiveOwnerColor already says for its
-        // current owner — red once the enemy actually holds it, green for the player, yellow (same as
-        // the flash) while unowned — same color-per-owner every other Objective readout (its own sprite
-        // tint, the capture progress bar) already uses.
+        // disappears rather than merely swapping color) specifically while the ENEMY is actively
+        // capturing it — a held-uncontested-long-enough capture, not just any ship stood nearby (see
+        // updateObjectives' own contestingFaction) — not the player capturing one, which just shows its
+        // plain current-owner color throughout, same as when nobody's capturing it at all. Otherwise
+        // it's whatever getObjectiveOwnerColor already says for its current owner — red once the enemy
+        // actually holds it, green for the player, yellow (same as the flash, coincidentally) while
+        // unowned — same color-per-owner every other Objective readout (its own sprite tint, the capture
+        // progress bar) already uses.
         const { objectives } = useAppStore.getState()
         const flashOn = Math.floor(time/250) % 2 === 0
         this.mapData.objectives.forEach(spawn => {
             const objective = objectives.find(o => o.id === spawn.id)
-            const beingCaptured = !!objective?.capturingFaction
-            if(beingCaptured && !flashOn) return
+            const beingCapturedByEnemy = objective?.capturingFaction === Faction.Enemy
+            if(beingCapturedByEnemy && !flashOn) return
             const world = this.toWorld(spawn.x, spawn.y)
             const p = toMinimap(world.x, world.y)
-            g.fillStyle(beingCaptured ? RED_HEX : this.getObjectiveOwnerColor(objective?.owner ?? null), 1)
+            g.fillStyle(beingCapturedByEnemy ? RED_HEX : this.getObjectiveOwnerColor(objective?.owner ?? null), 1)
             g.fillCircle(p.x, p.y, 2)
+        })
+
+        const { resourceNodes } = useAppStore.getState()
+        g.fillStyle(YELLOW_HEX, 1)
+        resourceNodes.forEach(node => {
+            const p = toMinimap(node.x, node.y)
+            g.fillCircle(p.x, p.y, 1)
         })
 
         this.ships.forEach(ship => {
@@ -540,6 +558,23 @@ export default class MapScene extends Scene {
             const p = toMinimap(ship.x, ship.y)
             g.fillStyle(ship.faction === Faction.Player ? GREEN_HEX : RED_HEX, 1)
             g.fillCircle(p.x, p.y, ship.type === ShipType.CATH ? 2 : 1)
+        })
+
+        // Alert markers — an expanding ring, repeating every MINIMAP_PING_PULSE_MS, over any friendly
+        // ship an enemy ZEL is actively capturing right now. Driven live off the same
+        // latchedShipId/shipCaptureAttached/shipCaptureStartedAtMs state updateShipCaptures itself owns,
+        // not a separately pushed/pruned record — so the ping keeps repeating for exactly as long as the
+        // capture is actually still in progress, and just stops the instant it isn't (captured, target
+        // died, ZEL died/released it, whatever ended it), with nothing here needing to know why it ended.
+        this.ships.forEach(zel => {
+            if(zel.type !== ShipType.ZEL || !zel.latchedShipId || !zel.shipCaptureAttached || zel.shipCaptureStartedAtMs === undefined) return
+            const target = this.shipSprites.get(zel.latchedShipId)
+            if(!target || target.faction !== Faction.Player) return
+
+            const age = ((time - zel.shipCaptureStartedAtMs) % MINIMAP_PING_PULSE_MS) / MINIMAP_PING_PULSE_MS
+            const p = toMinimap(target.x, target.y)
+            g.lineStyle(1, RED_HEX, 1)
+            g.strokeCircle(p.x, p.y, 1 + age*6)
         })
 
         // The camera's own current world-space view (cam.worldView already accounts for scroll/zoom),
@@ -812,14 +847,45 @@ export default class MapScene extends Scene {
         this.portalSprites.set(spawn.id, this.add.image(x, y, 'tiles', PortalSpriteIndex).setDepth(2))
     }
 
-    // Portal entry is cell-based, exactly matching the entity tile authored on the map.
+    // Portal entry is cell-based, exactly matching the entity tile authored on the map. A CAPTURE_ESCAPE
+    // ZEL reaching one doesn't escape outright — see startCaptureEscapeReveal — everything else escapes
+    // immediately, same as always.
     updatePortals = () => {
         if(this.mapData.portals.length === 0) return
         const portals = new Set(this.mapData.portals.map(portal => `${portal.x},${portal.y}`))
         this.ships.forEach(ship => {
             const cell = this.toGrid(ship.x, ship.y)
-            if(portals.has(`${cell.x},${cell.y}`)) this.escapeShip(ship.id)
+            if(!portals.has(`${cell.x},${cell.y}`)) return
+            if(ship.faction === Faction.Enemy && enemyOrderFor(this, ship) === OrderType.CAPTURE_ESCAPE){
+                this.startCaptureEscapeReveal(ship)
+                return
+            }
+            this.escapeShip(ship.id)
         })
+    }
+
+    // Holds a CAPTURE_ESCAPE ZEL back from actually escaping (and the defeat that would trigger) the
+    // instant it reaches a Portal — instead the camera pans over to it and fog-of-war is forced off for
+    // it (see updateFogOfWar) for CAPTURE_ESCAPE_REVEAL_MS, so the player actually gets to see what's
+    // slipping away before the mission ends. A no-op if one's already pending (only ever one at a time —
+    // the first to reach a Portal is the one that plays out; any others just sit there on top of it,
+    // already at their own destination, until this one resolves).
+    startCaptureEscapeReveal = (ship:ShipSprite) => {
+        if(this.pendingCaptureEscapeShipId) return
+        this.pendingCaptureEscapeShipId = ship.id
+        this.pendingCaptureEscapeRevealAtMs = this.time.now
+        this.cameras.main.pan(ship.x, ship.y, 800, 'Sine.easeInOut', true)
+    }
+
+    // Called from runSlowTick — completes whatever startCaptureEscapeReveal started, once its own
+    // CAPTURE_ESCAPE_REVEAL_MS has actually elapsed.
+    resolvePendingCaptureEscape = (time:number) => {
+        if(!this.pendingCaptureEscapeShipId || this.pendingCaptureEscapeRevealAtMs === undefined) return
+        if(time - this.pendingCaptureEscapeRevealAtMs < CAPTURE_ESCAPE_REVEAL_MS) return
+        const id = this.pendingCaptureEscapeShipId
+        this.pendingCaptureEscapeShipId = undefined
+        this.pendingCaptureEscapeRevealAtMs = undefined
+        this.escapeShip(id)
     }
 
     escapeShip = (id:string) => {
@@ -986,7 +1052,9 @@ export default class MapScene extends Scene {
 
     updateFogOfWar = () => {
         this.ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
-            s.setVisible(this.isWithinFactionSightRange(s.x, s.y, Faction.Player))
+            // Forced visible regardless of sight range for as long as it's the ship
+            // startCaptureEscapeReveal is currently revealing — see its own comment.
+            s.setVisible(s.id === this.pendingCaptureEscapeShipId || this.isWithinFactionSightRange(s.x, s.y, Faction.Player))
         })
     }
 
