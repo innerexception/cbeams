@@ -45,7 +45,6 @@ const AMMO_LABEL_GAP_PX = 4
 const LABEL_TEXT_RESOLUTION = 4
 const MAP_FONT_SIZE = '8px'
 
-const IDLE_TURN_RATE_PER_MS = 0.002
 const MOUSE_CAMERA_PAN_SPEED_MULTIPLIER = 1.5
 // A moving ship's turn rate scales with its own speed rather than being one flat number for every ship
 // type — a fast KKZ snaps toward its heading much quicker than a sluggish DRN does. 20px/s (SPR/EYE/BEH's
@@ -152,6 +151,10 @@ export default class MapScene extends Scene {
     // (same ship, within DOUBLE_CLICK_MS) apart from two unrelated single clicks.
     lastClickShipId: string | null = null
     lastClickAtMs: number = 0
+    // Control-group hotkeys (SHIFT+1-9 assigns, 1-9 alone selects/recenters) — see enableSelectionControls.
+    // Ship ids only, not live references, so a member that's since died is just quietly skipped rather
+    // than needing its own cleanup pass whenever one does.
+    shipGroups: Map<number, Array<string>> = new Map()
     impactFlashes: Array<{ x:number, y:number, createdAt:number, damage:number }> = []
     contrails: Array<{ x:number, y:number, createdAt:number, missileId:string }> = []
     // A beam weapon's own instant-hit flash (see updateBeamWeapons/drawBeams) — no projectile to track,
@@ -227,6 +230,7 @@ export default class MapScene extends Scene {
         this.pointerDownWorld = null
         this.lastClickShipId = null
         this.lastClickAtMs = 0
+        this.shipGroups = new Map()
         this.impactFlashes = []
         this.contrails = []
         this.beamFlashes = []
@@ -1346,10 +1350,10 @@ export default class MapScene extends Scene {
                 this.physics.moveTo(ship, target.x, target.y, speed)
             }
 
-            if(ship.type !== ShipType.CATH){
-                const hasDirectionalTarget = !!miningNode || !!latchedObjectiveWorld || !!latchedShip || !idle
-                const desiredRotation = hasDirectionalTarget ? Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2 : 0
-                const turnRatePerMs = hasDirectionalTarget ? speed * MOVE_TURN_RATE_PER_SPEED_PX_S : IDLE_TURN_RATE_PER_MS
+            // Idle ships just hold whatever heading they last had — no north-facing idle animation.
+            if(ship.type !== ShipType.CATH && (!!miningNode || !!latchedObjectiveWorld || !!latchedShip || !idle)){
+                const desiredRotation = Phaser.Math.Angle.Between(prevX, prevY, target.x, target.y) + Math.PI/2
+                const turnRatePerMs = speed * MOVE_TURN_RATE_PER_SPEED_PX_S
                 ship.setRotation(Phaser.Math.Angle.RotateTo(ship.rotation, desiredRotation, Math.min(1, turnRatePerMs*deltaMs)))
             }
 
@@ -1375,7 +1379,10 @@ export default class MapScene extends Scene {
     // they're about to touch, same as friendlies, meant it could never quite close that last bit of gap
     // and just paced its target forever instead. CATH (the Base) is skipped entirely — every other ship
     // should be free to fly straight through it rather than getting shoved off course by its huge,
-    // permanently-immovable body.
+    // permanently-immovable body. A KKZ/DRN pair is skipped too — spawnShip spawns a DRN-built KKZ
+    // sitting fully inside its parent DRN's own body on purpose (see its own comment) so it can fly out
+    // from under it; without this exception it'd get shoved out of position by separation the very same
+    // frame it spawns, before its fly-out route ever gets a chance to move it there itself.
     applyShipSeparation = () => {
         const ships = this.ships
         for(let i=0; i<ships.length; i++){
@@ -1389,6 +1396,7 @@ export default class MapScene extends Scene {
                 const b = ships[j]
                 if(b.type === ShipType.CATH) continue
                 if(a.faction !== b.faction) continue
+                if((a.type === ShipType.KKZ && b.type === ShipType.DRN) || (a.type === ShipType.DRN && b.type === ShipType.KKZ)) continue
                 const bodyB = b.body as Physics.Arcade.Body
                 const immovableB = ShipData[b.type].speed === 0
                 if(immovableA && immovableB) continue
@@ -2328,6 +2336,41 @@ export default class MapScene extends Scene {
         this.input.keyboard.on('keydown-M', () => {
             this.minimapVisible = !this.minimapVisible
         })
+
+        // SHIFT+1-9 assigns the current selection to that control group; 1-9 alone selects it, and
+        // pressing the very same key again right after (still holding that exact group as the
+        // selection) recenters the camera on it instead — the classic RTS "tap to select, tap again to
+        // jump to" control group scheme.
+        const GROUP_KEYS:Record<string, number> = { ONE:1, TWO:2, THREE:3, FOUR:4, FIVE:5, SIX:6, SEVEN:7, EIGHT:8, NINE:9 }
+        Object.entries(GROUP_KEYS).forEach(([keyName, group]) => {
+            this.input.keyboard.on(`keydown-${keyName}`, () => {
+                if(this.shiftDown){
+                    const { selectedShipIds } = useAppStore.getState()
+                    if(selectedShipIds.length > 0) this.shipGroups.set(group, [...selectedShipIds])
+                    return
+                }
+                this.selectOrCenterGroup(group)
+            })
+        })
+    }
+
+    // Drops any member that's since died so a stale id can never silently pile up in the group forever.
+    selectOrCenterGroup = (group:number) => {
+        const memberIds = (this.shipGroups.get(group) ?? []).filter(id => this.shipSprites.has(id))
+        if(memberIds.length === 0) return
+        this.shipGroups.set(group, memberIds)
+
+        const { selectedShipIds } = useAppStore.getState()
+        const alreadySelected = memberIds.length === selectedShipIds.length && memberIds.every(id => selectedShipIds.includes(id))
+        if(alreadySelected){
+            const members = memberIds.map(id => this.shipSprites.get(id))
+            const centerX = members.reduce((sum, s) => sum+s.x, 0) / members.length
+            const centerY = members.reduce((sum, s) => sum+s.y, 0) / members.length
+            this.cameras.main.centerOn(centerX, centerY)
+            return
+        }
+
+        onSelectShips(memberIds)
     }
 
     handleClick = (worldX:number, worldY:number) => {
