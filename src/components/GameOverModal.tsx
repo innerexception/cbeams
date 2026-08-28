@@ -28,7 +28,7 @@ export default (props:{ won:boolean }) => {
     }
 
     return (
-        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+        <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', background:'black' }}>
             <div style={{ color:colors.green, fontFamily:'Body', marginBottom:16, letterSpacing:2 }}>
                 {props.won ? 'VICTORY' : 'DEFEAT'}
             </div>

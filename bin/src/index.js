@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 // const publicIp = require('public-ip')
 
-ipcMain.on('close', ()=>{
+ipcMain.on('quit', ()=>{
+  console.log('quit invoked')
   app.quit()
 })
 

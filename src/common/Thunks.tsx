@@ -1,6 +1,11 @@
 import { useAppStore } from './store';
 import { Modal, ShipAckSounds, ShipType, SoundEffects } from '../../enum';
 import MapScene from '../components/scenes/MapScene';
+import { ipcRenderer } from 'electron';
+
+export const quit = () => {
+    ipcRenderer.send('quit')
+}
 
 export const onSetScene = (s: MapScene | null) => {
     useAppStore.getState().setScene(s);

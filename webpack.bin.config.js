@@ -7,12 +7,12 @@ const prod ={
   mode: 'production',
   target: 'electron-renderer',
   output: {
-      path: path.join(__dirname, './electron/src/build/'),
+      path: path.join(__dirname, './bin/src/build/'),
       filename: 'bundle.js',
       publicPath: './'
   },
   plugins: [
-    new CleanWebpackPlugin({ cleanOnceBeforeBuildPatterns: [path.resolve(__dirname, './electron/src/build/')] }),
+    new CleanWebpackPlugin({ cleanOnceBeforeBuildPatterns: [path.resolve(__dirname, './bin/src/build/')] }),
   ]
 }
 

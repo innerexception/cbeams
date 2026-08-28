@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { onShowModal } from '../common/Thunks';
+import { onShowModal, quit } from '../common/Thunks';
 import { Maps, Modal, DEFAULT_BUILDABLE } from '../../enum';
 import { saveFile as writeSaveFile, tryLoadFile } from '../common/Utils';
 import { useAppStore } from '../common/store';
@@ -45,7 +45,7 @@ export default () => {
                 {Object.values(Maps).map(map =>
                     <ToolButton key={map} onClick={()=>startNewGame(map)}>New: {map}</ToolButton>
                 )}
-                <ToolButton onClick={()=>console.log('quit!')}>Exit</ToolButton>
+                <ToolButton onClick={()=>quit()}>Exit</ToolButton>
             </div>
         </div>
     )

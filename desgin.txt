@@ -46,7 +46,7 @@ Missions:
     In a quiet corner of orthodox space, a group of local seekers have developed strange thoughts after network traffic from a Morning Star unit.
         Objective: Destroy infected ZELs, and any units they capture before they can escape.
 
-    -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 BEH.
+    -ZELs near 2 objective sites will flee towards a portal, using the nebulas for cover. Screening their escape is a group of HUSKS and 2 captured SPR.
 
 3. City of sighs
 
