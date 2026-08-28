@@ -70,6 +70,13 @@ export default class ShipSprite extends Physics.Arcade.Sprite {
     // completeQueueItem/MapScene's tickProduction.
     queue: Array<ProductionQueueItem> = []
 
+    // DRN only — the grid cell an EYE build ordered from it (see FactoryToolbar's build-type buttons,
+    // Thunks' onDrnBuildTypeClicked, and MapScene's own handleClick DRN-launch-targeting interception,
+    // which is what actually sets this) will fly to once it's finished. Consumed and cleared by spawnShip
+    // the instant that EYE is actually created; never set at all for a KKZ/HUSK build, or for an EYE built
+    // straight off a Base's own relic-cost menu instead of a DRN's ammo-cost one.
+    pendingEyeDestination?: { x:number, y:number }
+
     // See PrimeDirective's own doc comment (types.d.ts) — overrides every default AI behavior in
     // AIPlayers.ts while set.
     primeDirective?: PrimeDirective

@@ -1,23 +1,35 @@
 import * as React from 'react'
 import { useAppStore } from '../common/store'
-import { onSelectShips, onToggleStrikeTargeting } from '../common/Thunks'
-import { Faction, ShipType, ShipData } from '../../enum'
+import { onSelectShips, onToggleStrikeTargeting, onDrnBuildTypeClicked } from '../common/Thunks'
+import { Faction, ObjectiveType, ShipType, ShipData } from '../../enum'
 import { MAX_QUEUE, MINIMAP_SIZE_PX, MINIMAP_MARGIN_PX } from '../common/Constants'
 import { getShipRelicCost } from '../common/Utils'
+import { MAP_METADATA } from '../assets/MapMetadata'
 import ToolButton from './ToolButton'
 import { colors } from '../styles/AppStyles'
 import { defaultCursor } from '../assets/Assets'
 
+// What a DRN's own 3-way build-type buttons offer — see MapScene's queueDrnBuild, which is what
+// actually queues one.
+const DRN_BUILD_TYPES = [ShipType.KKZ, ShipType.EYE, ShipType.HUSK]
+
 export default () => {
-    const { selectedShipIds, ships, queueShip, machineRelics, buildableTypes, targetingShipId, scene } = useAppStore((state) => ({
+    const { selectedShipIds, ships, queueShip, machineRelics, buildableTypes, targetingShipId, drnEyeTargetShipId, scene, activeMapKey } = useAppStore((state) => ({
         selectedShipIds: state.selectedShipIds,
         ships: state.ships,
         queueShip: state.queueShip,
         machineRelics: state.machineRelics,
         buildableTypes: state.mySave?.buildableTypes ?? [],
         targetingShipId: state.targetingShipId,
+        drnEyeTargetShipId: state.drnEyeTargetShipId,
         scene: state.scene,
+        activeMapKey: state.activeMapKey,
     }))
+
+    const destroyTargets = (MAP_METADATA[activeMapKey]?.victory.conditions ?? [])
+        .filter(condition => condition.type === ObjectiveType.DESTROY_SHIPS && condition.units?.length)
+        .reduce((types, condition) => [...types, ...condition.units], [] as Array<ShipType>)
+        .map(type => ({ type, remaining: ships.filter(s => s.faction === Faction.Enemy && s.type === type).length }))
 
     // Re-render periodically so queue progress bars stay live.
     const [, forceTick] = React.useState(0)
@@ -39,6 +51,15 @@ export default () => {
     return (
         <>
         <div style={{ position:'absolute', top:233, right:72, zIndex:2, display:'flex', flexDirection:'column', gap:12 }}>
+            {destroyTargets.length > 0 && (
+                <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                    {destroyTargets.map(({ type, remaining }) => (
+                        <div key={type} style={{ background:'black', border:'2px solid '+colors.red, color:colors.red, padding:'3px', fontFamily:'Body' }}>
+                            Destroy {ShipData[type].name}: {remaining}
+                        </div>
+                    ))}
+                </div>
+            )}
             {playerBase && (() => {
                 const queue = playerBase.queue || []
                 const queueActive = queue.length > 0
@@ -85,21 +106,33 @@ export default () => {
                 {selectedShipIds.length > 0 && (
                         <div style={{display:'flex', flexWrap:'wrap', justifyContent:'flex-end'}}>
                             {selectedShips.map(s =>
-                                <div key={s.id} style={{display:'flex', alignItems:'center', margin:'5px'}}>
+                                <div key={s.id} style={{margin:'5px', display:'flex', flexDirection:'column', alignItems:'flex-end'}}>
                                     <div style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid' }} onClick={()=>onSelectShips(selectedShips.filter(o=>o.type===s.type).map(o=>o.id))}>{s.type}{s.rank > 0 ? ' (V)' : ''}</div>
-                                    {/* Only ever shown when this STL is the sole selection (see onToggleStrikeTargeting's own
-                                        doc comment) — arms manual missile targeting, fired by MapScene's handleClick. Reads
-                                        ammoRemaining straight off the live ShipSprite via the scene, since ShipSummary
-                                        deliberately doesn't carry it (see store's ships doc comment). */}
                                     {selectedShips.length === 1 && s.type === ShipType.STL && (() => {
                                         const ammoRemaining = scene?.shipSprites.get(s.id)?.ammoRemaining ?? 0
                                         const targeting = targetingShipId === s.id
                                         return (
-                                            <div style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid', margin:'8px', width:'150px' }} onClick={() => onToggleStrikeTargeting(s.id)}>
+                                            <div style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid', width:'150px' }} onClick={() => onToggleStrikeTargeting(s.id)}>
                                                 {targeting ? 'Targeting…' : `Strike (${ammoRemaining})`}
                                             </div>
                                         )
                                     })()}
+                                    {selectedShips.length === 1 && s.type === ShipType.DRN && (
+                                        <div style={{ display:'flex', gap:'4px', marginTop:'5px' }}>
+                                            {DRN_BUILD_TYPES.map(type => {
+                                                const targeting = type === ShipType.EYE && drnEyeTargetShipId === s.id
+                                                const active = targeting || s.queue?.[0]?.type === type
+                                                const color = active ? colors.green : colors.yellow
+                                                return (
+                                                    <div key={type}
+                                                        style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid '+color, color }}
+                                                        onClick={() => onDrnBuildTypeClicked(s.id, type)}>
+                                                        {targeting ? 'Targeting…' : ShipData[type].name}
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

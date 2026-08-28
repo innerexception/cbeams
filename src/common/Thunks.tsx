@@ -1,5 +1,5 @@
 import { useAppStore } from './store';
-import { Modal, ShipAckSounds, SoundEffects } from '../../enum';
+import { Modal, ShipAckSounds, ShipType, SoundEffects } from '../../enum';
 import MapScene from '../components/scenes/MapScene';
 
 export const onSetScene = (s: MapScene | null) => {
@@ -40,4 +40,17 @@ export const onToggleStrikeTargeting = (shipId: string) => {
     const ship = scene?.shipSprites.get(shipId);
     if(!ship || !ship.ammoRemaining) return;
     setTargetingShipId(shipId);
+};
+
+// FactoryToolbar's own 3-way DRN build-type buttons. KKZ/HUSK queue immediately (a no-op if the DRN's
+// already mid-build or out of ammo — see MapScene's own queueDrnBuild, which enforces that). EYE instead
+// arms/disarms drnEyeTargetShipId — building one needs a launch destination first, so the actual
+// queueDrnBuild call for EYE happens in MapScene's handleClick once the player picks one, not here.
+export const onDrnBuildTypeClicked = (shipId: string, type: ShipType) => {
+    const { scene, drnEyeTargetShipId, setDrnEyeTargetShipId } = useAppStore.getState();
+    if(type === ShipType.EYE){
+        setDrnEyeTargetShipId(drnEyeTargetShipId === shipId ? null : shipId);
+        return;
+    }
+    scene?.queueDrnBuild(shipId, type);
 };

@@ -54,7 +54,7 @@ Missions:
     The vanguard are going to attempt to draw off the enemy's left flank by silencing their sensors in the area.
         Objective: Destroy all EYEs in the area. Then escape the way you came in.
 
-    -Once you destroy the final EYE, a wave of BOMs (reanimated machines) will spawn to block your escape route.
+    -Once you destroy each EYE, several enemies will start to chase after you.
     -If you lose all units but the objective is complete, you still win
 
 4. Desperate measures

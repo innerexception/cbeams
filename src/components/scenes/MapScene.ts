@@ -100,6 +100,7 @@ export default class MapScene extends Scene {
     harvesterSupportBeamG: GameObjects.Graphics
     beamG: GameObjects.Graphics
     activePingG: GameObjects.Graphics
+    strikeTargetsG: GameObjects.Graphics
     starfield: GameObjects.TileSprite
     nebulaSprites: Array<GameObjects.Image> = []
     dragSelectG: GameObjects.Graphics
@@ -151,6 +152,10 @@ export default class MapScene extends Scene {
     // up.
     pendingCaptureEscapeShipId?: string
     pendingCaptureEscapeRevealAtMs?: number
+    // The Portal the pending ship is actually escaping through (see updatePortals, which is the only
+    // place that knows which one it reached) — the pan/ping centers on this, not the ship itself, per
+    // startCaptureEscapeReveal's own comment.
+    pendingCaptureEscapePortalPos?: { x:number, y:number }
     // Set true only once the camera's own pan-to-it (see startCaptureEscapeReveal) has actually finished
     // — drawActivePing won't draw anything until then, so the ring doesn't show up somewhere off-screen
     // mid-pan.
@@ -161,6 +166,10 @@ export default class MapScene extends Scene {
     // into pendingMissionEndX/Y the instant it actually needs it; frozen from then on regardless of what
     // dies afterward.
     lastDestroyedShipPosition?: { x:number, y:number }
+    // Same idea, but the Portal the most recently escaped ship left through (see escapeShip) — what
+    // startMissionEndReveal centers on instead, for an ALL_SHIPS_ESCAPED victory specifically (see
+    // updateMissionObjectives).
+    lastEscapedShipPortalPosition?: { x:number, y:number }
     // Generic version of the same reveal-then-resolve shape as pendingCaptureEscapeShipId above, for
     // every other way the mission can end (see updateMissionObjectives) — a DESTROY_SHIPS victory, or
     // any defeat condition apart from CAPTURE_ESCAPE's own ENEMY_SHIPS_ESCAPED (which already gets its
@@ -255,8 +264,10 @@ export default class MapScene extends Scene {
         this.escapedVeterans = []
         this.pendingCaptureEscapeShipId = undefined
         this.pendingCaptureEscapeRevealAtMs = undefined
+        this.pendingCaptureEscapePortalPos = undefined
         this.captureEscapePingActive = false
         this.lastDestroyedShipPosition = undefined
+        this.lastEscapedShipPortalPosition = undefined
         this.pendingMissionEndWon = undefined
         this.pendingMissionEndRevealAtMs = undefined
         this.pendingMissionEndX = undefined
@@ -309,6 +320,7 @@ export default class MapScene extends Scene {
         this.harvesterSupportBeamG = this.add.graphics()
         this.beamG = this.add.graphics()
         this.activePingG = this.add.graphics()
+        this.strikeTargetsG = this.add.graphics()
 
         this.input.keyboard.on('keydown-SHIFT', () => this.shiftDown = true)
         this.input.keyboard.on('keyup-SHIFT', () => this.shiftDown = false)
@@ -345,7 +357,6 @@ export default class MapScene extends Scene {
         const bounds = this.cameras.main.getBounds()
         this.starfield = this.add.tileSprite(bounds.centerX, bounds.centerY, bounds.width, bounds.height, 'starfield').setDepth(-10).setScrollFactor(0.5)
         this.spawnEntitiesFromMap()
-        this.initializeObjectiveTargets()
         this.enableCameraControls()
         this.enableSelectionControls()
 
@@ -439,7 +450,6 @@ export default class MapScene extends Scene {
         this.updateHarvesterMiningTargets()
         this.moveShips(time, delta)
         this.updateMlrs(time)
-        this.updateDrn(time)
         this.updatePdf(time)
         this.updateBulletWeapons(time)
         this.updateBeamWeapons(time)
@@ -448,6 +458,7 @@ export default class MapScene extends Scene {
         this.updatePortals()
         this.updateMissiles(time, delta)
         this.updateFogOfWar()
+        this.drawStrikeTargets()
         this.updateShipLabels()
 
         drawSightRadii(this.rangeG, this.ships.map(s => ({
@@ -561,15 +572,6 @@ export default class MapScene extends Scene {
         g.lineStyle(2, GREEN_HEX, 1)
         this.strokeDashedRect(g, originX, originY, size, size)
 
-        // Flashes red (toggling every 250ms, off phases just skip the fillCircle so the marker actually
-        // disappears rather than merely swapping color) specifically while the ENEMY is actively
-        // capturing it — a held-uncontested-long-enough capture, not just any ship stood nearby (see
-        // updateObjectives' own contestingFaction) — not the player capturing one, which just shows its
-        // plain current-owner color throughout, same as when nobody's capturing it at all. Otherwise
-        // it's whatever getObjectiveOwnerColor already says for its current owner — red once the enemy
-        // actually holds it, green for the player, yellow (same as the flash, coincidentally) while
-        // unowned — same color-per-owner every other Objective readout (its own sprite tint, the capture
-        // progress bar) already uses.
         const { objectives } = useAppStore.getState()
         const flashOn = Math.floor(time/250) % 2 === 0
         this.mapData.objectives.forEach(spawn => {
@@ -597,11 +599,7 @@ export default class MapScene extends Scene {
         })
 
         // Alert markers — an expanding ring, repeating every MINIMAP_PING_PULSE_MS, over any friendly
-        // ship an enemy ZEL is actively capturing right now. Driven live off the same
-        // latchedShipId/shipCaptureAttached/shipCaptureStartedAtMs state updateShipCaptures itself owns,
-        // not a separately pushed/pruned record — so the ping keeps repeating for exactly as long as the
-        // capture is actually still in progress, and just stops the instant it isn't (captured, target
-        // died, ZEL died/released it, whatever ended it), with nothing here needing to know why it ended.
+        // ship an enemy ZEL is actively capturing right now.
         this.ships.forEach(zel => {
             if(zel.type !== ShipType.ZEL || !zel.latchedShipId || !zel.shipCaptureAttached || zel.shipCaptureStartedAtMs === undefined) return
             const target = this.shipSprites.get(zel.latchedShipId)
@@ -629,11 +627,6 @@ export default class MapScene extends Scene {
         this.strokeDashedRect(g, clampedX1, clampedY1, clampedX2-clampedX1, clampedY2-clampedY1)
     }
 
-    // General-purpose world-space alert ring — any system can point this at any map coordinate, not
-    // tied to any one feature. Expands from minRadius to maxRadius and fades out, repeating every
-    // pulseMs for as long as the caller keeps calling it with the same startedAtMs (that's what keeps
-    // the pulse phase-locked across frames rather than restarting each time) — the caller owns clearing
-    // its own Graphics layer beforehand and deciding when to stop calling this at all.
     drawPing = (g:GameObjects.Graphics, x:number, y:number, time:number, startedAtMs:number,
         color:number = RED_HEX, minRadius:number = 20, maxRadius:number = 80, pulseMs:number = MINIMAP_PING_PULSE_MS) => {
         const age = ((time - startedAtMs) % pulseMs) / pulseMs
@@ -649,9 +642,8 @@ export default class MapScene extends Scene {
         const g = this.activePingG
         g.clear()
 
-        if(this.captureEscapePingActive && this.pendingCaptureEscapeShipId && this.pendingCaptureEscapeRevealAtMs !== undefined){
-            const ship = this.shipSprites.get(this.pendingCaptureEscapeShipId)
-            if(ship) this.drawPing(g, ship.x, ship.y, time, this.pendingCaptureEscapeRevealAtMs)
+        if(this.captureEscapePingActive && this.pendingCaptureEscapePortalPos && this.pendingCaptureEscapeRevealAtMs !== undefined){
+            this.drawPing(g, this.pendingCaptureEscapePortalPos.x, this.pendingCaptureEscapePortalPos.y, time, this.pendingCaptureEscapeRevealAtMs)
             return
         }
 
@@ -762,18 +754,26 @@ export default class MapScene extends Scene {
         this.ships.forEach(ship => {
             const item = ship.queue[0]
             if(!item?.startedAt || Date.now() - item.startedAt < ShipData[item.type].productionTimeMs) return
-            const relicCost = getShipRelicCost(item.type)
-            const relicsAvailable = useAppStore.getState().machineRelics[ship.faction] ?? 0
-            if(relicsAvailable < relicCost) return
 
-            useAppStore.getState().addMachineRelics(ship.faction, -relicCost)
+            // Only a Base's own queue is paid for in Machine Relics — a DRN's queue (see queueDrnBuild)
+            // is already paid for up front, in its own ammo, regardless of which of KKZ/EYE/HUSK it was
+            // ordered to build; gating it on relics too would double-charge (and outright block building
+            // EYE/HUSK from a DRN, both of which do carry a nonzero relicCost for their normal
+            // Base-built case) something that was never meant to touch the relic pool at all.
+            if(ship.type === ShipType.CATH){
+                const relicCost = getShipRelicCost(item.type)
+                const relicsAvailable = useAppStore.getState().machineRelics[ship.faction] ?? 0
+                if(relicsAvailable < relicCost) return
+                useAppStore.getState().addMachineRelics(ship.faction, -relicCost)
+            }
+
             this.completeQueueItem(ship.id)
             this.spawnShip(ship, item.type)
         })
     }
 
-    // Places a newly completed ship near its Base (or DRN, for a KKZ), trying to avoid overlapping other
-    // loitering ships.
+    // Places a newly completed ship near its Base (or DRN, for whichever type it just finished building),
+    // trying to avoid overlapping other loitering ships.
     spawnShip = (base:ShipSprite, type:ShipType) => {
         const center = { x:base.x, y:base.y }
         const footprint = this.getShipFootprintRadiusPx(type)
@@ -790,13 +790,20 @@ export default class MapScene extends Scene {
             if(!overlapsShip){ pos = candidate; break }
         }
 
-        // A KKZ built by a DRN spawns right at the DRN's own position, rather than already out at its
-        // resting point, then gets a one-shot order out to that point — so it visibly flies out from
-        // under the DRN instead of just appearing next to it fully formed. Every other producer/type
-        // pairing (a Base's own queue) is unaffected — those still just appear at pos directly.
-        const flyOut = base.type === ShipType.DRN && type === ShipType.KKZ
+        // An EYE built by a DRN comes with a mandatory launch destination, picked by the player before
+        // the build was even queued (see ShipSprite's own pendingEyeDestination doc comment) — it flies
+        // there under its own power same as any other fly-out ship, then just goes idle and stays put
+        // once it arrives (nothing else ever gives an EYE further orders — see handleClick's own
+        // orderableIds exclusion). An EYE built straight off a Base's own relic-cost menu instead has no
+        // such destination and spawns in place like any other Base-built ship, immobile from the moment
+        // it appears.
+        const eyeDestination = base.type === ShipType.DRN ? base.pendingEyeDestination : undefined
+        if(base.type === ShipType.DRN) base.pendingEyeDestination = undefined
+
+        const flyOut = base.type === ShipType.DRN && (type !== ShipType.EYE || !!eyeDestination)
         const ship = this.createShipSprite(v4(), base.faction, type, flyOut ? center.x : pos.x, flyOut ? center.y : pos.y)
-        if(flyOut) ship.waypoints = [this.toGrid(pos.x, pos.y)]
+        if(type === ShipType.EYE && eyeDestination) ship.waypoints = [eyeDestination]
+        else if(flyOut) ship.waypoints = [this.toGrid(pos.x, pos.y)]
         this.syncShipSummaries()
     }
 
@@ -919,55 +926,55 @@ export default class MapScene extends Scene {
     // immediately, same as always.
     updatePortals = () => {
         if(this.mapData.portals.length === 0) return
-        const portals = new Set(this.mapData.portals.map(portal => `${portal.x},${portal.y}`))
         this.ships.forEach(ship => {
             const cell = this.toGrid(ship.x, ship.y)
-            if(!portals.has(`${cell.x},${cell.y}`)) return
+            const portal = this.mapData.portals.find(p => p.x === cell.x && p.y === cell.y)
+            if(!portal) return
+            const portalPos = this.toWorld(portal.x, portal.y)
             if(ship.faction === Faction.Enemy && enemyOrderFor(this, ship) === OrderType.CAPTURE_ESCAPE){
-                this.startCaptureEscapeReveal(ship)
+                this.startCaptureEscapeReveal(ship, portalPos)
                 return
             }
-            this.escapeShip(ship.id)
+            this.escapeShip(ship.id, portalPos)
         })
     }
 
     // Holds a CAPTURE_ESCAPE ZEL back from actually escaping (and the defeat that would trigger) the
-    // instant it reaches a Portal — instead the camera pans over to it and fog-of-war is forced off for
-    // it (see updateFogOfWar) for MISSION_END_REVEAL_MS, so the player actually gets to see what's
-    // slipping away before the mission ends. A no-op if one's already pending (only ever one at a time —
-    // the first to reach a Portal is the one that plays out; any others just sit there on top of it,
-    // already at their own destination, until this one resolves).
-    startCaptureEscapeReveal = (ship:ShipSprite) => {
+    // instant it reaches a Portal — instead the camera pans over to (and pings) the Portal itself, the
+    // same place any other escape's own reveal centers on (see startMissionEndReveal), while fog-of-war
+    // is forced off for the still-live ship (see updateFogOfWar) for MISSION_END_REVEAL_MS, so the player
+    // actually gets to see what's slipping away before the mission ends. A no-op if one's already pending
+    // (only ever one at a time — the first to reach a Portal is the one that plays out; any others just
+    // sit there on top of it, already at their own destination, until this one resolves).
+    startCaptureEscapeReveal = (ship:ShipSprite, portalPos:{x:number,y:number}) => {
         if(this.pendingCaptureEscapeShipId) return
         this.pendingCaptureEscapeShipId = ship.id
+        this.pendingCaptureEscapePortalPos = portalPos
         this.pendingCaptureEscapeRevealAtMs = this.time.now
         this.captureEscapePingActive = false
-        this.cameras.main.pan(ship.x, ship.y, 800, 'Sine.easeInOut', true, (_camera, progress) => {
+        this.cameras.main.pan(portalPos.x, portalPos.y, 800, 'Sine.easeInOut', true, (_camera, progress) => {
             if(progress === 1) this.captureEscapePingActive = true
         })
     }
 
-    // Called from runSlowTick — completes whatever startCaptureEscapeReveal started, once its own
-    // MISSION_END_REVEAL_MS has actually elapsed. Ends the mission directly (rather than just marking
-    // the ship escaped and letting the next updateMissionObjectives notice) — a CAPTURE_ESCAPE ship
-    // crossing a Portal always means defeat on a map that gives that order out, and ending it here
-    // avoids updateMissionObjectives' own generic reveal (see startMissionEndReveal) redundantly
-    // triggering a second pan/ping/hold for the exact same event this one already just played out.
     resolvePendingCaptureEscape = (time:number) => {
         if(!this.pendingCaptureEscapeShipId || this.pendingCaptureEscapeRevealAtMs === undefined) return
         if(time - this.pendingCaptureEscapeRevealAtMs < MISSION_END_REVEAL_MS) return
         const id = this.pendingCaptureEscapeShipId
+        const portalPos = this.pendingCaptureEscapePortalPos
         this.pendingCaptureEscapeShipId = undefined
+        this.pendingCaptureEscapePortalPos = undefined
         this.pendingCaptureEscapeRevealAtMs = undefined
         this.captureEscapePingActive = false
-        this.escapeShip(id)
+        this.escapeShip(id, portalPos)
         this.endMission(false)
     }
 
-    escapeShip = (id:string) => {
+    escapeShip = (id:string, portalPos?:{x:number,y:number}) => {
         const ship = this.shipSprites.get(id)
         if(!ship) return
         if(this.missionShips.has(id)) this.escapedMissionShipIds.add(id)
+        if(portalPos) this.lastEscapedShipPortalPosition = portalPos
         if(ship.faction === Faction.Player) this.escapedVeterans.push(ship.toVeteran())
         this.destroyShipSprite(id, 'escaped')
         this.syncShipSummaries()
@@ -1031,11 +1038,6 @@ export default class MapScene extends Scene {
 
     }
 
-    initializeObjectiveTargets = () => {
-        this.missionShips.clear()
-        this.ships.forEach(ship => this.missionShips.set(ship.id, { faction:ship.faction, type:ship.type }))
-    }
-
     // Victory conditions are conjunctive; a single defeat condition ends the mission. Either way the
     // actual ending is deferred to startMissionEndReveal rather than called directly — see its own
     // comment for why, and for CAPTURE_ESCAPE's own separate, richer version of the same idea.
@@ -1043,7 +1045,13 @@ export default class MapScene extends Scene {
         if(this.gameOver || this.pendingMissionEndWon !== undefined) return
         const metadata = MAP_METADATA[this.mapKey]
         if(metadata.defeat.conditions.some(condition => this.isConditionMet(condition))) return this.startMissionEndReveal(false)
-        if(metadata.victory.conditions.every(condition => this.isConditionMet(condition))) this.startMissionEndReveal(true)
+        if(metadata.victory.conditions.every(condition => this.isConditionMet(condition))){
+            // An ALL_SHIPS_ESCAPED victory centers its reveal on the Portal the fleet left through,
+            // not on whatever mission ship happened to die most recently (startMissionEndReveal's own
+            // default) — see its own comment.
+            const escaped = metadata.victory.conditions.some(condition => condition.type === ObjectiveType.ALL_SHIPS_ESCAPED)
+            this.startMissionEndReveal(true, escaped ? this.lastEscapedShipPortalPosition : undefined)
+        }
     }
 
     isConditionMet = (condition:MapCondition) => {
@@ -1062,10 +1070,17 @@ export default class MapScene extends Scene {
         switch(condition.type){
             case ObjectiveType.DESTROY_SHIPS: return allDestroyed(matching(Faction.Enemy, true))
             case ObjectiveType.LOSE_ALL_UNITS: return allDestroyed(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
-            // EYE is permanently immobile (see ShipSprite's movementLocked) and CATH is already excluded
-            // via mobileTargets — neither can ever reach an escape point, so both are excluded here too
-            // rather than making an escape objective impossible to complete whenever either is in the mission.
-            case ObjectiveType.ALL_SHIPS_ESCAPED: return allEscaped(mobileTargets.filter(([, ship]) => ship.faction === Faction.Player))
+            // EYE effectively never reaches a Portal under its own steam (see moveShips' own comment —
+            // its only possible route is a one-shot DRN launch destination, never a player-given escape
+            // order) and CATH is already excluded via mobileTargets — neither is excluded here as a
+            // special case so much as never actually escaping in practice, but they're filtered out
+            // explicitly anyway rather than leaving an escape objective impossible to complete whenever
+            // either happens to be in the mission. A ship already in destroyedMissionShipIds is excluded
+            // too, for the same reason but the other way round — it's just as permanently unable to ever
+            // also land in escapedMissionShipIds (the two sets are mutually exclusive, see
+            // destroyShipSprite/escapeShip), so requiring it here would make the objective impossible to
+            // complete the instant any single ship died, no matter how many others actually made it out.
+            case ObjectiveType.ALL_SHIPS_ESCAPED: return allEscaped(mobileTargets.filter(([id, ship]) => ship.faction === Faction.Player && !this.destroyedMissionShipIds.has(id)))
             case ObjectiveType.LOSE_UNITS: return allDestroyed(matching(Faction.Player, true))
             case ObjectiveType.CAPTURE_OBJECTIVES: return this.allObjectivesOwnedBy(Faction.Player)
             case ObjectiveType.LOSE_OBJECTIVES: return this.allObjectivesOwnedBy(Faction.Enemy)
@@ -1090,14 +1105,17 @@ export default class MapScene extends Scene {
     }
 
     // Holds any victory/defeat outcome back from actually ending the mission — pans to and pings wherever
-    // the ship whose death most recently mattered ended up (lastDestroyedShipPosition, set by
-    // destroyShipSprite), for MISSION_END_REVEAL_MS, so the player gets a moment to actually see what
+    // it actually happened, for MISSION_END_REVEAL_MS, so the player gets a moment to actually see what
     // just decided the match — same idea as startCaptureEscapeReveal's own separate version of this for
     // CAPTURE_ESCAPE specifically (which needs to reveal a still-*live* ship instead, hence its own
-    // mechanism). Falls back to ending immediately, no reveal, if there's simply nothing to point the
-    // camera at (e.g. a LOSE_OBJECTIVES defeat with no ship ever destroyed this match).
-    startMissionEndReveal = (won:boolean) => {
-        const pos = this.lastDestroyedShipPosition
+    // mechanism). Defaults to wherever the mission-relevant ship that died most recently ended up
+    // (lastDestroyedShipPosition, set by destroyShipSprite) — updateMissionObjectives passes
+    // lastEscapedShipPortalPosition instead for an ALL_SHIPS_ESCAPED victory, so that reveal centers on
+    // the Portal the fleet actually left through rather than wherever some earlier casualty happened to
+    // fall. Falls back to ending immediately, no reveal, if there's simply nothing to point the camera at
+    // (e.g. a LOSE_OBJECTIVES defeat with no ship ever destroyed this match).
+    startMissionEndReveal = (won:boolean, posOverride?:{x:number,y:number}) => {
+        const pos = posOverride ?? this.lastDestroyedShipPosition
         if(!pos) return this.endMission(won)
         this.pendingMissionEndWon = won
         this.pendingMissionEndRevealAtMs = this.time.now
@@ -1166,23 +1184,26 @@ export default class MapScene extends Scene {
     }
 
     updateFogOfWar = () => {
-        // While an STL is armed and targeting (see store's targetingShipId), an enemy ship otherwise
-        // spotted normally is additionally hidden if it's out of that STL's own strike range — so the
-        // only enemies shown at all are ones actually worth clicking on. Not applied to the ship
-        // startCaptureEscapeReveal is currently forcing visible regardless — that reveal overrides fog-
-        // of-war for a specific narrative reason unrelated to whatever the player's doing with an STL.
+        this.ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
+            // Forced visible regardless of sight range for as long as it's the ship
+            // startCaptureEscapeReveal is currently revealing — see its own comment.
+            s.setVisible(s.id === this.pendingCaptureEscapeShipId || this.isWithinFactionSightRange(s.x, s.y, Faction.Player))
+        })
+    }
+
+    drawStrikeTargets = () => {
+        const g = this.strikeTargetsG
+        g.clear()
         const targetingShipId = useAppStore.getState().targetingShipId
         const targetingStl = targetingShipId ? this.shipSprites.get(targetingShipId) : undefined
-        const strikeRangePx = targetingStl ? ShipData[ShipType.STL].rangePx : undefined
+        if(!targetingStl) return
 
-        this.ships.filter(s => s.faction === Faction.Enemy).forEach(s => {
-            if(s.id === this.pendingCaptureEscapeShipId){
-                s.setVisible(true)
-                return
-            }
-            const spotted = this.isWithinFactionSightRange(s.x, s.y, Faction.Player)
-            const inStrikeRange = !targetingStl || Phaser.Math.Distance.Between(targetingStl.x, targetingStl.y, s.x, s.y) <= strikeRangePx
-            s.setVisible(spotted && inStrikeRange)
+        const strikeRangePx = ShipData[ShipType.STL].rangePx
+        g.lineStyle(2, YELLOW_HEX, 1)
+        this.ships.filter(s => s.faction === Faction.Enemy && s.visible).forEach(s => {
+            if(Phaser.Math.Distance.Between(targetingStl.x, targetingStl.y, s.x, s.y) > strikeRangePx) return
+            const r = Math.max(this.getShipFootprintRadiusPx(s.type), 10) + 4
+            g.strokeCircle(s.x, s.y, r)
         })
     }
 
@@ -1209,12 +1230,18 @@ export default class MapScene extends Scene {
         this.shipsGroup.add(ship)
         this.shipSprites.set(id, ship)
         this.shipsCache = null
+        // Every ship that ever exists — not just the ones the map spawns at mission start, but anything
+        // built afterward too (a Base/DRN completing its queue also routes through here) — registers
+        // itself the instant it's created, so isConditionMet's own mobileTargets (derived from this map)
+        // always reflects the mission's full roster instead of going stale the moment a fresh ship gets
+        // built mid-mission.
+        this.missionShips.set(id, { faction, type })
 
         const label = this.add.text(x, y-this.shipLabelOffsetPx(ship), type.toUpperCase(), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color: colors.green }).setOrigin(0.5).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
         this.shipLabels.set(id, label)
 
         if(ShipData[type].ammo){
-            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.green }).setOrigin(1, 0).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
+            const ammoLabel = this.add.text(x, y, String(ship.ammoRemaining ?? 0), { fontFamily:'Body', fontSize:MAP_FONT_SIZE, color:colors.yellow }).setOrigin(1, 0).setDepth(4).setVisible(false).setResolution(LABEL_TEXT_RESOLUTION)
             this.ammoLabels.set(id, ammoLabel)
         }
 
@@ -1434,10 +1461,12 @@ export default class MapScene extends Scene {
 
     // Advances every ship one step towards its own route (see ShipSprite's waypoints/pathIndex), then
     // sits idle at the end of it — except ZEL, which instead heads for and latches onto a capturable
-    // Objective the instant it's in range (overriding its route entirely while latched), GAIN, which
-    // orbits whichever Asteroid updateHarvesterMiningTargets assigned it, and EYE, which never moves at
-    // all (see movementLocked below) — a fixed sentry with a huge sightRadius, wherever it's placed or
-    // captured, not a mobile unit.
+    // Objective the instant it's in range (overriding its route entirely while latched), and GAIN, which
+    // orbits whichever Asteroid updateHarvesterMiningTargets assigned it. EYE isn't specially locked out
+    // of moving here at all — it's just never given more than a single route (its mandatory launch
+    // destination if built by a DRN, see spawnShip, or none at all otherwise) since handleClick's own
+    // orderableIds exclusion means nothing ever hands it a second one, so it naturally goes idle and
+    // stays a fixed sentry, huge sightRadius and all, the instant that one route (if any) runs out.
     moveShips = (time:number, deltaMs:number) => {
         const { resourceNodes, objectives } = useAppStore.getState()
         const arrivedBoms:Array<ShipSprite> = []
@@ -1449,7 +1478,7 @@ export default class MapScene extends Scene {
             const speed = ship.orderSpeedPxS ?? ShipData[ship.type].speed
             const step = speed * (deltaMs/1000)
 
-            const movementLocked = ship.type === ShipType.EYE || !!ship.latchedByZelId
+            const movementLocked = !!ship.latchedByZelId
             const idle = movementLocked || pathIndex >= waypoints.length
             const miningNodeId = this.harvesterMiningTarget.get(ship.id)
             const miningNode = miningNodeId ? resourceNodes.find(n => n.id === miningNodeId) : undefined
@@ -1566,25 +1595,24 @@ export default class MapScene extends Scene {
             ship.objectiveAttached = !!latchedObjectiveWorld && arrived
             ship.latchedObjectiveId = latchedObjectiveId
             ship.shipCaptureAttached = !!latchedShip && arrived
-            ship.pathIndex = arrived ? nextPathIndex : pathIndex
+            // A ship that just consumed its own last waypoint (as opposed to one still latched onto a
+            // ship/Objective or orbiting a mining node — none of those feed into arrivedAtRouteEnd, see
+            // nextPathIndex above) has nothing left to hold onto its now-fully-walked route for; clearing
+            // it here is what makes drawRouteAndMarkers stop drawing it and removeShipWaypoints' own
+            // clicked-existing-marker check stop matching stale points the ship already passed.
+            if(arrived && arrivedAtRouteEnd){
+                ship.waypoints = []
+                ship.pathIndex = 0
+            }
+            else {
+                ship.pathIndex = arrived ? nextPathIndex : pathIndex
+            }
         })
 
         this.applyShipSeparation()
         arrivedBoms.forEach(ship => this.detonateDrone(ship, null))
     }
 
-    // Minimum gap kept between any two FRIENDLY ship bodies, every frame, on top of whatever movement
-    // decision each one already made this frame — this is what makes a pile of ships arriving at the
-    // same waypoint spread out instead of stacking exactly on top of each other. Opposing-faction ships
-    // are left alone here: a kamikaze drone (KKZ/BOM) has to actually reach physics-overlap distance
-    // with its hostile target to detonate (see onDroneShipContact) — pushing hostiles apart the instant
-    // they're about to touch, same as friendlies, meant it could never quite close that last bit of gap
-    // and just paced its target forever instead. CATH (the Base) is skipped entirely — every other ship
-    // should be free to fly straight through it rather than getting shoved off course by its huge,
-    // permanently-immovable body. A KKZ/DRN pair is skipped too — spawnShip spawns a DRN-built KKZ
-    // sitting fully inside its parent DRN's own body on purpose (see its own comment) so it can fly out
-    // from under it; without this exception it'd get shoved out of position by separation the very same
-    // frame it spawns, before its fly-out route ever gets a chance to move it there itself.
     applyShipSeparation = () => {
         const ships = this.ships
         for(let i=0; i<ships.length; i++){
@@ -1938,32 +1966,29 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Each DRN, on cooldown and once it's not already mid-build, spends one unit of its own ammo (4
-    // total — same ammo/ammoRemaining stat every other ammo-limited ship uses, so it's refilled by a
-    // nearby GAIN via updateHarvesterSupport, at ShipData[DRN]'s own DRN_AMMO_METAL_COST rather than the
-    // flat 1-for-1 rate everything else resupplies at) to queue up a KKZ. Queuing it (rather than
-    // spawning it outright) reuses the exact same ship.queue/tickProduction machinery a Base's own build
-    // queue runs on — drawProductionProgress already draws a bar over *any* ship with a live queue[0], so
-    // a DRN gets one for free, ticking at KKZ's own productionTimeMs; tickProduction completing it calls
-    // spawnShip, which is what actually gives the finished KKZ its under-the-DRN fly-out (see spawnShip's
-    // own comment). Once its ammo is fully spent it stops producing until resupplied, same as SPR runs
-    // dry — there's no separate lifetime cap beyond that.
-    updateDrn = (time:number) => {
-        this.ships.forEach(ship => {
-            if(ship.type !== ShipType.DRN) return
-            if(ship.queue.length > 0) return
-            if(ship.lastFiredAtMs && time - ship.lastFiredAtMs < ShipData[ShipType.DRN].cooldownMs) return
-            if(!ship.ammoRemaining) return
-
-            ship.lastFiredAtMs = time
-            ship.ammoRemaining -= 1
-            // Date.now(), not the Phaser scene-time `time` this function otherwise runs on — the queue
-            // this feeds (tickProduction/drawProductionProgress, same as a Base's own) is timed against
-            // wall-clock Date.now() throughout, and mixing the two clocks would make a fresh item read as
-            // wildly, instantly overdue.
-            ship.queue = [{ id:v4(), type:ShipType.KKZ, startedAt:Date.now() }]
-            this.syncShipSummaries()
-        })
+    // A DRN never produces on its own — see FactoryToolbar's 3-way build-type buttons and Thunks'
+    // onDrnBuildTypeClicked, which is what actually spends its ammo and queues a build, one ship at a
+    // time, only when the player presses one. queueDrnBuild is what that thunk (and, for EYE, MapScene's
+    // own handleClick DRN-launch-targeting interception) actually calls.
+    // Refuses if the DRN is already mid-build (queue not empty) or out of ammo (4 total — same
+    // ammo/ammoRemaining stat every other ammo-limited ship uses, so it's refilled by a nearby GAIN via
+    // updateHarvesterSupport, at ShipData[DRN]'s own DRN_AMMO_METAL_COST rather than the flat 1-for-1 rate
+    // everything else resupplies at). Queuing (rather than spawning outright) reuses the exact same
+    // ship.queue/tickProduction machinery a Base's own build queue runs on — drawProductionProgress
+    // already draws a bar over *any* ship with a live queue[0], so a DRN gets one for free, ticking at
+    // that type's own productionTimeMs; tickProduction completing it calls spawnShip, which is what
+    // actually gives the finished ship its under-the-DRN fly-out (see spawnShip's own comment).
+    queueDrnBuild = (shipId:string, type:ShipType) => {
+        const ship = this.shipSprites.get(shipId)
+        if(!ship || ship.type !== ShipType.DRN || ship.queue.length > 0 || !ship.ammoRemaining) return false
+        ship.ammoRemaining -= 1
+        // Date.now(), not the Phaser scene-time `time` this function otherwise runs on — the queue
+        // this feeds (tickProduction/drawProductionProgress, same as a Base's own) is timed against
+        // wall-clock Date.now() throughout, and mixing the two clocks would make a fresh item read as
+        // wildly, instantly overdue.
+        ship.queue = [{ id:v4(), type, startedAt:Date.now() }]
+        this.syncShipSummaries()
+        return true
     }
 
     updateHarvesterMiningTargets = () => {
@@ -2048,15 +2073,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // Any friendly ship within HARVESTER_RESUPPLY_RANGE_PX of a Harvester gets supported from that
-    // Harvester's carried metal, one whole unit at a time every HARVESTER_RESUPPLY_INTERVAL_MS (gated by
-    // lastResupplyAtMs, the same cooldown-timestamp pattern lastFiredAtMs uses) rather than a continuous
-    // per-second rate, so ammoRemaining/hp/metalCarried never drift off whole numbers. Each Harvester
-    // does at most one thing per tick: it prefers topping up an ammo-short target 1-for-1, and only falls
-    // back to repairing a damaged target (1 hp for HARVESTER_REPAIR_METAL_COST metal) if no ammo-short
-    // target was in range, or it couldn't fully afford one anyway.
-    // DRN costs more per unit of ammo than SPR/PDF's flat 1 metal (see DRN_AMMO_METAL_COST's own
-    // comment) — everything else still resupplies at that flat rate.
     ammoResupplyMetalCost = (type:ShipType) => type === ShipType.DRN ? DRN_AMMO_METAL_COST : 1
 
     updateHarvesterSupport = (time:number) => {
@@ -2333,9 +2349,10 @@ export default class MapScene extends Scene {
     }
 
     // Mirrors findOwnShipAt, but for the enemy faction — used by handleClick's STL-targeting
-    // interception to resolve whatever the player just clicked on into a strike target. Doesn't itself
-    // check strike range or visibility; updateFogOfWar already hides out-of-range enemies while
-    // targeting is active, so anything actually clickable here is fair game.
+    // interception to resolve whatever the player just clicked on into a strike target. Only requires
+    // the ship to actually be visible (fog-of-war); range is unrelated to whether a ship can be clicked
+    // at all, so handleClick itself re-checks strikeRangePx (see drawStrikeTargets, which rings exactly
+    // the same in-range set) before actually firing.
     findHostileShipAt = (worldX:number, worldY:number) => {
         return this.ships.find(s => {
             if(s.faction !== Faction.Enemy || !s.visible) return false
@@ -2344,16 +2361,6 @@ export default class MapScene extends Scene {
         })
     }
 
-    // --- Store-delegated ship orders/production ------------------------------------------------------
-    // store.ts's addShipWaypoints/setShipWaypoints/removeShipWaypoints/clearShipWaypoints/queueShip/
-    // completeQueueItem just call straight into these — every one of them mutates a real ShipSprite
-    // instance directly (see the class's own doc comment for why), never the store.
-
-    // A group ordered together moves together — every ship given this order gets stamped with the
-    // slowest member's own top speed (see moveShips, which reads this instead of ShipData[type].speed
-    // whenever it's set), rather than each ship racing ahead at its own pace and arriving piecemeal.
-    // Ordering a single ship alone still works out to that ship's own natural speed, since it's its own
-    // group's minimum.
     groupSpeedPxS = (shipIds:Array<string>) => {
         const speeds = shipIds.map(id => this.shipSprites.get(id)).filter(s => !!s).map(s => ShipData[s.type].speed)
         return Math.min(...speeds)
@@ -2590,22 +2597,41 @@ export default class MapScene extends Scene {
 
     handleClick = (worldX:number, worldY:number) => {
         if(!this.hoveredCell) return
-        const { selectedShipIds, setSelectedShipIds, targetingShipId, setTargetingShipId } = useAppStore.getState()
+        const { selectedShipIds, setSelectedShipIds, targetingShipId, setTargetingShipId, drnEyeTargetShipId, setDrnEyeTargetShipId } = useAppStore.getState()
 
         // An armed STL (see FactoryToolbar's Strike button / Thunks' onToggleStrikeTargeting) hijacks the
         // very next click entirely — hit or miss, targeting always ends here rather than falling through
-        // to normal selection/order handling. updateFogOfWar already hides out-of-range enemies while
-        // targeting is active, so a hit on findHostileShipAt is inherently in range; no distance re-check
-        // needed here.
+        // to normal selection/order handling. Enemies aren't hidden while targeting (see
+        // drawStrikeTargets, which rings the same in-range set instead), so range is re-checked here
+        // explicitly rather than assumed from what's clickable.
         if(targetingShipId){
             const stl = this.shipSprites.get(targetingShipId)
             const target = this.findHostileShipAt(worldX, worldY)
-            if(stl && target && stl.ammoRemaining){
+            const inRange = stl && target && Phaser.Math.Distance.Between(stl.x, stl.y, target.x, target.y) <= ShipData[ShipType.STL].rangePx
+            if(stl && target && inRange && stl.ammoRemaining){
                 this.spawnMissile(stl.faction, stl.x, stl.y, target.id, ShipData[ShipType.STL].damage, target.x, target.y, stl.id)
                 stl.lastFiredAtMs = this.time.now
                 stl.ammoRemaining -= 1
             }
             setTargetingShipId(null)
+            return
+        }
+
+        // An armed DRN (see FactoryToolbar's build-type buttons / Thunks' onDrnBuildTypeClicked) is
+        // waiting on exactly this click to know where the EYE it's about to build should fly to — any
+        // valid map cell counts, not just one with something on it (unlike STL's targeting above), same
+        // as giving a normal move order. Targeting always ends here regardless of whether the click
+        // actually lands on a valid cell or the DRN can actually still afford the build by the time it
+        // arrives (mid-build already, out of ammo, ...); queueDrnBuild itself is the single source of
+        // truth for whether the build actually goes through.
+        if(drnEyeTargetShipId){
+            const { x, y } = this.hoveredCell
+            if(x >= 0 && y >= 0 && x < this.mapData.width && y < this.mapData.height){
+                const drn = this.shipSprites.get(drnEyeTargetShipId)
+                if(drn) drn.pendingEyeDestination = { x, y }
+                this.queueDrnBuild(drnEyeTargetShipId, ShipType.EYE)
+            }
+            setDrnEyeTargetShipId(null)
             return
         }
 
@@ -2617,8 +2643,14 @@ export default class MapScene extends Scene {
             this.lastClickAtMs = now
 
             if(isDoubleClick){
-                // Select every one of the player's own ships of the same type, not just this one.
-                const sameTypeIds = this.ships.filter(s => s.faction === Faction.Player && s.type === clicked.type).map(s => s.id)
+                // Select every one of the player's own ships of the same type, not just this one — but
+                // only the ones actually on-screen right now (cam.worldView, same world-space view
+                // drawMinimap's own camera box uses), same as a real RTS double-click, so a fleet spread
+                // across the whole map doesn't all get swept into the selection at once.
+                const view = this.cameras.main.worldView
+                const sameTypeIds = this.ships
+                    .filter(s => s.faction === Faction.Player && s.type === clicked.type && view.contains(s.x, s.y))
+                    .map(s => s.id)
                 onSelectShips(sameTypeIds)
                 // A third click right after shouldn't chain into yet another double-click.
                 this.lastClickShipId = null

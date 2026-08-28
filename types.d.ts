@@ -101,7 +101,9 @@ interface ShipSummary {
     type: import('./enum').ShipType
     killCount: number
     rank: number
-    // Only ever populated on a Base (see ShipType.CATH) — see ShipSprite's own queue field.
+    // Only ever populated on a Base or DRN (see ShipType.CATH) — see ShipSprite's own queue field. A
+    // DRN's own currently-building type (if any) is queue[0].type, same as a Base's — FactoryToolbar
+    // reads that directly rather than needing its own separate field.
     queue?: Array<ProductionQueueItem>
 }
 

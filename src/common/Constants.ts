@@ -32,7 +32,12 @@ export const SLOW_TICK_INTERVAL_MS = 1000
 export const ATD_BLAST_RADIUS_PX = 20
 
 export const MISSILE_SPEED_PX_S = 110
-export const MISSILE_MAX_LIFETIME_MS = 8000
+// Must comfortably exceed the flight time of the longest-range missile shot any ship can actually take —
+// currently STL's own rangePx (1000px, see enum.ts's ShipData), which at MISSILE_SPEED_PX_S takes ~9.1s
+// to cross. This used to be tuned only against SPR's much shorter 250px range (~2.3s) and left as-is when
+// STL was added; a max-range STL shot was getting force-destroyed by this exact timeout mid-flight,
+// nowhere near its target, well before impact.
+export const MISSILE_MAX_LIFETIME_MS = 10000
 export const SALVO_STAGGER_MS = 500
 export const MISSILE_ARC_HEIGHT_PX = 180
 export const CONTRAIL_INTERVAL_MS = 60

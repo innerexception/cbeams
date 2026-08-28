@@ -27,6 +27,11 @@ export interface AppState {
   // selection changes to anything else, so "changing the selection ends targeting" holds regardless of
   // which code path actually changed it (a fresh order, ESC, a ship dying, ...).
   targetingShipId: string | null;
+  // The DRN currently awaiting a click somewhere on the map to launch a just-ordered EYE build towards
+  // (see Thunks' onDrnBuildTypeClicked, which arms this, and MapScene's own handleClick, which is what
+  // actually queues the build and clears it once a destination's been picked). Same "changing the
+  // selection cancels it" contract as targetingShipId, for the same reason — see its own comment.
+  drnEyeTargetShipId: string | null;
   machineRelics: Record<Faction, number>;
   setModal: (modal: Modal | null) => void;
   setScene: (scene: MapScene | null) => void;
@@ -37,6 +42,7 @@ export interface AppState {
   setActiveMapKey: (key: Maps) => void;
   setSelectedShipIds: (ids: Array<string>) => void;
   setTargetingShipId: (id: string | null) => void;
+  setDrnEyeTargetShipId: (id: string | null) => void;
   addShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   setShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
   removeShipWaypoints: (shipIds: Array<string>, x: number, y: number) => void;
@@ -66,6 +72,7 @@ const initialState = {
   resourceNodes: [] as Array<ResourceNodeData>,
   selectedShipIds: [] as Array<string>,
   targetingShipId: null as string | null,
+  drnEyeTargetShipId: null as string | null,
   machineRelics: { [Faction.Player]: 0, [Faction.Enemy]: 0 } as Record<Faction, number>,
 };
 
@@ -78,12 +85,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSave: (mySave) => set({ mySave }),
   setLoaded: (isLoaded) => set({ isLoaded }),
   setActiveMapKey: (activeMapKey) => set({ activeMapKey }),
-  setSelectedShipIds: (selectedShipIds) => set((state) => ({
-    selectedShipIds,
-    targetingShipId: (state.targetingShipId && selectedShipIds.length === 1 && selectedShipIds[0] === state.targetingShipId)
-      ? state.targetingShipId : null,
-  })),
+  setSelectedShipIds: (selectedShipIds) => set((state) => {
+    const stillSoleSelected = (id: string | null) => id && selectedShipIds.length === 1 && selectedShipIds[0] === id ? id : null;
+    return {
+      selectedShipIds,
+      targetingShipId: stillSoleSelected(state.targetingShipId),
+      drnEyeTargetShipId: stillSoleSelected(state.drnEyeTargetShipId),
+    };
+  }),
   setTargetingShipId: (targetingShipId) => set({ targetingShipId }),
+  setDrnEyeTargetShipId: (drnEyeTargetShipId) => set({ drnEyeTargetShipId }),
   addShipWaypoints: (shipIds, x, y) => get().scene?.addShipWaypoints(shipIds, x, y),
   setShipWaypoints: (shipIds, x, y) => get().scene?.setShipWaypoints(shipIds, x, y),
   removeShipWaypoints: (shipIds, x, y) => get().scene?.removeShipWaypoints(shipIds, x, y),
