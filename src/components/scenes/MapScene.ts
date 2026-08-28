@@ -407,7 +407,7 @@ export default class MapScene extends Scene {
         // to read clearly at a glance or PDF actually firing is easy to miss entirely.
         bake('bullet_dot', 5, (g, cx, cy) => {
             g.fillStyle(YELLOW_HEX, 1)
-            g.fillCircle(cx, cy, 2)
+            g.fillRect(cx, cy, 1,1)
         })
 
         Object.values(ShipType).filter(type => type !== ShipType.CATH).forEach(type => this.generateHostileShipTexture(type))
@@ -1199,7 +1199,7 @@ export default class MapScene extends Scene {
         if(!targetingStl) return
 
         const strikeRangePx = ShipData[ShipType.STL].rangePx
-        g.lineStyle(2, YELLOW_HEX, 1)
+        g.lineStyle(1, YELLOW_HEX, 1)
         this.ships.filter(s => s.faction === Faction.Enemy && s.visible).forEach(s => {
             if(Phaser.Math.Distance.Between(targetingStl.x, targetingStl.y, s.x, s.y) > strikeRangePx) return
             const r = Math.max(this.getShipFootprintRadiusPx(s.type), 10) + 4
