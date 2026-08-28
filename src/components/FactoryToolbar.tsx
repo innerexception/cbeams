@@ -95,9 +95,9 @@ export default () => {
                                         const ammoRemaining = scene?.shipSprites.get(s.id)?.ammoRemaining ?? 0
                                         const targeting = targetingShipId === s.id
                                         return (
-                                            <ToolButton disabled={!targeting && ammoRemaining === 0} onClick={() => onToggleStrikeTargeting(s.id)}>
+                                            <div style={{ cursor:`url(${defaultCursor}), pointer`, background:'black', padding:'3px', border:'2px solid', margin:'8px', width:'150px' }} onClick={() => onToggleStrikeTargeting(s.id)}>
                                                 {targeting ? 'Targeting…' : `Strike (${ammoRemaining})`}
-                                            </ToolButton>
+                                            </div>
                                         )
                                     })()}
                                 </div>
